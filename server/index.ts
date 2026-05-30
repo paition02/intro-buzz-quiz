@@ -292,7 +292,14 @@ if (isProduction) {
   app.get(['/gameboard', '/console'], (_req, res) => res.sendFile(path.join(rootDir, 'dist', 'index.html')))
 } else {
   const { createServer: createViteServer } = await import('vite')
-  const vite = await createViteServer({ root: rootDir, server: { middlewareMode: true }, appType: 'spa' })
+  const vite = await createViteServer({
+    root: rootDir,
+    server: {
+      middlewareMode: true,
+      allowedHosts: ['.lhr.life'],
+    },
+    appType: 'spa',
+  })
   app.use(vite.middlewares)
 }
 
