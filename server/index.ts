@@ -388,9 +388,9 @@ app.get('/debug/action', (_req, res) => {
           button.disabled = true
           try {
             const res = await fetch('/api/act/' + encodeURIComponent(actorId), { method: 'POST' })
-            resultEl.textContent = actorId + '\n' + JSON.stringify(await res.json(), null, 2)
+            resultEl.textContent = actorId + '\\n' + JSON.stringify(await res.json(), null, 2)
           } catch (error) {
-            resultEl.textContent = actorId + '\n' + String(error)
+            resultEl.textContent = actorId + '\\n' + String(error)
           } finally {
             button.disabled = false
           }
