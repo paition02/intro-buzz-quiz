@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { io } from 'socket.io-client'
 import { useMusicKitPlayback } from './useMusicKit'
 import './App.css'
 
@@ -62,14 +63,11 @@ function useGameState() {
   const [state, setState] = useState<GameState>(initialState)
 
   useEffect(() => {
-    fetch('/api/state')
-      .then((res) => res.json())
-      .then(setState)
-      .catch(() => undefined)
-
-    const events = new EventSource('/api/events')
-    events.addEventListener('state', (event) => setState(JSON.parse((event as MessageEvent).data)))
-    return () => events.close()
+    const socket = io()
+    socket.on('state', (nextState: GameState) => setState(nextState))
+    return () => {
+      socket.close()
+    }
   }, [])
 
   return state

@@ -2,8 +2,8 @@ import express from 'express'
 import { createServer } from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { Response } from 'express'
 import { SignJWT, importPKCS8 } from 'jose'
+import { Server } from 'socket.io'
 import dotenv from 'dotenv'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -97,8 +97,6 @@ async function generateAppleMusicToken(expiresInSeconds = 60 * 60 * 24) {
   return { token, expiresAt: new Date(expiresAt * 1000) }
 }
 
-const clients = new Set<Response>()
-
 function publicState() {
   return {
     ...state,
@@ -108,8 +106,7 @@ function publicState() {
 
 function emitState() {
   state.updatedAt = Date.now()
-  const payload = `event: state\ndata: ${JSON.stringify(publicState())}\n\n`
-  for (const client of clients) client.write(payload)
+  io.emit('state', publicState())
 }
 
 function update(mutator: () => void) {
@@ -136,6 +133,14 @@ function loadCurrentTrack() {
 
 const app = express()
 const server = createServer(app)
+const io = new Server(server, {
+  cors: { origin: true },
+})
+
+io.on('connection', (socket) => {
+  socket.emit('state', publicState())
+})
+
 app.use(express.json())
 
 
@@ -154,17 +159,6 @@ app.get('/api/token', async (_req, res) => {
 
 app.get('/api/state', (_req, res) => res.json(publicState()))
 
-app.get('/api/events', (req, res) => {
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache, no-transform',
-    Connection: 'keep-alive',
-    'X-Accel-Buffering': 'no',
-  })
-  res.write(`event: state\ndata: ${JSON.stringify(publicState())}\n\n`)
-  clients.add(res)
-  req.on('close', () => clients.delete(res))
-})
 
 app.post('/api/act/:actorId', (req, res) => {
   const now = Date.now()
