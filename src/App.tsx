@@ -132,8 +132,7 @@ function PlayerBadge({ id, active = false, reacting = false, label = true }: { i
         '--player-color-border': color.border,
         '--player-color-text': color.text,
       } as CSSProperties}
-      title={id}
-      aria-label={id}
+      aria-label={label ? '参加者' : '参加者'}
     >
       {label ? <span className="player-color-dot" /> : (
         <span className="player-figure" aria-hidden="true">
@@ -338,8 +337,9 @@ function ConsolePage() {
   })
 
   const handlePlay = () => run(async () => {
-    await musicKit.playIntro(seconds)
     await post('/api/console/play', { seconds })
+    await musicKit.playIntro(seconds)
+    await post('/api/console/finish-playback')
   })
 
   const handleJudge = (result: 'correct' | 'wrong') => run(async () => {
@@ -463,7 +463,7 @@ function ConsolePage() {
           <div className="joined-player-list">
             <span className="hint">参加中:</span>
             {joinedPlayers.length ? joinedPlayers.map((player) => (
-              <PlayerBadge id={player.id} key={player.id} />
+              <PlayerBadge id={player.id} label={false} key={player.id} />
             )) : <span className="hint">まだいません</span>}
           </div>
         </div>
@@ -490,14 +490,27 @@ function ConsolePage() {
           {state.currentTrack ? (
             <div className="track-card small">
               <p>{state.currentTrack.playlist}</p>
-              <strong>{state.step === 'reveal' ? state.currentTrack.title : '???'}</strong>
-              <span>{state.step === 'reveal' ? state.currentTrack.artist : '正解発表まで伏せています'}</span>
+              <strong>{state.currentTrack.title}</strong>
+              <span>{state.currentTrack.artist}</span>
             </div>
           ) : <p>まだ曲はロードされていません。</p>}
         </div>
       </section>
     </main>
   )
+}
+
+
+function gameboardMessage(state: GameState) {
+  if (state.phase === 'initialization' || state.phase === 'ready') return '準備中'
+  if (state.step === 'loading') return '曲を準備中'
+  if (state.step === 'beforePlayback') return '次のイントロを待っています'
+  if (state.step === 'playing') return '早押し！'
+  if (state.step === 'answering') return '解答中'
+  if (state.step === 'correct') return '正解！'
+  if (state.step === 'wrong') return '不正解'
+  if (state.step === 'reveal') return '正解発表'
+  return phaseLabel(state.phase, state.step)
 }
 
 function GameboardPage() {
@@ -516,7 +529,7 @@ function GameboardPage() {
     <main className={`gameboard ${state.step} ${state.lastResult ?? ''}`}>
       <section className="board-card">
         <p className="eyebrow">{phaseLabel(state.phase, state.step)}</p>
-        <h1>{state.message}</h1>
+        <h1>{gameboardMessage(state)}</h1>
 
         {state.step === 'playing' && <div className="pulse">♪</div>}
         {state.step === 'answering' && state.answererId && (

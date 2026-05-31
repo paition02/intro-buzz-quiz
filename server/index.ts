@@ -171,14 +171,14 @@ app.post('/api/act/:actorId', (req, res) => {
     if (state.phase === 'initialization' || state.phase === 'ready') {
       player.joined = !player.joined
       shouldReact = true
-      state.message = `${player.id} が${player.joined ? '参加' : '退出'}しました`
+      state.message = `参加者が${player.joined ? '参加' : '退出'}しました`
       return
     }
 
     if (state.phase === 'game' && state.step === 'playing' && state.answererId === null && player.joined) {
       state.answererId = player.id
       state.step = 'answering'
-      state.message = `${player.id} に解答権があります`
+      state.message = '解答権が取られました'
       shouldReact = true
       return
     }
@@ -240,6 +240,17 @@ app.post('/api/console/play', (req, res) => {
       state.step = 'playing'
       state.answererId = null
       state.message = `${state.playbackSeconds}秒再生中。早押し待ちです`
+    }
+  })
+  res.json(publicState())
+})
+
+
+app.post('/api/console/finish-playback', (_req, res) => {
+  update(() => {
+    if (state.phase === 'game' && state.step === 'playing' && state.answererId === null) {
+      state.step = 'beforePlayback'
+      state.message = 'もう一度再生できます'
     }
   })
   res.json(publicState())
@@ -331,21 +342,17 @@ app.get('/debug/action', (_req, res) => {
     #add { background: linear-gradient(135deg, #ff4e77, #ffb14e); color: #21131a; }
     .actor-list { display: grid; gap: 12px; margin-top: 20px; padding: 0; list-style: none; }
     .actor-item { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 14px; border-radius: 18px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12); transition: border-color 0.16s ease, background 0.16s ease, transform 0.16s ease; }
-    .actor-item.react { background: rgba(125, 255, 190, 0.12); border-color: rgba(125, 255, 190, 0.75); transform: scale(1.015); }
-    .actor-item.no-react { background: rgba(255, 138, 163, 0.12); border-color: rgba(255, 138, 163, 0.65); }
-    .actor-id { overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #ffcc8e; }
+    .actor-item.pressed { background: rgba(255, 177, 78, 0.14); border-color: rgba(255, 177, 78, 0.7); transform: scale(1.015); }
+    .actor-item.error { background: rgba(255, 138, 163, 0.12); border-color: rgba(255, 138, 163, 0.65); }
     .act { background: #f7f2ea; color: #21131a; min-width: 96px; }
     .meta { color: #a99ca4; font-size: 0.9rem; }
     .actor-main { min-width: 0; }
-    .actor-status { margin-top: 4px; font-size: 0.9rem; font-weight: 800; color: #a99ca4; }
-    .actor-status.react { color: #7dffbe; }
-    .actor-status.no-react { color: #ff8aa3; }
   </style>
 </head>
 <body>
   <main>
     <h1>早押しボタン Debug</h1>
-    <p>「ボタン追加」で自動生成した actor_id をリストに追加します。各リストアイテムの ACT が物理ボタン1個分です。同じタブのセッション中だけ保持します。</p>
+    <p>「ボタン追加」で早押しボタンをリストに追加します。各リストアイテムの ACT が物理ボタン1個分です。同じタブのセッション中だけ保持します。</p>
     <button id="add">ボタン追加</button>
     <ul id="actors" class="actor-list"></ul>
   </main>
@@ -376,7 +383,7 @@ app.get('/debug/action', (_req, res) => {
         return
       }
 
-      for (const actorId of actors) {
+      for (const [index, actorId] of actors.entries()) {
         const item = document.createElement('li')
         item.className = 'actor-item'
 
@@ -384,14 +391,8 @@ app.get('/debug/action', (_req, res) => {
         info.className = 'actor-main'
         const label = document.createElement('div')
         label.className = 'meta'
-        label.textContent = 'actor_id'
-        const id = document.createElement('div')
-        id.className = 'actor-id'
-        id.textContent = actorId
-        const status = document.createElement('div')
-        status.className = 'actor-status'
-        status.textContent = '未入力'
-        info.append(label, id, status)
+        label.textContent = 'ボタン ' + (index + 1)
+        info.append(label)
 
         const button = document.createElement('button')
         button.className = 'act'
@@ -400,16 +401,14 @@ app.get('/debug/action', (_req, res) => {
           button.disabled = true
           try {
             const res = await fetch('/api/act/' + encodeURIComponent(actorId), { method: 'POST' })
-            const data = await res.json()
-            const reacted = Boolean(data.shouldReact)
-            item.classList.remove('react', 'no-react')
-            item.classList.add(reacted ? 'react' : 'no-react')
-            status.className = 'actor-status ' + (reacted ? 'react' : 'no-react')
-            status.textContent = reacted ? '反応あり' : '反応なし'
-            setTimeout(() => item.classList.remove('react', 'no-react'), 650)
+            await res.json()
+            item.classList.remove('pressed', 'error')
+            item.classList.add('pressed')
+            setTimeout(() => item.classList.remove('pressed'), 650)
           } catch (error) {
-            status.className = 'actor-status no-react'
-            status.textContent = 'エラー: ' + String(error)
+            item.classList.remove('pressed')
+            item.classList.add('error')
+            setTimeout(() => item.classList.remove('error'), 650)
           } finally {
             button.disabled = false
           }
