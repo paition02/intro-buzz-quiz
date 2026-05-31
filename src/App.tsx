@@ -138,15 +138,12 @@ function ConsolePage() {
     setConsoleMessage(`Apple Musicにログインしました。${playlists.length}件のライブラリプレイリストを取得しました`)
   })
 
-  const handleSelectTracks = () => run(async () => {
-    const playlists = libraryPlaylists.length > 0 ? libraryPlaylists : await loadLibraryPlaylists()
-    const selected = playlists.find((playlist) => playlist.id === selectedPlaylistId)
-    if (!selected) throw new Error('プレイリストを選択してください')
-
-    const tracks = await musicKit.getPlaylistTracks(selected.id, selected.name, 'library')
+  const selectPlaylist = (playlist: { id: string; name: string }) => run(async () => {
+    setSelectedPlaylistId(playlist.id)
+    const tracks = await musicKit.getPlaylistTracks(playlist.id, playlist.name, 'library')
     await musicKit.prepareQueue(tracks)
-    await post('/api/console/playlists', { playlists: [selected.name], tracks })
-    setConsoleMessage(`${selected.name}: ${tracks.length}曲をMusicKitキューへ読み込みました`)
+    await post('/api/console/playlists', { playlists: [playlist.name], tracks })
+    setConsoleMessage(`${playlist.name}: ${tracks.length}曲をMusicKitキューへ読み込みました`)
   })
 
   const handleStart = () => run(async () => {
@@ -215,7 +212,7 @@ function ConsolePage() {
                     type="button"
                     className={selected ? 'playlist-row selected' : 'playlist-row'}
                     disabled={busy || !musicKit.authorized}
-                    onClick={() => setSelectedPlaylistId(playlist.id)}
+                    onClick={() => selectPlaylist(playlist)}
                     aria-pressed={selected}
                   >
                     <span className="playlist-check">{selected ? '✓' : ''}</span>
@@ -226,8 +223,7 @@ function ConsolePage() {
             }) : <li className="hint">ログイン後にライブラリのプレイリストを取得します</li>}
           </ul>
           <div className="actions">
-            <button disabled={busy || !musicKit.authorized || !selectedPlaylistId || musicKit.preparing} onClick={handleSelectTracks}>曲を選択</button>
-            <button disabled={busy || state.phase !== 'ready'} onClick={handleStart}>ゲーム開始</button>
+            <button disabled={busy || state.phase !== 'ready' || !selectedPlaylistId || musicKit.preparing} onClick={handleStart}>ゲーム開始</button>
           </div>
           <p className="hint">参加中: {joinedPlayers.length ? joinedPlayers.map((p) => p.id).join(', ') : 'まだいません'}</p>
         </div>
