@@ -104,7 +104,8 @@ function phaseLabel(phase: Phase, step: GameStep) {
 function ConsolePage() {
   const state = useGameState()
   const musicKit = useMusicKitPlayback()
-  const [playlistText, setPlaylistText] = useState('ラブライブ')
+  const [libraryPlaylists, setLibraryPlaylists] = useState<{ id: string; name: string }[]>([])
+  const [selectedPlaylistId, setSelectedPlaylistId] = useState('')
   const [seconds, setSeconds] = useState(0.5)
   const [busy, setBusy] = useState(false)
   const [consoleMessage, setConsoleMessage] = useState<string | null>(null)
@@ -123,46 +124,29 @@ function ConsolePage() {
     }
   }
 
+  const loadLibraryPlaylists = async (): Promise<{ id: string; name: string }[]> => {
+    const playlists = await musicKit.getLibraryPlaylists() as { id: string; name: string }[]
+    setLibraryPlaylists(playlists)
+    setSelectedPlaylistId((current) => current || playlists[0]?.id || '')
+    return playlists
+  }
+
   const handleLogin = () => run(async () => {
     await musicKit.authorize()
     await post('/api/console/login')
-    setConsoleMessage('Apple Musicにログインしました')
+    const playlists = await loadLibraryPlaylists()
+    setConsoleMessage(`Apple Musicにログインしました。${playlists.length}件のライブラリプレイリストを取得しました`)
   })
 
   const handleSelectTracks = () => run(async () => {
-    const query = playlistText.split('\n').map((line) => line.trim()).filter(Boolean)[0]
-    if (!query) throw new Error('プレイリスト名かIDを入れてください')
+    const playlists = libraryPlaylists.length > 0 ? libraryPlaylists : await loadLibraryPlaylists()
+    const selected = playlists.find((playlist) => playlist.id === selectedPlaylistId) ?? playlists[0]
+    if (!selected) throw new Error('ライブラリにプレイリストが見つかりません')
 
-    let source: 'library' | 'catalog' = 'library'
-    let playlistId = query
-    let playlistName = query
-
-    if (query.startsWith('catalog:') || query.startsWith('library:')) {
-      const [prefix, ...rest] = query.split(':')
-      source = prefix as 'library' | 'catalog'
-      playlistId = rest.join(':')
-    } else {
-      const libraryPlaylists = musicKit.authorized ? await musicKit.getLibraryPlaylists() : []
-      const libraryMatch = libraryPlaylists.find((playlist: { id: string; name: string }) => playlist.name === query)
-        ?? libraryPlaylists.find((playlist: { id: string; name: string }) => playlist.name.includes(query))
-      if (libraryMatch) {
-        source = 'library'
-        playlistId = libraryMatch.id
-        playlistName = libraryMatch.name
-      } else {
-        const catalogMatches = await musicKit.searchCatalogPlaylists(query)
-        const catalogMatch = catalogMatches[0]
-        if (!catalogMatch) throw new Error(`プレイリストが見つかりません: ${query}`)
-        source = 'catalog'
-        playlistId = catalogMatch.id
-        playlistName = catalogMatch.name
-      }
-    }
-
-    const tracks = await musicKit.getPlaylistTracks(playlistId, playlistName, source)
+    const tracks = await musicKit.getPlaylistTracks(selected.id, selected.name, 'library')
     await musicKit.prepareQueue(tracks)
-    await post('/api/console/playlists', { playlists: [playlistName], tracks })
-    setConsoleMessage(`${playlistName}: ${tracks.length}曲をMusicKitキューへ読み込みました`)
+    await post('/api/console/playlists', { playlists: [selected.name], tracks })
+    setConsoleMessage(`${selected.name}: ${tracks.length}曲をMusicKitキューへ読み込みました`)
   })
 
   const handleStart = () => run(async () => {
@@ -219,11 +203,16 @@ function ConsolePage() {
         <div className="panel">
           <h2>2. 準備</h2>
           <label>
-            プレイリスト名 / ID
-            <textarea value={playlistText} onChange={(event) => setPlaylistText(event.target.value)} />
+            ライブラリプレイリスト
+            <select value={selectedPlaylistId} onChange={(event) => setSelectedPlaylistId(event.target.value)} disabled={busy || !musicKit.authorized}>
+              {libraryPlaylists.length ? libraryPlaylists.map((playlist) => (
+                <option value={playlist.id} key={playlist.id}>{playlist.name}</option>
+              )) : <option value="">ログイン後に取得します</option>}
+            </select>
           </label>
           <div className="actions">
-            <button disabled={busy || !musicKit.authorized || musicKit.preparing} onClick={handleSelectTracks}>曲を選択</button>
+            <button className="ghost" disabled={busy || !musicKit.authorized} onClick={() => run(async () => { await loadLibraryPlaylists() })}>再読み込み</button>
+            <button disabled={busy || !musicKit.authorized || !selectedPlaylistId || musicKit.preparing} onClick={handleSelectTracks}>曲を選択</button>
             <button disabled={busy || state.phase !== 'ready'} onClick={handleStart}>ゲーム開始</button>
           </div>
           <p className="hint">参加中: {joinedPlayers.length ? joinedPlayers.map((p) => p.id).join(', ') : 'まだいません'}</p>
