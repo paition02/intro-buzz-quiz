@@ -75,6 +75,7 @@ let state: GameState = {
   updatedAt: Date.now(),
 }
 
+let playbackSequence = 0
 
 const appleTeamId = process.env.APPLE_TEAM_ID ?? ''
 const appleKeyId = process.env.APPLE_KEY_ID ?? ''
@@ -234,27 +235,38 @@ app.post('/api/console/start', (_req, res) => {
 
 app.post('/api/console/play', (req, res) => {
   const seconds = Number(req.body?.seconds)
+  let playbackToken: number | null = null
+  let playbackDurationMs = 0
   update(() => {
     if (Number.isFinite(seconds) && seconds > 0) state.playbackSeconds = Math.min(30, Math.max(0.1, seconds))
     if (state.phase === 'game' && state.step === 'beforePlayback') {
+      playbackToken = ++playbackSequence
+      playbackDurationMs = Math.ceil(state.playbackSeconds * 1000)
       state.step = 'playing'
       state.answererId = null
       state.message = `${state.playbackSeconds}秒再生中。早押し待ちです`
     }
   })
+
+  if (playbackToken != null) {
+    setTimeout(() => {
+      update(() => {
+        if (
+          state.phase === 'game' &&
+          state.step === 'playing' &&
+          state.answererId === null &&
+          playbackSequence === playbackToken
+        ) {
+          state.step = 'beforePlayback'
+          state.message = 'もう一度再生できます'
+        }
+      })
+    }, playbackDurationMs)
+  }
+
   res.json(publicState())
 })
 
-
-app.post('/api/console/finish-playback', (_req, res) => {
-  update(() => {
-    if (state.phase === 'game' && state.step === 'playing' && state.answererId === null) {
-      state.step = 'beforePlayback'
-      state.message = 'もう一度再生できます'
-    }
-  })
-  res.json(publicState())
-})
 
 app.post('/api/console/judge', (req, res) => {
   const result = req.body?.result === 'correct' ? 'correct' : 'wrong'

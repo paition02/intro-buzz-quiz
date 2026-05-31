@@ -256,6 +256,13 @@ function ConsolePage() {
     })
   }, [musicKit.ready, musicKit.authorized, state.hostLoggedIn])
 
+  useEffect(() => {
+    if (state.step !== 'answering' || !musicKit.playing) return
+    void musicKit.stop().catch((error) => {
+      setConsoleMessage(error instanceof Error ? error.message : String(error))
+    })
+  }, [state.step, musicKit])
+
   const visiblePlaylists = useMemo(() => {
     const query = playlistSearch.trim().toLowerCase()
     if (!query) return libraryPlaylists
@@ -350,7 +357,6 @@ function ConsolePage() {
     setBusy(false)
     try {
       await musicKit.playIntro(seconds)
-      await post('/api/console/finish-playback')
     } catch (error) {
       setConsoleMessage(error instanceof Error ? error.message : String(error))
     }
