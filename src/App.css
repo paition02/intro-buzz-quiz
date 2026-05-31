@@ -736,3 +736,13 @@ input[type="range"]::-moz-range-thumb {
   height: 112px;
   border-radius: 64px 64px 28px 28px;
 }
+
+.gameboard .player.reacting .player-figure {
+  animation: player-react-pop 0.8s ease-out both;
+}
+
+@keyframes player-react-pop {
+  0% { transform: translateY(0) scale(1); }
+  18% { transform: translateY(-10px) scale(1.22); }
+  100% { transform: translateY(0) scale(1); }
+}

@@ -84,6 +84,24 @@ async function post<T = GameState>(path: string, body?: unknown): Promise<T> {
 }
 
 
+
+function loadSessionValue<T>(key: string, fallback: T): T {
+  try {
+    const stored = sessionStorage.getItem(key)
+    return stored == null ? fallback : JSON.parse(stored) as T
+  } catch {
+    return fallback
+  }
+}
+
+function saveSessionValue(key: string, value: unknown) {
+  try {
+    sessionStorage.setItem(key, JSON.stringify(value))
+  } catch {
+    // sessionStorage can be unavailable in strict privacy modes.
+  }
+}
+
 function hashString(value: string) {
   let hash = 0
   for (let i = 0; i < value.length; i += 1) {
@@ -103,11 +121,11 @@ function playerColor(id: string) {
   }
 }
 
-function PlayerBadge({ id, active = false, label = true }: { id: string; active?: boolean; label?: boolean }) {
+function PlayerBadge({ id, active = false, reacting = false, label = true }: { id: string; active?: boolean; reacting?: boolean; label?: boolean }) {
   const color = playerColor(id)
   return (
     <span
-      className={active ? 'player active' : 'player'}
+      className={['player', active && 'active', reacting && 'reacting'].filter(Boolean).join(' ')}
       style={{
         '--player-color': color.background,
         '--player-color-soft': color.softBackground,
@@ -215,17 +233,22 @@ function ConsolePage() {
   const state = useGameState()
   const musicKit = useMusicKitPlayback()
   const [libraryPlaylists, setLibraryPlaylists] = useState<{ id: string; name: string }[]>([])
-  const [playlistSearch, setPlaylistSearch] = useState('')
-  const [selectedPlaylistId, setSelectedPlaylistId] = useState('')
-  const [expandedPlaylistIds, setExpandedPlaylistIds] = useState<Set<string>>(() => new Set())
+  const [playlistSearch, setPlaylistSearch] = useState(() => loadSessionValue('intro-buzz-console-playlist-search', ''))
+  const [selectedPlaylistId, setSelectedPlaylistId] = useState(() => loadSessionValue('intro-buzz-console-selected-playlist-id', ''))
+  const [expandedPlaylistIds, setExpandedPlaylistIds] = useState<Set<string>>(() => new Set(loadSessionValue<string[]>('intro-buzz-console-expanded-playlist-ids', [])))
   const [playlistTracks, setPlaylistTracks] = useState<Record<string, Track[]>>({})
   const [loadingPlaylistIds, setLoadingPlaylistIds] = useState<Set<string>>(() => new Set())
   const [playlistErrors, setPlaylistErrors] = useState<Record<string, string>>({})
-  const [seconds, setSeconds] = useState(0.5)
+  const [seconds, setSeconds] = useState(() => loadSessionValue('intro-buzz-console-seconds', 0.5))
   const [busy, setBusy] = useState(false)
   const [consoleMessage, setConsoleMessage] = useState<string | null>(null)
 
   const joinedPlayers = useMemo(() => state.players.filter((player) => player.joined), [state.players])
+
+  useEffect(() => saveSessionValue('intro-buzz-console-playlist-search', playlistSearch), [playlistSearch])
+  useEffect(() => saveSessionValue('intro-buzz-console-selected-playlist-id', selectedPlaylistId), [selectedPlaylistId])
+  useEffect(() => saveSessionValue('intro-buzz-console-expanded-playlist-ids', [...expandedPlaylistIds]), [expandedPlaylistIds])
+  useEffect(() => saveSessionValue('intro-buzz-console-seconds', seconds), [seconds])
 
   useEffect(() => {
     if (!musicKit.ready || !musicKit.authorized || state.hostLoggedIn) return
@@ -479,7 +502,15 @@ function ConsolePage() {
 
 function GameboardPage() {
   const state = useGameState()
+  const [now, setNow] = useState(() => Date.now())
   const joinedPlayers = state.players.filter((player) => player.joined)
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 120)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  const isReacting = (player: Player) => player.lastActionAt != null && now - player.lastActionAt < 800
 
   return (
     <main className={`gameboard ${state.step} ${state.lastResult ?? ''}`}>
@@ -511,7 +542,7 @@ function GameboardPage() {
           <h2>Players</h2>
           <div className="player-list">
             {joinedPlayers.length ? joinedPlayers.map((player) => (
-              <PlayerBadge id={player.id} active={player.id === state.answererId} label={false} key={player.id} />
+              <PlayerBadge id={player.id} active={player.id === state.answererId} reacting={isReacting(player)} label={false} key={player.id} />
             )) : <span className="hint">準備フェーズでボタンを押すと参加できます</span>}
           </div>
         </div>
