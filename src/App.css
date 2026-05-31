@@ -259,11 +259,23 @@ button.small {
 .playlist-row {
   width: 100%;
   border-radius: 16px;
-  padding: 10px 12px;
   background: rgba(255, 255, 255, 0.07);
   color: #f7f2ea;
-  box-shadow: none;
   border: 1px solid rgba(255, 255, 255, 0.12);
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
+}
+
+.playlist-select {
+  flex: 1;
+  min-width: 0;
+  border-radius: 0;
+  padding: 10px 12px;
+  background: transparent;
+  color: inherit;
+  box-shadow: none;
+  border: 0;
   display: flex;
   justify-content: flex-start;
   gap: 10px;
@@ -304,29 +316,32 @@ button.small {
   background: rgba(255, 255, 255, 0.04);
 }
 
-.playlist-row-wrap {
-  display: flex;
-  gap: 8px;
-}
-
-.playlist-row-wrap .playlist-row {
-  flex: 1;
-}
-
 .playlist-expand {
-  width: 44px;
-  min-width: 44px;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.07);
+  width: 48px;
+  min-width: 48px;
+  border-radius: 0;
+  background: transparent;
   color: #f7f2ea;
   box-shadow: none;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
   font-size: 1.5rem;
-  transition: transform 0.16s ease;
+}
+
+.playlist-expand::before {
+  content: '';
 }
 
 .playlist-expand.expanded {
-  transform: rotate(90deg);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.playlist-expand.expanded {
+  transform: none;
+}
+
+.playlist-expand.expanded {
+  color: #ffb14e;
 }
 
 .playlist-songs {

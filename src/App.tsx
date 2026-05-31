@@ -271,10 +271,10 @@ function ConsolePage() {
               const tracks = playlistTracks[playlist.id]
               return (
                 <li className="playlist-item" key={playlist.id}>
-                  <div className="playlist-row-wrap">
+                  <div className={selected ? 'playlist-row selected' : 'playlist-row'}>
                     <button
                       type="button"
-                      className={selected ? 'playlist-row selected' : 'playlist-row'}
+                      className="playlist-select"
                       disabled={busy || !musicKit.authorized}
                       onClick={() => selectPlaylist(playlist)}
                       aria-pressed={selected}
@@ -289,7 +289,7 @@ function ConsolePage() {
                       onClick={() => togglePlaylistExpanded(playlist)}
                       aria-label={expanded ? 'プレイリストを閉じる' : 'プレイリストを開く'}
                     >
-                      ›
+                      {expanded ? '⌄' : '›'}
                     </button>
                   </div>
                   {expanded && (
