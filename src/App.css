@@ -229,3 +229,5 @@ textarea { min-height: 110px; resize: vertical; }
   .grid { grid-template-columns: 1fr; }
   .gameboard { padding: 14px; }
 }
+
+.error { color: #ff8aa3; font-weight: 700; }

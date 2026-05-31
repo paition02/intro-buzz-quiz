@@ -3,9 +3,13 @@ import { createServer } from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Response } from 'express'
+import { SignJWT, importPKCS8 } from 'jose'
+import dotenv from 'dotenv'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const rootDir = path.resolve(__dirname, '..')
+dotenv.config({ path: path.join(rootDir, '.env') })
+
 const isProduction = process.env.NODE_ENV === 'production'
 
 type Phase = 'initialization' | 'ready' | 'game'
@@ -71,6 +75,28 @@ let state: GameState = {
   updatedAt: Date.now(),
 }
 
+
+const appleTeamId = process.env.APPLE_TEAM_ID ?? ''
+const appleKeyId = process.env.APPLE_KEY_ID ?? ''
+const applePrivateKey = (process.env.APPLE_PRIVATE_KEY ?? '').replace(/\\n/g, '\n')
+
+function hasAppleMusicCredentials() {
+  return Boolean(appleTeamId && appleKeyId && applePrivateKey)
+}
+
+async function generateAppleMusicToken(expiresInSeconds = 60 * 60 * 24) {
+  const now = Math.floor(Date.now() / 1000)
+  const expiresAt = now + expiresInSeconds
+  const key = await importPKCS8(applePrivateKey, 'ES256')
+  const token = await new SignJWT({})
+    .setProtectedHeader({ alg: 'ES256', kid: appleKeyId })
+    .setIssuer(appleTeamId)
+    .setIssuedAt(now)
+    .setExpirationTime(expiresAt)
+    .sign(key)
+  return { token, expiresAt: new Date(expiresAt * 1000) }
+}
+
 const clients = new Set<Response>()
 
 function publicState() {
@@ -111,6 +137,20 @@ function loadCurrentTrack() {
 const app = express()
 const server = createServer(app)
 app.use(express.json())
+
+
+app.get('/api/token', async (_req, res) => {
+  if (!hasAppleMusicCredentials()) {
+    res.status(401).json({ error: 'Apple Music credentials are not configured' })
+    return
+  }
+  try {
+    const { token, expiresAt } = await generateAppleMusicToken()
+    res.json({ token, expiresAt: expiresAt.toISOString() })
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Token generation failed' })
+  }
+})
 
 app.get('/api/state', (_req, res) => res.json(publicState()))
 
@@ -167,12 +207,22 @@ app.post('/api/console/login', (_req, res) => {
 
 app.post('/api/console/playlists', (req, res) => {
   const playlists = Array.isArray(req.body?.playlists) ? req.body.playlists.map(String).filter(Boolean) : []
+  const tracks = Array.isArray(req.body?.tracks)
+    ? req.body.tracks.map((track: Partial<Track>) => ({
+      id: String(track.id ?? ''),
+      title: String(track.title ?? ''),
+      artist: String(track.artist ?? ''),
+      playlist: String(track.playlist ?? playlists[0] ?? ''),
+    })).filter((track: Track) => track.id && track.title)
+    : []
   update(() => {
     state.playlists = playlists
-    state.tracks = playlists.length > 0
-      ? playlists.flatMap((playlist, i) => sampleTracks.map((track) => ({ ...track, id: `${i}-${track.id}`, playlist })))
-      : sampleTracks
-    state.message = `${state.playlists.length || 1}件のプレイリストを選択中。開始できます`
+    state.tracks = tracks.length > 0
+      ? tracks
+      : playlists.length > 0
+        ? playlists.flatMap((playlist, i) => sampleTracks.map((track) => ({ ...track, id: `${i}-${track.id}`, playlist })))
+        : sampleTracks
+    state.message = `${state.tracks.length}曲を選択中。開始できます`
   })
   res.json(publicState())
 })

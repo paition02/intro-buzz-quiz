@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useMusicKitPlayback } from './useMusicKit'
 import './App.css'
 
 type Phase = 'initialization' | 'ready' | 'game'
@@ -32,6 +33,7 @@ type GameState = {
   hostLoggedIn: boolean
   playlists: string[]
   players: Player[]
+  currentTrackIndex: number
   currentTrack: Track | null
   playbackSeconds: number
   answererId: string | null
@@ -46,6 +48,7 @@ const initialState: GameState = {
   hostLoggedIn: false,
   playlists: [],
   players: [],
+  currentTrackIndex: -1,
   currentTrack: null,
   playbackSeconds: 3,
   answererId: null,
@@ -71,12 +74,14 @@ function useGameState() {
   return state
 }
 
-async function post(path: string, body?: unknown) {
-  await fetch(path, {
+async function post<T = GameState>(path: string, body?: unknown): Promise<T> {
+  const res = await fetch(path, {
     method: 'POST',
     headers: body ? { 'Content-Type': 'application/json' } : undefined,
     body: body ? JSON.stringify(body) : undefined,
   })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json() as Promise<T>
 }
 
 function phaseLabel(phase: Phase, step: GameStep) {
@@ -98,10 +103,87 @@ function phaseLabel(phase: Phase, step: GameStep) {
 
 function ConsolePage() {
   const state = useGameState()
-  const [playlistText, setPlaylistText] = useState('Sample LoveLive!')
+  const musicKit = useMusicKitPlayback()
+  const [playlistText, setPlaylistText] = useState('ラブライブ')
   const [seconds, setSeconds] = useState(3)
+  const [busy, setBusy] = useState(false)
+  const [consoleMessage, setConsoleMessage] = useState<string | null>(null)
 
   const joinedPlayers = useMemo(() => state.players.filter((player) => player.joined), [state.players])
+
+  const run = async (action: () => Promise<void>) => {
+    setBusy(true)
+    setConsoleMessage(null)
+    try {
+      await action()
+    } catch (error) {
+      setConsoleMessage(error instanceof Error ? error.message : String(error))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleLogin = () => run(async () => {
+    await musicKit.authorize()
+    await post('/api/console/login')
+    setConsoleMessage('Apple Musicにログインしました')
+  })
+
+  const handleSelectTracks = () => run(async () => {
+    const query = playlistText.split('\n').map((line) => line.trim()).filter(Boolean)[0]
+    if (!query) throw new Error('プレイリスト名かIDを入れてください')
+
+    let source: 'library' | 'catalog' = 'library'
+    let playlistId = query
+    let playlistName = query
+
+    if (query.startsWith('catalog:') || query.startsWith('library:')) {
+      const [prefix, ...rest] = query.split(':')
+      source = prefix as 'library' | 'catalog'
+      playlistId = rest.join(':')
+    } else {
+      const libraryPlaylists = musicKit.authorized ? await musicKit.getLibraryPlaylists() : []
+      const libraryMatch = libraryPlaylists.find((playlist: { id: string; name: string }) => playlist.name === query)
+        ?? libraryPlaylists.find((playlist: { id: string; name: string }) => playlist.name.includes(query))
+      if (libraryMatch) {
+        source = 'library'
+        playlistId = libraryMatch.id
+        playlistName = libraryMatch.name
+      } else {
+        const catalogMatches = await musicKit.searchCatalogPlaylists(query)
+        const catalogMatch = catalogMatches[0]
+        if (!catalogMatch) throw new Error(`プレイリストが見つかりません: ${query}`)
+        source = 'catalog'
+        playlistId = catalogMatch.id
+        playlistName = catalogMatch.name
+      }
+    }
+
+    const tracks = await musicKit.getPlaylistTracks(playlistId, playlistName, source)
+    await musicKit.prepareQueue(tracks)
+    await post('/api/console/playlists', { playlists: [playlistName], tracks })
+    setConsoleMessage(`${playlistName}: ${tracks.length}曲をMusicKitキューへ読み込みました`)
+  })
+
+  const handleStart = () => run(async () => {
+    const nextState = await post('/api/console/start')
+    if (nextState.currentTrackIndex >= 0) await musicKit.loadTrack(nextState.currentTrackIndex)
+  })
+
+  const handlePlay = () => run(async () => {
+    await musicKit.playIntro(seconds)
+    await post('/api/console/play', { seconds })
+  })
+
+  const handleJudge = (result: 'correct' | 'wrong') => run(async () => {
+    await musicKit.stop()
+    await post('/api/console/judge', { result })
+  })
+
+  const handleNextRound = () => run(async () => {
+    const nextState = await post('/api/console/next-round')
+    if (nextState.currentTrackIndex >= 0) await musicKit.loadTrack(nextState.currentTrackIndex)
+  })
 
   return (
     <main className="shell console">
@@ -118,6 +200,8 @@ function ConsolePage() {
           <p className="eyebrow">現在</p>
           <h2>{phaseLabel(state.phase, state.step)}</h2>
           <p>{state.message}</p>
+          {consoleMessage && <p className="hint">{consoleMessage}</p>}
+          {musicKit.error && <p className="error">MusicKit: {musicKit.error}</p>}
         </div>
         <button className="danger" onClick={() => post('/api/console/reset')}>リセット</button>
       </section>
@@ -125,19 +209,23 @@ function ConsolePage() {
       <section className="grid">
         <div className="panel">
           <h2>1. 初期化</h2>
-          <p>現時点ではApple Music連携の差し込み口。MVPではログイン済みとして先へ進みます。</p>
-          <button disabled={state.hostLoggedIn} onClick={() => post('/api/console/login')}>Apple Musicにログイン</button>
+          <p>Apple Musicにログインして、MusicKitで実際に再生できる状態にします。</p>
+          <div className="actions">
+            <button disabled={busy || !musicKit.ready || musicKit.authorized} onClick={handleLogin}>Apple Musicにログイン</button>
+            <button className="ghost" disabled={busy || !musicKit.authorized} onClick={() => run(musicKit.unauthorize)}>ログアウト</button>
+          </div>
+          <p className="hint">MusicKit: {musicKit.ready ? (musicKit.authorized ? 'ログイン済み' : '未ログイン') : '準備中'}</p>
         </div>
 
         <div className="panel">
           <h2>2. 準備</h2>
           <label>
-            プレイリスト（1行1件）
+            プレイリスト名 / ID
             <textarea value={playlistText} onChange={(event) => setPlaylistText(event.target.value)} />
           </label>
           <div className="actions">
-            <button onClick={() => post('/api/console/playlists', { playlists: playlistText.split('\n').map((line) => line.trim()).filter(Boolean) })}>曲を選択</button>
-            <button disabled={state.phase !== 'ready'} onClick={() => post('/api/console/start')}>ゲーム開始</button>
+            <button disabled={busy || !musicKit.authorized || musicKit.preparing} onClick={handleSelectTracks}>曲を選択</button>
+            <button disabled={busy || state.phase !== 'ready'} onClick={handleStart}>ゲーム開始</button>
           </div>
           <p className="hint">参加中: {joinedPlayers.length ? joinedPlayers.map((p) => p.id).join(', ') : 'まだいません'}</p>
         </div>
@@ -149,13 +237,13 @@ function ConsolePage() {
             <input type="number" min="0.1" max="30" step="0.1" value={seconds} onChange={(event) => setSeconds(Number(event.target.value))} />
           </label>
           <div className="actions">
-            <button disabled={state.step !== 'beforePlayback'} onClick={() => post('/api/console/play', { seconds })}>再生</button>
-            <button disabled={state.step !== 'answering'} onClick={() => post('/api/console/judge', { result: 'correct' })}>正解</button>
-            <button disabled={state.step !== 'answering'} onClick={() => post('/api/console/judge', { result: 'wrong' })}>不正解</button>
+            <button disabled={busy || state.step !== 'beforePlayback'} onClick={handlePlay}>{musicKit.playing ? '再生中' : '再生'}</button>
+            <button disabled={busy || state.step !== 'answering'} onClick={() => handleJudge('correct')}>正解</button>
+            <button disabled={busy || state.step !== 'answering'} onClick={() => handleJudge('wrong')}>不正解</button>
           </div>
           <div className="actions">
-            <button disabled={state.step !== 'reveal'} onClick={() => post('/api/console/next-round')}>次のラウンドへ</button>
-            <button disabled={state.phase !== 'game'} onClick={() => post('/api/console/next-game')}>次のゲームへ</button>
+            <button disabled={busy || state.step !== 'reveal'} onClick={handleNextRound}>次のラウンドへ</button>
+            <button disabled={busy || state.phase !== 'game'} onClick={() => post('/api/console/next-game')}>次のゲームへ</button>
           </div>
         </div>
 
