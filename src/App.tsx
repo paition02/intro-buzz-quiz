@@ -336,11 +336,25 @@ function ConsolePage() {
     if (nextState.currentTrackIndex >= 0) await musicKit.loadTrack(nextState.currentTrackIndex)
   })
 
-  const handlePlay = () => run(async () => {
-    await post('/api/console/play', { seconds })
-    await musicKit.playIntro(seconds)
-    await post('/api/console/finish-playback')
-  })
+  const handlePlay = async () => {
+    setBusy(true)
+    setConsoleMessage(null)
+    try {
+      await post('/api/console/play', { seconds })
+    } catch (error) {
+      setConsoleMessage(error instanceof Error ? error.message : String(error))
+      setBusy(false)
+      return
+    }
+
+    setBusy(false)
+    try {
+      await musicKit.playIntro(seconds)
+      await post('/api/console/finish-playback')
+    } catch (error) {
+      setConsoleMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
 
   const handleJudge = (result: 'correct' | 'wrong') => run(async () => {
     await musicKit.stop()
