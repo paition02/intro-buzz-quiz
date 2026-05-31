@@ -105,7 +105,7 @@ function ConsolePage() {
   const state = useGameState()
   const musicKit = useMusicKitPlayback()
   const [playlistText, setPlaylistText] = useState('ラブライブ')
-  const [seconds, setSeconds] = useState(3)
+  const [seconds, setSeconds] = useState(0.5)
   const [busy, setBusy] = useState(false)
   const [consoleMessage, setConsoleMessage] = useState<string | null>(null)
 
