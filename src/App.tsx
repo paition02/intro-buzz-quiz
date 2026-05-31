@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { io } from 'socket.io-client'
 import { useMusicKitPlayback } from './useMusicKit'
 import './App.css'
@@ -81,6 +81,44 @@ async function post<T = GameState>(path: string, body?: unknown): Promise<T> {
   })
   if (!res.ok) throw new Error(await res.text())
   return res.json() as Promise<T>
+}
+
+
+function hashString(value: string) {
+  let hash = 0
+  for (let i = 0; i < value.length; i += 1) {
+    hash = Math.imul(31, hash) + value.charCodeAt(i) | 0
+  }
+  return hash >>> 0
+}
+
+function playerColor(id: string) {
+  const hue = hashString(id) % 360
+  return {
+    hue,
+    background: `hsl(${hue} 76% 42%)`,
+    softBackground: `hsl(${hue} 76% 42% / 0.18)`,
+    border: `hsl(${hue} 76% 64% / 0.65)`,
+    text: `hsl(${hue} 90% 92%)`,
+  }
+}
+
+function PlayerBadge({ id, active = false }: { id: string; active?: boolean }) {
+  const color = playerColor(id)
+  return (
+    <span
+      className={active ? 'player active' : 'player'}
+      style={{
+        '--player-color': color.background,
+        '--player-color-soft': color.softBackground,
+        '--player-color-border': color.border,
+        '--player-color-text': color.text,
+      } as CSSProperties}
+    >
+      <span className="player-color-dot" />
+      {id}
+    </span>
+  )
 }
 
 function phaseLabel(phase: Phase, step: GameStep) {
@@ -392,7 +430,12 @@ function ConsolePage() {
           <div className="actions">
             <button disabled={busy || state.phase !== 'ready' || !selectedPlaylistId || musicKit.preparing} onClick={handleStart}>ゲーム開始</button>
           </div>
-          <p className="hint">参加中: {joinedPlayers.length ? joinedPlayers.map((p) => p.id).join(', ') : 'まだいません'}</p>
+          <div className="joined-player-list">
+            <span className="hint">参加中:</span>
+            {joinedPlayers.length ? joinedPlayers.map((player) => (
+              <PlayerBadge id={player.id} key={player.id} />
+            )) : <span className="hint">まだいません</span>}
+          </div>
         </div>
 
         <div className="panel">
@@ -438,7 +481,14 @@ function GameboardPage() {
         <h1>{state.message}</h1>
 
         {state.step === 'playing' && <div className="pulse">♪</div>}
-        {state.step === 'answering' && <div className="answerer">{state.answererId}</div>}
+        {state.step === 'answering' && state.answererId && (
+          <div
+            className="answerer colored"
+            style={{ '--player-color': playerColor(state.answererId).background } as CSSProperties}
+          >
+            {state.answererId}
+          </div>
+        )}
         {state.step === 'correct' && <div className="effect success">正解！</div>}
         {state.step === 'wrong' && <div className="effect miss">不正解</div>}
 
@@ -454,7 +504,7 @@ function GameboardPage() {
           <h2>Players</h2>
           <div className="player-list">
             {joinedPlayers.length ? joinedPlayers.map((player) => (
-              <span className={player.id === state.answererId ? 'player active' : 'player'} key={player.id}>{player.id}</span>
+              <PlayerBadge id={player.id} active={player.id === state.answererId} key={player.id} />
             )) : <span className="hint">準備フェーズでボタンを押すと参加できます</span>}
           </div>
         </div>

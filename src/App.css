@@ -586,3 +586,44 @@ input[type="range"]::-moz-range-thumb {
   user-select: none;
   -webkit-user-select: none;
 }
+
+.joined-player-list {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.player {
+  background: var(--player-color-soft, rgba(255, 255, 255, 0.1));
+  color: var(--player-color-text, #f7f2ea);
+  border: 1px solid var(--player-color-border, rgba(255, 255, 255, 0.12));
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.player.active {
+  background: var(--player-color, #ffb14e);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.52);
+}
+
+.player-color-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--player-color, #ffb14e);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.18);
+  flex: 0 0 auto;
+}
+
+.player.active .player-color-dot {
+  background: #fff;
+}
+
+.answerer.colored {
+  color: var(--player-color, #ffb14e);
+  text-shadow: 0 0 32px color-mix(in srgb, var(--player-color, #ffb14e), transparent 50%);
+}
