@@ -384,3 +384,63 @@ button.small {
 
 .song-title { font-weight: 800; }
 .song-artist { color: #a99ca4; font-size: 0.85rem; }
+
+.login-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.login-status strong {
+  display: block;
+  color: #f7f2ea;
+}
+
+.login-status p {
+  margin: 4px 0 0;
+  color: #d4c8ce;
+  line-height: 1.4;
+}
+
+.status-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+  background: #a99ca4;
+  box-shadow: 0 0 0 6px rgba(169, 156, 164, 0.16);
+}
+
+.login-status.signed-in {
+  background: rgba(125, 255, 190, 0.1);
+  border-color: rgba(125, 255, 190, 0.35);
+}
+
+.login-status.signed-in .status-dot {
+  background: #7dffbe;
+  box-shadow: 0 0 0 6px rgba(125, 255, 190, 0.18);
+}
+
+.login-status.signed-out {
+  background: rgba(255, 138, 163, 0.1);
+  border-color: rgba(255, 138, 163, 0.35);
+}
+
+.login-status.signed-out .status-dot {
+  background: #ff8aa3;
+  box-shadow: 0 0 0 6px rgba(255, 138, 163, 0.18);
+}
+
+.login-status.loading .status-dot {
+  animation: pulse-dot 0.9s ease-in-out infinite alternate;
+}
+
+@keyframes pulse-dot {
+  from { opacity: 0.45; transform: scale(0.9); }
+  to { opacity: 1; transform: scale(1.1); }
+}

@@ -236,11 +236,17 @@ function ConsolePage() {
         <div className="panel">
           <h2>1. 初期化</h2>
           <p>Apple Musicにログインして、MusicKitで実際に再生できる状態にします。</p>
+          <div className={musicKit.ready ? (musicKit.authorized ? 'login-status signed-in' : 'login-status signed-out') : 'login-status loading'}>
+            <span className="status-dot" />
+            <div>
+              <strong>{musicKit.ready ? (musicKit.authorized ? 'Apple Music ログイン済み' : 'Apple Music 未ログイン') : 'MusicKit 準備中'}</strong>
+              <p>{musicKit.ready ? (musicKit.authorized ? 'ライブラリのプレイリストを選択できます' : 'ログインするとライブラリのプレイリストを取得できます') : 'MusicKit JS を初期化しています'}</p>
+            </div>
+          </div>
           <div className="actions">
             <button disabled={busy || !musicKit.ready || musicKit.authorized} onClick={handleLogin}>Apple Musicにログイン</button>
             <button className="ghost" disabled={busy || !musicKit.authorized} onClick={() => run(musicKit.unauthorize)}>ログアウト</button>
           </div>
-          <p className="hint">MusicKit: {musicKit.ready ? (musicKit.authorized ? 'ログイン済み' : '未ログイン') : '準備中'}</p>
         </div>
 
         <div className="panel">
