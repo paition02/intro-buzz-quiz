@@ -117,6 +117,14 @@ function ConsolePage() {
   const [consoleMessage, setConsoleMessage] = useState<string | null>(null)
 
   const joinedPlayers = useMemo(() => state.players.filter((player) => player.joined), [state.players])
+
+  useEffect(() => {
+    if (!musicKit.ready || !musicKit.authorized || state.hostLoggedIn) return
+    void post('/api/console/login').catch((error) => {
+      setConsoleMessage(error instanceof Error ? error.message : String(error))
+    })
+  }, [musicKit.ready, musicKit.authorized, state.hostLoggedIn])
+
   const visiblePlaylists = useMemo(() => {
     const query = playlistSearch.trim().toLowerCase()
     if (!query) return libraryPlaylists
