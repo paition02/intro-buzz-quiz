@@ -106,6 +106,7 @@ function ConsolePage() {
   const state = useGameState()
   const musicKit = useMusicKitPlayback()
   const [libraryPlaylists, setLibraryPlaylists] = useState<{ id: string; name: string }[]>([])
+  const [playlistSearch, setPlaylistSearch] = useState('')
   const [selectedPlaylistId, setSelectedPlaylistId] = useState('')
   const [expandedPlaylistIds, setExpandedPlaylistIds] = useState<Set<string>>(() => new Set())
   const [playlistTracks, setPlaylistTracks] = useState<Record<string, Track[]>>({})
@@ -116,6 +117,11 @@ function ConsolePage() {
   const [consoleMessage, setConsoleMessage] = useState<string | null>(null)
 
   const joinedPlayers = useMemo(() => state.players.filter((player) => player.joined), [state.players])
+  const visiblePlaylists = useMemo(() => {
+    const query = playlistSearch.trim().toLowerCase()
+    if (!query) return libraryPlaylists
+    return libraryPlaylists.filter((playlist) => playlist.name.toLowerCase().includes(query))
+  }, [libraryPlaylists, playlistSearch])
 
   const run = async (action: () => Promise<void>) => {
     setBusy(true)
@@ -243,8 +249,15 @@ function ConsolePage() {
             <span>ライブラリプレイリスト</span>
             <button className="ghost small" disabled={busy || !musicKit.authorized} onClick={() => run(async () => { await loadLibraryPlaylists() })}>再読み込み</button>
           </div>
+          <input
+            type="search"
+            placeholder="プレイリスト名で検索"
+            value={playlistSearch}
+            onChange={(event) => setPlaylistSearch(event.target.value)}
+            disabled={busy || !musicKit.authorized || libraryPlaylists.length === 0}
+          />
           <ul className="playlist-list">
-            {libraryPlaylists.length ? libraryPlaylists.map((playlist) => {
+            {visiblePlaylists.length ? visiblePlaylists.map((playlist) => {
               const selected = playlist.id === selectedPlaylistId
               const expanded = expandedPlaylistIds.has(playlist.id)
               const loading = loadingPlaylistIds.has(playlist.id)
@@ -296,7 +309,7 @@ function ConsolePage() {
                   )}
                 </li>
               )
-            }) : <li className="hint">ログイン後にライブラリのプレイリストを取得します</li>}
+            }) : <li className="hint">{libraryPlaylists.length ? '一致するプレイリストがありません' : 'ログイン後にライブラリのプレイリストを取得します'}</li>}
           </ul>
           <div className="actions">
             <button disabled={busy || state.phase !== 'ready' || !selectedPlaylistId || musicKit.preparing} onClick={handleStart}>ゲーム開始</button>
