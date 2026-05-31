@@ -231,3 +231,70 @@ textarea { min-height: 110px; resize: vertical; }
 }
 
 .error { color: #ff8aa3; font-weight: 700; }
+
+.field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #f7f2ea;
+  font-weight: 800;
+}
+
+button.small {
+  padding: 0.5rem 0.8rem;
+  font-size: 0.85rem;
+}
+
+.playlist-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.playlist-row {
+  width: 100%;
+  border-radius: 16px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.07);
+  color: #f7f2ea;
+  box-shadow: none;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  display: flex;
+  justify-content: flex-start;
+  gap: 10px;
+  text-align: left;
+}
+
+.playlist-row.selected {
+  background: rgba(255, 177, 78, 0.18);
+  border-color: rgba(255, 177, 78, 0.55);
+}
+
+.playlist-check {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.38);
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  color: #21131a;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.playlist-row.selected .playlist-check {
+  background: #ffb14e;
+  border-color: #ffb14e;
+}
+
+.playlist-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

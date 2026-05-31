@@ -70,9 +70,17 @@ export function useMusicKitPlayback() {
 
   const getLibraryPlaylists = useCallback(async () => {
     const mk = await getMusicKit()
-    const response = await mk.api.music('/v1/me/library/playlists', { limit: 100 })
-    const playlists = (response.data as any)?.data ?? []
-    return playlists.map((playlist: any) => ({
+    const allPlaylists: any[] = []
+    let url: string | null = '/v1/me/library/playlists'
+    let params: Record<string, any> | undefined = { limit: 100 }
+    while (url) {
+      const response = await mk.api.music(url, params)
+      const data = response.data as any
+      allPlaylists.push(...(data?.data ?? []))
+      url = data?.next ?? null
+      params = undefined
+    }
+    return allPlaylists.map((playlist: any) => ({
       id: playlist.id,
       name: playlist.attributes?.name ?? playlist.id,
     }))
@@ -94,12 +102,19 @@ export function useMusicKitPlayback() {
 
   const getPlaylistTracks = useCallback(async (playlistId: string, playlistName: string, source: 'library' | 'catalog') => {
     const mk = await getMusicKit()
-    const url = source === 'library'
+    const allTracks: any[] = []
+    let url: string | null = source === 'library'
       ? `/v1/me/library/playlists/${playlistId}/tracks`
       : `/v1/catalog/{{storefrontId}}/playlists/${playlistId}/tracks`
-    const response = await mk.api.music(url, source === 'library' ? { limit: 100, include: 'catalog' } : { limit: 100 })
-    const rawTracks = (response.data as any)?.data ?? []
-    return rawTracks.map((track: any): MusicTrack => {
+    let params: Record<string, any> | undefined = source === 'library' ? { limit: 100, include: 'catalog' } : { limit: 100 }
+    while (url) {
+      const response = await mk.api.music(url, params)
+      const data = response.data as any
+      allTracks.push(...(data?.data ?? []))
+      url = data?.next ?? null
+      params = undefined
+    }
+    return allTracks.map((track: any): MusicTrack => {
       const catalog = track.relationships?.catalog?.data?.[0]
       return {
         id: catalog?.id ?? track.id,

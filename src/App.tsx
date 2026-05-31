@@ -202,16 +202,30 @@ function ConsolePage() {
 
         <div className="panel">
           <h2>2. 準備</h2>
-          <label>
-            ライブラリプレイリスト
-            <select value={selectedPlaylistId} onChange={(event) => setSelectedPlaylistId(event.target.value)} disabled={busy || !musicKit.authorized}>
-              {libraryPlaylists.length ? libraryPlaylists.map((playlist) => (
-                <option value={playlist.id} key={playlist.id}>{playlist.name}</option>
-              )) : <option value="">ログイン後に取得します</option>}
-            </select>
-          </label>
+          <div className="field-head">
+            <span>ライブラリプレイリスト</span>
+            <button className="ghost small" disabled={busy || !musicKit.authorized} onClick={() => run(async () => { await loadLibraryPlaylists() })}>再読み込み</button>
+          </div>
+          <ul className="playlist-list">
+            {libraryPlaylists.length ? libraryPlaylists.map((playlist) => {
+              const selected = playlist.id === selectedPlaylistId
+              return (
+                <li key={playlist.id}>
+                  <button
+                    type="button"
+                    className={selected ? 'playlist-row selected' : 'playlist-row'}
+                    disabled={busy || !musicKit.authorized}
+                    onClick={() => setSelectedPlaylistId(playlist.id)}
+                    aria-pressed={selected}
+                  >
+                    <span className="playlist-check">{selected ? '✓' : ''}</span>
+                    <span className="playlist-name">{playlist.name}</span>
+                  </button>
+                </li>
+              )
+            }) : <li className="hint">ログイン後にライブラリのプレイリストを取得します</li>}
+          </ul>
           <div className="actions">
-            <button className="ghost" disabled={busy || !musicKit.authorized} onClick={() => run(async () => { await loadLibraryPlaylists() })}>再読み込み</button>
             <button disabled={busy || !musicKit.authorized || !selectedPlaylistId || musicKit.preparing} onClick={handleSelectTracks}>曲を選択</button>
             <button disabled={busy || state.phase !== 'ready'} onClick={handleStart}>ゲーム開始</button>
           </div>
