@@ -192,7 +192,6 @@ function ConsolePage() {
           <p className="eyebrow">Host Console</p>
           <h1>早押しイントロクイズ</h1>
         </div>
-        <a className="ghost" href="/gameboard" target="_blank">Gameboard</a>
       </header>
 
       <section className="status-card">
@@ -256,7 +255,6 @@ function ConsolePage() {
               <span>{state.step === 'reveal' ? state.currentTrack.artist : '正解発表まで伏せています'}</span>
             </div>
           ) : <p>まだ曲はロードされていません。</p>}
-          <p className="hint">Debug: <a href="/debug/action" target="_blank">/debug/action</a></p>
         </div>
       </section>
     </main>
