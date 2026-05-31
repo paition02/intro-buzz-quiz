@@ -132,6 +132,166 @@ function loadCurrentTrack() {
   state.message = '再生秒数を指定して、再生ボタンを押してください'
 }
 
+
+type ConsolePlaylistPayload = {
+  playlists?: unknown
+  tracks?: Partial<Track>[]
+}
+
+function consoleLogin() {
+  update(() => {
+    state.hostLoggedIn = true
+    state.phase = 'ready'
+    state.step = 'idle'
+    state.message = 'プレイリストを選んで、プレイヤーの参加を待っています'
+  })
+  return publicState()
+}
+
+function consoleSetPlaylists(payload: ConsolePlaylistPayload = {}) {
+  const playlists = Array.isArray(payload.playlists) ? payload.playlists.map(String).filter(Boolean) : []
+  const tracks = Array.isArray(payload.tracks)
+    ? payload.tracks.map((track: Partial<Track>) => ({
+      id: String(track.id ?? ''),
+      title: String(track.title ?? ''),
+      artist: String(track.artist ?? ''),
+      playlist: String(track.playlist ?? playlists[0] ?? ''),
+    })).filter((track: Track) => track.id && track.title)
+    : []
+  update(() => {
+    state.playlists = playlists
+    state.tracks = tracks.length > 0
+      ? tracks
+      : playlists.length > 0
+        ? playlists.flatMap((playlist, i) => sampleTracks.map((track) => ({ ...track, id: `${i}-${track.id}`, playlist })))
+        : sampleTracks
+    state.message = `${state.tracks.length}曲を選択中。開始できます`
+  })
+  return publicState()
+}
+
+function consoleStart() {
+  update(() => {
+    state.phase = 'game'
+    state.step = 'loading'
+    state.currentTrackIndex = -1
+    state.message = '曲をロードしています'
+    loadCurrentTrack()
+  })
+  return publicState()
+}
+
+function consolePlay(payload: { seconds?: unknown } = {}) {
+  const seconds = Number(payload.seconds)
+  let playbackToken: number | null = null
+  let playbackDurationMs = 0
+  update(() => {
+    if (Number.isFinite(seconds) && seconds > 0) state.playbackSeconds = Math.min(30, Math.max(0.1, seconds))
+    if (state.phase === 'game' && state.step === 'beforePlayback') {
+      playbackToken = ++playbackSequence
+      playbackDurationMs = Math.ceil(state.playbackSeconds * 1000)
+      state.step = 'playing'
+      state.answererId = null
+      state.message = `${state.playbackSeconds}秒再生中。早押し待ちです`
+    }
+  })
+
+  if (playbackToken != null) {
+    setTimeout(() => {
+      update(() => {
+        if (
+          state.phase === 'game' &&
+          state.step === 'playing' &&
+          state.answererId === null &&
+          playbackSequence === playbackToken
+        ) {
+          state.step = 'beforePlayback'
+          state.message = 'もう一度再生できます'
+        }
+      })
+    }, playbackDurationMs)
+  }
+
+  return publicState()
+}
+
+function consoleJudge(payload: { result?: unknown } = {}) {
+  const result = payload.result === 'correct' ? 'correct' : 'wrong'
+  update(() => {
+    if (state.phase !== 'game' || state.step !== 'answering') return
+    state.lastResult = result
+    state.step = result
+    state.message = result === 'correct' ? '正解！' : '残念、不正解'
+  })
+  setTimeout(() => {
+    update(() => {
+      if (result === 'correct' && state.step === 'correct') {
+        state.step = 'reveal'
+        state.message = '正解発表中です'
+      } else if (result === 'wrong' && state.step === 'wrong') {
+        state.step = 'beforePlayback'
+        state.answererId = null
+        state.message = 'もう一度再生できます'
+      }
+    })
+  }, 1800)
+  return publicState()
+}
+
+function consoleNextRound() {
+  update(() => {
+    if (state.phase === 'game') {
+      state.step = 'loading'
+      state.message = '次の曲をロードしています'
+      loadCurrentTrack()
+    }
+  })
+  return publicState()
+}
+
+function consoleNextGame() {
+  update(() => {
+    state.phase = 'ready'
+    state.step = 'idle'
+    state.currentTrack = null
+    state.currentTrackIndex = -1
+    state.answererId = null
+    state.lastResult = null
+    state.message = '次のゲームの準備中です'
+  })
+  return publicState()
+}
+
+function consoleReset() {
+  update(() => {
+    state = {
+      phase: 'initialization',
+      step: 'idle',
+      hostLoggedIn: false,
+      playlists: [],
+      players: {},
+      tracks: [],
+      currentTrackIndex: -1,
+      currentTrack: null,
+      playbackSeconds: 3,
+      answererId: null,
+      lastResult: null,
+      message: 'ホストがApple Musicへログインするのを待っています',
+      updatedAt: Date.now(),
+    }
+  })
+  return publicState()
+}
+
+function acknowledge<T>(callback: unknown, action: () => T) {
+  try {
+    const state = action()
+    if (typeof callback === 'function') callback({ ok: true, state })
+  } catch (error) {
+    if (typeof callback === 'function') callback({ ok: false, error: error instanceof Error ? error.message : String(error) })
+  }
+}
+
 const app = express()
 const server = createServer(app)
 const io = new Server(server, {
@@ -140,6 +300,14 @@ const io = new Server(server, {
 
 io.on('connection', (socket) => {
   socket.emit('state', publicState())
+  socket.on('console:login', (callback) => acknowledge(callback, consoleLogin))
+  socket.on('console:playlists', (payload, callback) => acknowledge(callback, () => consoleSetPlaylists(payload)))
+  socket.on('console:start', (callback) => acknowledge(callback, consoleStart))
+  socket.on('console:play', (payload, callback) => acknowledge(callback, () => consolePlay(payload)))
+  socket.on('console:judge', (payload, callback) => acknowledge(callback, () => consoleJudge(payload)))
+  socket.on('console:next-round', (callback) => acknowledge(callback, consoleNextRound))
+  socket.on('console:next-game', (callback) => acknowledge(callback, consoleNextGame))
+  socket.on('console:reset', (callback) => acknowledge(callback, consoleReset))
 })
 
 app.use(express.json())
@@ -157,8 +325,6 @@ app.get('/api/token', async (_req, res) => {
     res.status(500).json({ error: error instanceof Error ? error.message : 'Token generation failed' })
   }
 })
-
-app.get('/api/state', (_req, res) => res.json(publicState()))
 
 
 app.post('/api/act/:actorId', (req, res) => {
@@ -190,151 +356,6 @@ app.post('/api/act/:actorId', (req, res) => {
   res.json({ shouldReact })
 })
 
-app.post('/api/console/login', (_req, res) => {
-  update(() => {
-    state.hostLoggedIn = true
-    state.phase = 'ready'
-    state.step = 'idle'
-    state.message = 'プレイリストを選んで、プレイヤーの参加を待っています'
-  })
-  res.json(publicState())
-})
-
-app.post('/api/console/playlists', (req, res) => {
-  const playlists = Array.isArray(req.body?.playlists) ? req.body.playlists.map(String).filter(Boolean) : []
-  const tracks = Array.isArray(req.body?.tracks)
-    ? req.body.tracks.map((track: Partial<Track>) => ({
-      id: String(track.id ?? ''),
-      title: String(track.title ?? ''),
-      artist: String(track.artist ?? ''),
-      playlist: String(track.playlist ?? playlists[0] ?? ''),
-    })).filter((track: Track) => track.id && track.title)
-    : []
-  update(() => {
-    state.playlists = playlists
-    state.tracks = tracks.length > 0
-      ? tracks
-      : playlists.length > 0
-        ? playlists.flatMap((playlist, i) => sampleTracks.map((track) => ({ ...track, id: `${i}-${track.id}`, playlist })))
-        : sampleTracks
-    state.message = `${state.tracks.length}曲を選択中。開始できます`
-  })
-  res.json(publicState())
-})
-
-app.post('/api/console/start', (_req, res) => {
-  update(() => {
-    state.phase = 'game'
-    state.step = 'loading'
-    state.currentTrackIndex = -1
-    state.message = '曲をロードしています'
-    loadCurrentTrack()
-  })
-  res.json(publicState())
-})
-
-app.post('/api/console/play', (req, res) => {
-  const seconds = Number(req.body?.seconds)
-  let playbackToken: number | null = null
-  let playbackDurationMs = 0
-  update(() => {
-    if (Number.isFinite(seconds) && seconds > 0) state.playbackSeconds = Math.min(30, Math.max(0.1, seconds))
-    if (state.phase === 'game' && state.step === 'beforePlayback') {
-      playbackToken = ++playbackSequence
-      playbackDurationMs = Math.ceil(state.playbackSeconds * 1000)
-      state.step = 'playing'
-      state.answererId = null
-      state.message = `${state.playbackSeconds}秒再生中。早押し待ちです`
-    }
-  })
-
-  if (playbackToken != null) {
-    setTimeout(() => {
-      update(() => {
-        if (
-          state.phase === 'game' &&
-          state.step === 'playing' &&
-          state.answererId === null &&
-          playbackSequence === playbackToken
-        ) {
-          state.step = 'beforePlayback'
-          state.message = 'もう一度再生できます'
-        }
-      })
-    }, playbackDurationMs)
-  }
-
-  res.json(publicState())
-})
-
-
-app.post('/api/console/judge', (req, res) => {
-  const result = req.body?.result === 'correct' ? 'correct' : 'wrong'
-  update(() => {
-    if (state.phase !== 'game' || state.step !== 'answering') return
-    state.lastResult = result
-    state.step = result
-    state.message = result === 'correct' ? '正解！' : '残念、不正解'
-  })
-  setTimeout(() => {
-    update(() => {
-      if (result === 'correct' && state.step === 'correct') {
-        state.step = 'reveal'
-        state.message = '正解発表中です'
-      } else if (result === 'wrong' && state.step === 'wrong') {
-        state.step = 'beforePlayback'
-        state.answererId = null
-        state.message = 'もう一度再生できます'
-      }
-    })
-  }, 1800)
-  res.json(publicState())
-})
-
-app.post('/api/console/next-round', (_req, res) => {
-  update(() => {
-    if (state.phase === 'game') {
-      state.step = 'loading'
-      state.message = '次の曲をロードしています'
-      loadCurrentTrack()
-    }
-  })
-  res.json(publicState())
-})
-
-app.post('/api/console/next-game', (_req, res) => {
-  update(() => {
-    state.phase = 'ready'
-    state.step = 'idle'
-    state.currentTrack = null
-    state.currentTrackIndex = -1
-    state.answererId = null
-    state.lastResult = null
-    state.message = '次のゲームの準備中です'
-  })
-  res.json(publicState())
-})
-
-app.post('/api/console/reset', (_req, res) => {
-  update(() => {
-    state = {
-      phase: 'initialization',
-      step: 'idle',
-      hostLoggedIn: false,
-      playlists: [],
-      players: {},
-      tracks: [],
-      currentTrackIndex: -1,
-      currentTrack: null,
-      playbackSeconds: 3,
-      answererId: null,
-      lastResult: null,
-      message: 'ホストがApple Musicへログインするのを待っています',
-      updatedAt: Date.now(),
-    }
-  })
-  res.json(publicState())
-})
 
 app.get('/debug/action', (_req, res) => {
   res.type('html').send(`<!doctype html>

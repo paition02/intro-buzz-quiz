@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { io } from 'socket.io-client'
+import type { Socket } from 'socket.io-client'
 import { useMusicKitPlayback } from './useMusicKit'
 import './App.css'
 
@@ -59,28 +60,34 @@ const initialState: GameState = {
   updatedAt: Date.now(),
 }
 
+const socket: Socket = io()
+
 function useGameState() {
   const [state, setState] = useState<GameState>(initialState)
 
   useEffect(() => {
-    const socket = io()
-    socket.on('state', (nextState: GameState) => setState(nextState))
+    socket.on('state', setState)
     return () => {
-      socket.close()
+      socket.off('state', setState)
     }
   }, [])
 
   return state
 }
 
-async function post<T = GameState>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(path, {
-    method: 'POST',
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
+function consoleAction<T = GameState>(event: string, body?: unknown): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const callback = (error: Error | null, response?: { ok: boolean; state?: T; error?: string }) => {
+      if (error) {
+        reject(error)
+        return
+      }
+      if (response?.ok && response.state) resolve(response.state)
+      else reject(new Error(response?.error ?? 'Socket.IO console action failed'))
+    }
+    if (body === undefined) socket.timeout(5000).emit(event, callback)
+    else socket.timeout(5000).emit(event, body, callback)
   })
-  if (!res.ok) throw new Error(await res.text())
-  return res.json() as Promise<T>
 }
 
 
@@ -251,7 +258,7 @@ function ConsolePage() {
 
   useEffect(() => {
     if (!musicKit.ready || !musicKit.authorized || state.hostLoggedIn) return
-    void post('/api/console/login').catch((error) => {
+    void consoleAction('console:login').catch((error) => {
       setConsoleMessage(error instanceof Error ? error.message : String(error))
     })
   }, [musicKit.ready, musicKit.authorized, state.hostLoggedIn])
@@ -290,7 +297,7 @@ function ConsolePage() {
 
   const handleLogin = () => run(async () => {
     await musicKit.authorize()
-    await post('/api/console/login')
+    await consoleAction('console:login')
     const playlists = await loadLibraryPlaylists()
     setConsoleMessage(`Apple Musicにログインしました。${playlists.length}件のライブラリプレイリストを取得しました`)
   })
@@ -323,7 +330,7 @@ function ConsolePage() {
     setSelectedPlaylistId(playlist.id)
     const tracks = await fetchPlaylistTracks(playlist)
     await musicKit.prepareQueue(tracks)
-    await post('/api/console/playlists', { playlists: [playlist.name], tracks })
+    await consoleAction('console:playlists', { playlists: [playlist.name], tracks })
     setConsoleMessage(`${playlist.name}: ${tracks.length}曲をMusicKitキューへ読み込みました`)
   })
 
@@ -339,7 +346,7 @@ function ConsolePage() {
   })
 
   const handleStart = () => run(async () => {
-    const nextState = await post('/api/console/start')
+    const nextState = await consoleAction('console:start')
     if (nextState.currentTrackIndex >= 0) await musicKit.loadTrack(nextState.currentTrackIndex)
   })
 
@@ -347,7 +354,7 @@ function ConsolePage() {
     setBusy(true)
     setConsoleMessage(null)
     try {
-      await post('/api/console/play', { seconds })
+      await consoleAction('console:play', { seconds })
     } catch (error) {
       setConsoleMessage(error instanceof Error ? error.message : String(error))
       setBusy(false)
@@ -364,11 +371,11 @@ function ConsolePage() {
 
   const handleJudge = (result: 'correct' | 'wrong') => run(async () => {
     await musicKit.stop()
-    await post('/api/console/judge', { result })
+    await consoleAction('console:judge', { result })
   })
 
   const handleNextRound = () => run(async () => {
-    const nextState = await post('/api/console/next-round')
+    const nextState = await consoleAction('console:next-round')
     if (nextState.currentTrackIndex >= 0) await musicKit.loadTrack(nextState.currentTrackIndex)
   })
 
@@ -389,7 +396,7 @@ function ConsolePage() {
           {consoleMessage && <p className="hint">{consoleMessage}</p>}
           {musicKit.error && <p className="error">MusicKit: {musicKit.error}</p>}
         </div>
-        <button className="danger" onClick={() => post('/api/console/reset')}>リセット</button>
+        <button className="danger" onClick={() => consoleAction('console:reset')}>リセット</button>
       </section>
 
       <section className="grid">
@@ -501,7 +508,7 @@ function ConsolePage() {
           </div>
           <div className="actions">
             <button disabled={busy || state.step !== 'reveal'} onClick={handleNextRound}>次のラウンドへ</button>
-            <button disabled={busy || state.phase !== 'game'} onClick={() => post('/api/console/next-game')}>次のゲームへ</button>
+            <button disabled={busy || state.phase !== 'game'} onClick={() => consoleAction('console:next-game')}>次のゲームへ</button>
           </div>
         </div>
 
