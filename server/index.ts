@@ -271,20 +271,108 @@ app.post('/api/console/reset', (_req, res) => {
 
 app.get('/debug/action', (_req, res) => {
   res.type('html').send(`<!doctype html>
-<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Debug Action</title></head>
-<body style="font-family: system-ui; padding: 24px;">
-<h1>早押しボタン Debug</h1>
-<label>actor_id <input id="actor" value="player-1" /></label>
-<button id="send" style="font-size: 24px; padding: 16px 24px; display: block; margin-top: 16px;">ACT</button>
-<pre id="result"></pre>
-<script>
-document.querySelector('#send').addEventListener('click', async () => {
-  const actor = encodeURIComponent(document.querySelector('#actor').value || 'player-1')
-  const res = await fetch('/api/act/' + actor, { method: 'POST' })
-  document.querySelector('#result').textContent = JSON.stringify(await res.json(), null, 2)
-})
-</script>
-</body></html>`)
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Debug Action</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #16131d; color: #f7f2ea; }
+    body { margin: 0; padding: 24px; }
+    main { max-width: 720px; margin: 0 auto; }
+    h1 { margin: 0 0 8px; }
+    p { color: #d4c8ce; line-height: 1.6; }
+    button { border: 0; border-radius: 999px; padding: 12px 18px; font-weight: 800; cursor: pointer; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    #add { background: linear-gradient(135deg, #ff4e77, #ffb14e); color: #21131a; }
+    .actor-list { display: grid; gap: 12px; margin-top: 20px; padding: 0; list-style: none; }
+    .actor-item { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 14px; border-radius: 18px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12); }
+    .actor-id { overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #ffcc8e; }
+    .act { background: #f7f2ea; color: #21131a; min-width: 96px; }
+    .meta { color: #a99ca4; font-size: 0.9rem; }
+    pre { margin-top: 20px; white-space: pre-wrap; background: rgba(0,0,0,0.28); padding: 16px; border-radius: 16px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>早押しボタン Debug</h1>
+    <p>「ボタン追加」で自動生成した actor_id をリストに追加します。各リストアイテムの ACT が物理ボタン1個分です。</p>
+    <button id="add">ボタン追加</button>
+    <ul id="actors" class="actor-list"></ul>
+    <pre id="result">ready</pre>
+  </main>
+  <script>
+    const storageKey = 'intro-buzz-debug-actors'
+    const actorsEl = document.querySelector('#actors')
+    const resultEl = document.querySelector('#result')
+
+    const loadActors = () => {
+      try {
+        const parsed = JSON.parse(localStorage.getItem(storageKey) || '[]')
+        return Array.isArray(parsed) ? parsed.filter((value) => typeof value === 'string') : []
+      } catch {
+        return []
+      }
+    }
+
+    const saveActors = (actors) => localStorage.setItem(storageKey, JSON.stringify(actors))
+    const createActorId = () => 'actor-' + (crypto.randomUUID?.() || Math.random().toString(36).slice(2))
+
+    let actors = loadActors()
+
+    function render() {
+      actorsEl.textContent = ''
+      if (actors.length === 0) {
+        const empty = document.createElement('li')
+        empty.className = 'meta'
+        empty.textContent = 'まだボタンがありません'
+        actorsEl.append(empty)
+        return
+      }
+
+      for (const actorId of actors) {
+        const item = document.createElement('li')
+        item.className = 'actor-item'
+
+        const info = document.createElement('div')
+        const label = document.createElement('div')
+        label.className = 'meta'
+        label.textContent = 'actor_id'
+        const id = document.createElement('div')
+        id.className = 'actor-id'
+        id.textContent = actorId
+        info.append(label, id)
+
+        const button = document.createElement('button')
+        button.className = 'act'
+        button.textContent = 'ACT'
+        button.addEventListener('click', async () => {
+          button.disabled = true
+          try {
+            const res = await fetch('/api/act/' + encodeURIComponent(actorId), { method: 'POST' })
+            resultEl.textContent = actorId + '\n' + JSON.stringify(await res.json(), null, 2)
+          } catch (error) {
+            resultEl.textContent = actorId + '\n' + String(error)
+          } finally {
+            button.disabled = false
+          }
+        })
+
+        item.append(info, button)
+        actorsEl.append(item)
+      }
+    }
+
+    document.querySelector('#add').addEventListener('click', () => {
+      actors = [...actors, createActorId()]
+      saveActors(actors)
+      render()
+    })
+
+    render()
+  </script>
+</body>
+</html>`)
 })
 
 if (isProduction) {
