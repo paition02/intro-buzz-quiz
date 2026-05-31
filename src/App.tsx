@@ -117,7 +117,12 @@ function PlayerBadge({ id, active = false, label = true }: { id: string; active?
       title={id}
       aria-label={id}
     >
-      <span className="player-color-dot" />
+      {label ? <span className="player-color-dot" /> : (
+        <span className="player-figure" aria-hidden="true">
+          <span className="player-figure-head" />
+          <span className="player-figure-body" />
+        </span>
+      )}
       {label && id}
     </span>
   )
