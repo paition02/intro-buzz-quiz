@@ -174,7 +174,7 @@ app.post('/api/act/:actorId', (req, res) => {
     const player = ensurePlayer(req.params.actorId)
     player.lastActionAt = now
 
-    if (state.phase === 'ready') {
+    if (state.phase === 'initialization' || state.phase === 'ready') {
       player.joined = !player.joined
       shouldReact = true
       state.message = `${player.id} が${player.joined ? '参加' : '退出'}しました`
@@ -336,11 +336,17 @@ app.get('/debug/action', (_req, res) => {
     button:disabled { opacity: 0.5; cursor: not-allowed; }
     #add { background: linear-gradient(135deg, #ff4e77, #ffb14e); color: #21131a; }
     .actor-list { display: grid; gap: 12px; margin-top: 20px; padding: 0; list-style: none; }
-    .actor-item { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 14px; border-radius: 18px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12); }
+    .actor-item { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 14px; border-radius: 18px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12); transition: border-color 0.16s ease, background 0.16s ease, transform 0.16s ease; }
+    .actor-item.react { background: rgba(125, 255, 190, 0.12); border-color: rgba(125, 255, 190, 0.75); transform: scale(1.015); }
+    .actor-item.no-react { background: rgba(255, 138, 163, 0.12); border-color: rgba(255, 138, 163, 0.65); }
     .actor-id { overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #ffcc8e; }
     .act { background: #f7f2ea; color: #21131a; min-width: 96px; }
     .meta { color: #a99ca4; font-size: 0.9rem; }
-    pre { margin-top: 20px; white-space: pre-wrap; background: rgba(0,0,0,0.28); padding: 16px; border-radius: 16px; }
+    .result-card { margin-top: 20px; padding: 16px; border-radius: 16px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12); }
+    .result-card.react { background: rgba(125, 255, 190, 0.12); border-color: rgba(125, 255, 190, 0.75); }
+    .result-card.no-react { background: rgba(255, 138, 163, 0.12); border-color: rgba(255, 138, 163, 0.65); }
+    .result-title { display: block; font-size: 1.4rem; font-weight: 900; }
+    .result-detail { color: #d4c8ce; margin-top: 4px; }
   </style>
 </head>
 <body>
@@ -349,7 +355,7 @@ app.get('/debug/action', (_req, res) => {
     <p>「ボタン追加」で自動生成した actor_id をリストに追加します。各リストアイテムの ACT が物理ボタン1個分です。同じタブのセッション中だけ保持します。</p>
     <button id="add">ボタン追加</button>
     <ul id="actors" class="actor-list"></ul>
-    <pre id="result">ready</pre>
+    <div id="result" class="result-card"><span class="result-title">READY</span><div class="result-detail">ACTを押すとここに反応が出ます</div></div>
   </main>
   <script>
     const storageKey = 'intro-buzz-debug-actors'
@@ -400,9 +406,16 @@ app.get('/debug/action', (_req, res) => {
           button.disabled = true
           try {
             const res = await fetch('/api/act/' + encodeURIComponent(actorId), { method: 'POST' })
-            resultEl.textContent = actorId + '\\n' + JSON.stringify(await res.json(), null, 2)
+            const data = await res.json()
+            const reacted = Boolean(data.shouldReact)
+            item.classList.remove('react', 'no-react')
+            item.classList.add(reacted ? 'react' : 'no-react')
+            resultEl.className = 'result-card ' + (reacted ? 'react' : 'no-react')
+            resultEl.innerHTML = '<span class="result-title">' + (reacted ? '反応あり' : '反応なし') + '</span><div class="result-detail">' + actorId + '</div>'
+            setTimeout(() => item.classList.remove('react', 'no-react'), 650)
           } catch (error) {
-            resultEl.textContent = actorId + '\\n' + String(error)
+            resultEl.className = 'result-card no-react'
+            resultEl.innerHTML = '<span class="result-title">エラー</span><div class="result-detail">' + String(error) + '</div>'
           } finally {
             button.disabled = false
           }
