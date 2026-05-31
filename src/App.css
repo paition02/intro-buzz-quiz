@@ -298,3 +298,89 @@ button.small {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.playlist-item {
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.playlist-row-wrap {
+  display: flex;
+  gap: 8px;
+}
+
+.playlist-row-wrap .playlist-row {
+  flex: 1;
+}
+
+.playlist-expand {
+  width: 44px;
+  min-width: 44px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.07);
+  color: #f7f2ea;
+  box-shadow: none;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: 1.5rem;
+  transition: transform 0.16s ease;
+}
+
+.playlist-expand.expanded {
+  transform: rotate(90deg);
+}
+
+.playlist-songs {
+  margin-top: 8px;
+  padding: 10px;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.song-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.song-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  color: #f7f2ea;
+}
+
+.song-index {
+  width: 28px;
+  flex: 0 0 auto;
+  text-align: right;
+  color: #a99ca4;
+  font-variant-numeric: tabular-nums;
+}
+
+.song-artwork {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  flex: 0 0 auto;
+}
+
+.song-meta {
+  min-width: 0;
+  display: grid;
+}
+
+.song-title,
+.song-artist {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.song-title { font-weight: 800; }
+.song-artist { color: #a99ca4; font-size: 0.85rem; }

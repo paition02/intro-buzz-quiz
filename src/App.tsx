@@ -25,6 +25,7 @@ type Track = {
   title: string
   artist: string
   playlist: string
+  artworkUrl?: string
 }
 
 type GameState = {
@@ -106,6 +107,10 @@ function ConsolePage() {
   const musicKit = useMusicKitPlayback()
   const [libraryPlaylists, setLibraryPlaylists] = useState<{ id: string; name: string }[]>([])
   const [selectedPlaylistId, setSelectedPlaylistId] = useState('')
+  const [expandedPlaylistIds, setExpandedPlaylistIds] = useState<Set<string>>(() => new Set())
+  const [playlistTracks, setPlaylistTracks] = useState<Record<string, Track[]>>({})
+  const [loadingPlaylistIds, setLoadingPlaylistIds] = useState<Set<string>>(() => new Set())
+  const [playlistErrors, setPlaylistErrors] = useState<Record<string, string>>({})
   const [seconds, setSeconds] = useState(0.5)
   const [busy, setBusy] = useState(false)
   const [consoleMessage, setConsoleMessage] = useState<string | null>(null)
@@ -138,12 +143,47 @@ function ConsolePage() {
     setConsoleMessage(`Apple Musicにログインしました。${playlists.length}件のライブラリプレイリストを取得しました`)
   })
 
+  const fetchPlaylistTracks = async (playlist: { id: string; name: string }) => {
+    if (playlistTracks[playlist.id]) return playlistTracks[playlist.id]
+    setLoadingPlaylistIds((current) => new Set(current).add(playlist.id))
+    setPlaylistErrors((current) => {
+      const next = { ...current }
+      delete next[playlist.id]
+      return next
+    })
+    try {
+      const tracks = await musicKit.getPlaylistTracks(playlist.id, playlist.name, 'library') as Track[]
+      setPlaylistTracks((current) => ({ ...current, [playlist.id]: tracks }))
+      return tracks
+    } catch (error) {
+      setPlaylistErrors((current) => ({ ...current, [playlist.id]: error instanceof Error ? error.message : String(error) }))
+      throw error
+    } finally {
+      setLoadingPlaylistIds((current) => {
+        const next = new Set(current)
+        next.delete(playlist.id)
+        return next
+      })
+    }
+  }
+
   const selectPlaylist = (playlist: { id: string; name: string }) => run(async () => {
     setSelectedPlaylistId(playlist.id)
-    const tracks = await musicKit.getPlaylistTracks(playlist.id, playlist.name, 'library')
+    const tracks = await fetchPlaylistTracks(playlist)
     await musicKit.prepareQueue(tracks)
     await post('/api/console/playlists', { playlists: [playlist.name], tracks })
     setConsoleMessage(`${playlist.name}: ${tracks.length}曲をMusicKitキューへ読み込みました`)
+  })
+
+  const togglePlaylistExpanded = (playlist: { id: string; name: string }) => run(async () => {
+    const willExpand = !expandedPlaylistIds.has(playlist.id)
+    setExpandedPlaylistIds((current) => {
+      const next = new Set(current)
+      if (next.has(playlist.id)) next.delete(playlist.id)
+      else next.add(playlist.id)
+      return next
+    })
+    if (willExpand) await fetchPlaylistTracks(playlist)
   })
 
   const handleStart = () => run(async () => {
@@ -206,18 +246,54 @@ function ConsolePage() {
           <ul className="playlist-list">
             {libraryPlaylists.length ? libraryPlaylists.map((playlist) => {
               const selected = playlist.id === selectedPlaylistId
+              const expanded = expandedPlaylistIds.has(playlist.id)
+              const loading = loadingPlaylistIds.has(playlist.id)
+              const error = playlistErrors[playlist.id]
+              const tracks = playlistTracks[playlist.id]
               return (
-                <li key={playlist.id}>
-                  <button
-                    type="button"
-                    className={selected ? 'playlist-row selected' : 'playlist-row'}
-                    disabled={busy || !musicKit.authorized}
-                    onClick={() => selectPlaylist(playlist)}
-                    aria-pressed={selected}
-                  >
-                    <span className="playlist-check">{selected ? '✓' : ''}</span>
-                    <span className="playlist-name">{playlist.name}</span>
-                  </button>
+                <li className="playlist-item" key={playlist.id}>
+                  <div className="playlist-row-wrap">
+                    <button
+                      type="button"
+                      className={selected ? 'playlist-row selected' : 'playlist-row'}
+                      disabled={busy || !musicKit.authorized}
+                      onClick={() => selectPlaylist(playlist)}
+                      aria-pressed={selected}
+                    >
+                      <span className="playlist-check">{selected ? '✓' : ''}</span>
+                      <span className="playlist-name">{playlist.name}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={expanded ? 'playlist-expand expanded' : 'playlist-expand'}
+                      disabled={busy || !musicKit.authorized}
+                      onClick={() => togglePlaylistExpanded(playlist)}
+                      aria-label={expanded ? 'プレイリストを閉じる' : 'プレイリストを開く'}
+                    >
+                      ›
+                    </button>
+                  </div>
+                  {expanded && (
+                    <div className="playlist-songs">
+                      {loading && <p className="hint">曲を読み込み中...</p>}
+                      {!loading && error && <p className="error">{error}</p>}
+                      {!loading && !error && tracks?.length === 0 && <p className="hint">曲がありません</p>}
+                      {!loading && !error && tracks && tracks.length > 0 && (
+                        <ul className="song-list">
+                          {tracks.map((track, index) => (
+                            <li className="song-row" key={`${track.id}-${index}`}>
+                              <span className="song-index">{index + 1}</span>
+                              {track.artworkUrl && <img className="song-artwork" src={track.artworkUrl} alt="" />}
+                              <span className="song-meta">
+                                <span className="song-title">{track.title}</span>
+                                <span className="song-artist">{track.artist}</span>
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
                 </li>
               )
             }) : <li className="hint">ログイン後にライブラリのプレイリストを取得します</li>}

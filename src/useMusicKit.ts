@@ -5,6 +5,7 @@ type MusicTrack = {
   title: string
   artist: string
   playlist: string
+  artworkUrl?: string
 }
 
 async function fetchToken(): Promise<{ token: string; expiresAt: Date }> {
@@ -121,6 +122,7 @@ export function useMusicKitPlayback() {
         title: track.attributes?.name ?? catalog?.attributes?.name ?? track.id,
         artist: track.attributes?.artistName ?? catalog?.attributes?.artistName ?? '',
         playlist: playlistName,
+        artworkUrl: (catalog?.attributes?.artwork?.url ?? track.attributes?.artwork?.url ?? '').replace('{w}x{h}', '80x80'),
       }
     }).filter((track: MusicTrack) => track.id)
   }, [])
