@@ -232,8 +232,8 @@ function ConsolePage() {
         <div className="panel">
           <h2>3. 進行</h2>
           <label>
-            再生秒数
-            <input type="number" min="0.1" max="30" step="0.1" value={seconds} onChange={(event) => setSeconds(Number(event.target.value))} />
+            再生秒数: {seconds.toFixed(1)}秒
+            <input type="range" min="0.1" max="30" step="0.1" value={seconds} onChange={(event) => setSeconds(Number(event.target.value))} />
           </label>
           <div className="actions">
             <button disabled={busy || state.step !== 'beforePlayback'} onClick={handlePlay}>{musicKit.playing ? '再生中' : '再生'}</button>
