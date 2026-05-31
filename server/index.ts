@@ -346,17 +346,29 @@ app.get('/debug/action', (_req, res) => {
 <body>
   <main>
     <h1>早押しボタン Debug</h1>
-    <p>「ボタン追加」で自動生成した actor_id をリストに追加します。各リストアイテムの ACT が物理ボタン1個分です。リロードすると消えます。</p>
+    <p>「ボタン追加」で自動生成した actor_id をリストに追加します。各リストアイテムの ACT が物理ボタン1個分です。同じタブのセッション中だけ保持します。</p>
     <button id="add">ボタン追加</button>
     <ul id="actors" class="actor-list"></ul>
     <pre id="result">ready</pre>
   </main>
   <script>
+    const storageKey = 'intro-buzz-debug-actors'
     const actorsEl = document.querySelector('#actors')
     const resultEl = document.querySelector('#result')
+
+    const loadActors = () => {
+      try {
+        const parsed = JSON.parse(sessionStorage.getItem(storageKey) || '[]')
+        return Array.isArray(parsed) ? parsed.filter((value) => typeof value === 'string') : []
+      } catch {
+        return []
+      }
+    }
+
+    const saveActors = (actors) => sessionStorage.setItem(storageKey, JSON.stringify(actors))
     const createActorId = () => 'actor-' + (crypto.randomUUID?.() || Math.random().toString(36).slice(2))
 
-    let actors = []
+    let actors = loadActors()
 
     function render() {
       actorsEl.textContent = ''
@@ -403,6 +415,7 @@ app.get('/debug/action', (_req, res) => {
 
     document.querySelector('#add').addEventListener('click', () => {
       actors = [...actors, createActorId()]
+      saveActors(actors)
       render()
     })
 
