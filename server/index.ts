@@ -336,11 +336,10 @@ app.get('/debug/action', (_req, res) => {
     .actor-id { overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #ffcc8e; }
     .act { background: #f7f2ea; color: #21131a; min-width: 96px; }
     .meta { color: #a99ca4; font-size: 0.9rem; }
-    .result-card { margin-top: 20px; padding: 16px; border-radius: 16px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12); }
-    .result-card.react { background: rgba(125, 255, 190, 0.12); border-color: rgba(125, 255, 190, 0.75); }
-    .result-card.no-react { background: rgba(255, 138, 163, 0.12); border-color: rgba(255, 138, 163, 0.65); }
-    .result-title { display: block; font-size: 1.4rem; font-weight: 900; }
-    .result-detail { color: #d4c8ce; margin-top: 4px; }
+    .actor-main { min-width: 0; }
+    .actor-status { margin-top: 4px; font-size: 0.9rem; font-weight: 800; color: #a99ca4; }
+    .actor-status.react { color: #7dffbe; }
+    .actor-status.no-react { color: #ff8aa3; }
   </style>
 </head>
 <body>
@@ -349,13 +348,10 @@ app.get('/debug/action', (_req, res) => {
     <p>「ボタン追加」で自動生成した actor_id をリストに追加します。各リストアイテムの ACT が物理ボタン1個分です。同じタブのセッション中だけ保持します。</p>
     <button id="add">ボタン追加</button>
     <ul id="actors" class="actor-list"></ul>
-    <div id="result" class="result-card"><span class="result-title">READY</span><div class="result-detail">ACTを押すとここに反応が出ます</div></div>
   </main>
   <script>
     const storageKey = 'intro-buzz-debug-actors'
     const actorsEl = document.querySelector('#actors')
-    const resultEl = document.querySelector('#result')
-
     const loadActors = () => {
       try {
         const parsed = JSON.parse(sessionStorage.getItem(storageKey) || '[]')
@@ -385,13 +381,17 @@ app.get('/debug/action', (_req, res) => {
         item.className = 'actor-item'
 
         const info = document.createElement('div')
+        info.className = 'actor-main'
         const label = document.createElement('div')
         label.className = 'meta'
         label.textContent = 'actor_id'
         const id = document.createElement('div')
         id.className = 'actor-id'
         id.textContent = actorId
-        info.append(label, id)
+        const status = document.createElement('div')
+        status.className = 'actor-status'
+        status.textContent = '未入力'
+        info.append(label, id, status)
 
         const button = document.createElement('button')
         button.className = 'act'
@@ -404,12 +404,12 @@ app.get('/debug/action', (_req, res) => {
             const reacted = Boolean(data.shouldReact)
             item.classList.remove('react', 'no-react')
             item.classList.add(reacted ? 'react' : 'no-react')
-            resultEl.className = 'result-card ' + (reacted ? 'react' : 'no-react')
-            resultEl.innerHTML = '<span class="result-title">' + (reacted ? '反応あり' : '反応なし') + '</span><div class="result-detail">' + actorId + '</div>'
+            status.className = 'actor-status ' + (reacted ? 'react' : 'no-react')
+            status.textContent = reacted ? '反応あり' : '反応なし'
             setTimeout(() => item.classList.remove('react', 'no-react'), 650)
           } catch (error) {
-            resultEl.className = 'result-card no-react'
-            resultEl.innerHTML = '<span class="result-title">エラー</span><div class="result-detail">' + String(error) + '</div>'
+            status.className = 'actor-status no-react'
+            status.textContent = 'エラー: ' + String(error)
           } finally {
             button.disabled = false
           }
