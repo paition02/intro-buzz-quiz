@@ -102,6 +102,72 @@ function phaseLabel(phase: Phase, step: GameStep) {
   return labels[step]
 }
 
+
+function CircularSecondsSlider({ value, onChange }: { value: number; onChange: (value: number) => void }) {
+  const min = 0.1
+  const max = 30
+  const step = 0.1
+  const radius = 78
+  const center = 96
+  const circumference = 2 * Math.PI * radius
+  const progress = (value - min) / (max - min)
+  const dashOffset = circumference * (1 - progress)
+  const angle = progress * 360 - 90
+  const knobX = center + radius * Math.cos((angle * Math.PI) / 180)
+  const knobY = center + radius * Math.sin((angle * Math.PI) / 180)
+
+  const updateFromPoint = (clientX: number, clientY: number, target: Element) => {
+    const rect = target.getBoundingClientRect()
+    const x = clientX - rect.left - rect.width / 2
+    const y = clientY - rect.top - rect.height / 2
+    let degrees = (Math.atan2(y, x) * 180) / Math.PI + 90
+    if (degrees < 0) degrees += 360
+    const raw = min + (degrees / 360) * (max - min)
+    const stepped = Math.round(raw / step) * step
+    onChange(Number(Math.min(max, Math.max(min, stepped)).toFixed(1)))
+  }
+
+  return (
+    <div className="circular-slider-wrap">
+      <svg
+        className="circular-slider"
+        viewBox="0 0 192 192"
+        role="slider"
+        aria-label="再生秒数"
+        aria-valuemin={min}
+        aria-valuemax={max}
+        aria-valuenow={value}
+        tabIndex={0}
+        onPointerDown={(event) => {
+          event.currentTarget.setPointerCapture(event.pointerId)
+          updateFromPoint(event.clientX, event.clientY, event.currentTarget)
+        }}
+        onPointerMove={(event) => {
+          if (event.buttons !== 1) return
+          updateFromPoint(event.clientX, event.clientY, event.currentTarget)
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'ArrowRight' || event.key === 'ArrowUp') onChange(Number(Math.min(max, value + step).toFixed(1)))
+          if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') onChange(Number(Math.max(min, value - step).toFixed(1)))
+        }}
+      >
+        <circle className="circular-slider-track" cx={center} cy={center} r={radius} />
+        <circle
+          className="circular-slider-progress"
+          cx={center}
+          cy={center}
+          r={radius}
+          strokeDasharray={circumference}
+          strokeDashoffset={dashOffset}
+        />
+        <circle className="circular-slider-knob" cx={knobX} cy={knobY} r="15" />
+        <text className="circular-slider-value" x={center} y={center - 4} textAnchor="middle">{value.toFixed(1)}</text>
+        <text className="circular-slider-unit" x={center} y={center + 22} textAnchor="middle">秒</text>
+      </svg>
+    </div>
+  )
+}
+
 function ConsolePage() {
   const state = useGameState()
   const musicKit = useMusicKitPlayback()
@@ -333,10 +399,10 @@ function ConsolePage() {
 
         <div className="panel">
           <h2>3. 進行</h2>
-          <label>
-            再生秒数: {seconds.toFixed(1)}秒
-            <input type="range" min="0.1" max="30" step="0.1" value={seconds} onChange={(event) => setSeconds(Number(event.target.value))} />
-          </label>
+          <div className="seconds-control">
+            <span className="seconds-label">再生秒数</span>
+            <CircularSecondsSlider value={seconds} onChange={setSeconds} />
+          </div>
           <div className="actions">
             <button disabled={busy || state.step !== 'beforePlayback'} onClick={handlePlay}>{musicKit.playing ? '再生中' : '再生'}</button>
             <button disabled={busy || state.step !== 'answering'} onClick={() => handleJudge('correct')}>正解</button>

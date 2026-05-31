@@ -503,3 +503,73 @@ input[type="range"]::-moz-range-thumb {
   border: 3px solid #f7f2ea;
   box-shadow: 0 8px 20px rgba(255, 78, 119, 0.36);
 }
+
+.seconds-control {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+}
+
+.seconds-label {
+  justify-self: start;
+  color: #f7f2ea;
+  font-weight: 800;
+}
+
+.circular-slider-wrap {
+  display: grid;
+  place-items: center;
+  width: min(240px, 100%);
+  margin: 0 auto;
+}
+
+.circular-slider {
+  width: 220px;
+  max-width: 100%;
+  touch-action: none;
+  outline: none;
+  overflow: visible;
+}
+
+.circular-slider:focus-visible .circular-slider-knob {
+  stroke: #fff;
+  stroke-width: 5px;
+}
+
+.circular-slider-track,
+.circular-slider-progress {
+  fill: none;
+  stroke-width: 18px;
+}
+
+.circular-slider-track {
+  stroke: rgba(255, 255, 255, 0.14);
+}
+
+.circular-slider-progress {
+  stroke: #ffb14e;
+  stroke-linecap: round;
+  transform: rotate(-90deg);
+  transform-origin: 96px 96px;
+}
+
+.circular-slider-knob {
+  fill: #ff4e77;
+  stroke: #f7f2ea;
+  stroke-width: 4px;
+  filter: drop-shadow(0 8px 16px rgba(255, 78, 119, 0.35));
+}
+
+.circular-slider-value {
+  fill: #f7f2ea;
+  font-size: 2.2rem;
+  font-weight: 1000;
+  dominant-baseline: middle;
+}
+
+.circular-slider-unit {
+  fill: #d4c8ce;
+  font-size: 0.9rem;
+  font-weight: 800;
+  dominant-baseline: middle;
+}
