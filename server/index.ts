@@ -76,6 +76,7 @@ let state: GameState = {
 }
 
 let playbackSequence = 0
+const actionCooldownMs = 250
 
 const appleTeamId = process.env.APPLE_TEAM_ID ?? ''
 const appleKeyId = process.env.APPLE_KEY_ID ?? ''
@@ -329,31 +330,54 @@ app.get('/api/token', async (_req, res) => {
 
 app.post('/api/act/:actorId', (req, res) => {
   const now = Date.now()
-  let shouldReact = false
+  const actorId = req.params.actorId.trim()
+
+  if (!actorId) {
+    res.status(400).end()
+    return
+  }
+
+  const player = ensurePlayer(actorId)
+
+  if (player.lastActionAt !== null && now - player.lastActionAt < actionCooldownMs) {
+    res.set('Retry-After', '1').status(429).end()
+    return
+  }
+
+  let status: 200 | 204 | 409 = 409
 
   update(() => {
-    const player = ensurePlayer(req.params.actorId)
     player.lastActionAt = now
 
     if (state.phase === 'initialization' || state.phase === 'ready') {
       player.joined = !player.joined
-      shouldReact = true
       state.message = `参加者が${player.joined ? '参加' : '退出'}しました`
+      status = 200
       return
     }
 
-    if (state.phase === 'game' && state.step === 'playing' && state.answererId === null && player.joined) {
+    if (state.phase === 'game' && state.step === 'playing') {
+      if (!player.joined) {
+        status = 409
+        return
+      }
+
+      if (state.answererId !== null) {
+        status = 204
+        return
+      }
+
       state.answererId = player.id
       state.step = 'answering'
       state.message = '解答権が取られました'
-      shouldReact = true
+      status = 200
       return
     }
 
-    shouldReact = false
+    status = 409
   })
 
-  res.json({ shouldReact })
+  res.status(status).end()
 })
 
 
@@ -434,10 +458,14 @@ app.get('/debug/action', (_req, res) => {
           button.disabled = true
           try {
             const res = await fetch('/api/act/' + encodeURIComponent(actorId), { method: 'POST' })
-            await res.json()
             item.classList.remove('pressed', 'error')
-            item.classList.add('pressed')
-            setTimeout(() => item.classList.remove('pressed'), 650)
+            if (res.status === 200) {
+              item.classList.add('pressed')
+              setTimeout(() => item.classList.remove('pressed'), 650)
+            } else if (!res.ok && res.status !== 409 && res.status !== 429) {
+              item.classList.add('error')
+              setTimeout(() => item.classList.remove('error'), 650)
+            }
           } catch (error) {
             item.classList.remove('pressed')
             item.classList.add('error')
