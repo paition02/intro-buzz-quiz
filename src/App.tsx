@@ -103,7 +103,7 @@ function playerColor(id: string) {
   }
 }
 
-function PlayerBadge({ id, active = false }: { id: string; active?: boolean }) {
+function PlayerBadge({ id, active = false, label = true }: { id: string; active?: boolean; label?: boolean }) {
   const color = playerColor(id)
   return (
     <span
@@ -114,9 +114,11 @@ function PlayerBadge({ id, active = false }: { id: string; active?: boolean }) {
         '--player-color-border': color.border,
         '--player-color-text': color.text,
       } as CSSProperties}
+      title={id}
+      aria-label={id}
     >
       <span className="player-color-dot" />
-      {id}
+      {label && id}
     </span>
   )
 }
@@ -485,9 +487,9 @@ function GameboardPage() {
           <div
             className="answerer colored"
             style={{ '--player-color': playerColor(state.answererId).background } as CSSProperties}
-          >
-            {state.answererId}
-          </div>
+            title={state.answererId}
+            aria-label={state.answererId}
+          />
         )}
         {state.step === 'correct' && <div className="effect success">正解！</div>}
         {state.step === 'wrong' && <div className="effect miss">不正解</div>}
@@ -504,7 +506,7 @@ function GameboardPage() {
           <h2>Players</h2>
           <div className="player-list">
             {joinedPlayers.length ? joinedPlayers.map((player) => (
-              <PlayerBadge id={player.id} active={player.id === state.answererId} key={player.id} />
+              <PlayerBadge id={player.id} active={player.id === state.answererId} label={false} key={player.id} />
             )) : <span className="hint">準備フェーズでボタンを押すと参加できます</span>}
           </div>
         </div>
