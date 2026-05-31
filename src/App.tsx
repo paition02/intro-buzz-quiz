@@ -127,7 +127,7 @@ function ConsolePage() {
   const loadLibraryPlaylists = async (): Promise<{ id: string; name: string }[]> => {
     const playlists = await musicKit.getLibraryPlaylists() as { id: string; name: string }[]
     setLibraryPlaylists(playlists)
-    setSelectedPlaylistId((current) => current || playlists[0]?.id || '')
+    setSelectedPlaylistId((current) => playlists.some((playlist) => playlist.id === current) ? current : '')
     return playlists
   }
 
@@ -140,8 +140,8 @@ function ConsolePage() {
 
   const handleSelectTracks = () => run(async () => {
     const playlists = libraryPlaylists.length > 0 ? libraryPlaylists : await loadLibraryPlaylists()
-    const selected = playlists.find((playlist) => playlist.id === selectedPlaylistId) ?? playlists[0]
-    if (!selected) throw new Error('ライブラリにプレイリストが見つかりません')
+    const selected = playlists.find((playlist) => playlist.id === selectedPlaylistId)
+    if (!selected) throw new Error('プレイリストを選択してください')
 
     const tracks = await musicKit.getPlaylistTracks(selected.id, selected.name, 'library')
     await musicKit.prepareQueue(tracks)
