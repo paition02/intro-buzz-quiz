@@ -573,3 +573,16 @@ input[type="range"]::-moz-range-thumb {
   font-weight: 800;
   dominant-baseline: middle;
 }
+
+* {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.circular-slider text,
+.circular-slider-value,
+.circular-slider-unit {
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
