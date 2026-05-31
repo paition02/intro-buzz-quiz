@@ -289,7 +289,7 @@ function ConsolePage() {
                       onClick={() => togglePlaylistExpanded(playlist)}
                       aria-label={expanded ? 'プレイリストを閉じる' : 'プレイリストを開く'}
                     >
-                      {expanded ? '⌄' : '›'}
+                      <span className="expand-icon" />
                     </button>
                   </div>
                   {expanded && (
