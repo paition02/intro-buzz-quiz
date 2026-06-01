@@ -6,6 +6,7 @@ type MusicTrack = {
   artist: string
   playlist: string
   artworkUrl?: string
+  artworkThumbUrl?: string
 }
 
 type MusicApiPage<T> = {
@@ -45,6 +46,14 @@ type MusicApiSearchResponse = {
 }
 
 type MusicApiParams = Record<string, string | number | string[]>
+
+const ARTWORK_THUMB_SIZE = '80x80'
+const ARTWORK_FULL_SIZE = '1000x1000'
+
+function artworkUrlForSize(template: string | undefined, size: string) {
+  if (!template) return undefined
+  return template.replace('{w}x{h}', size)
+}
 
 async function fetchToken(): Promise<{ token: string; expiresAt: Date }> {
   const res = await fetch('/api/token', { cache: 'no-store' })
@@ -156,12 +165,14 @@ export function useMusicKitPlayback() {
     }
     return allTracks.map((track): MusicTrack => {
       const catalog = track.relationships?.catalog?.data?.[0]
+      const artworkTemplate = catalog?.attributes?.artwork?.url ?? track.attributes?.artwork?.url
       return {
         id: catalog?.id ?? track.id,
         title: track.attributes?.name ?? catalog?.attributes?.name ?? track.id,
         artist: track.attributes?.artistName ?? catalog?.attributes?.artistName ?? '',
         playlist: playlistName,
-        artworkUrl: (catalog?.attributes?.artwork?.url ?? track.attributes?.artwork?.url ?? '').replace('{w}x{h}', '80x80'),
+        artworkUrl: artworkUrlForSize(artworkTemplate, ARTWORK_FULL_SIZE),
+        artworkThumbUrl: artworkUrlForSize(artworkTemplate, ARTWORK_THUMB_SIZE),
       }
     }).filter((track: MusicTrack) => track.id)
   }, [])

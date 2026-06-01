@@ -32,6 +32,7 @@ type Track = {
   artist: string
   playlist: string
   artworkUrl?: string
+  artworkThumbUrl?: string
 }
 
 type GameState = {
@@ -191,6 +192,7 @@ function consoleSetPlaylists(payload: ConsolePlaylistPayload = {}) {
       artist: String(track.artist ?? ''),
       playlist: String(track.playlist ?? playlists[0] ?? ''),
       artworkUrl: typeof track.artworkUrl === 'string' ? track.artworkUrl : undefined,
+      artworkThumbUrl: typeof track.artworkThumbUrl === 'string' ? track.artworkThumbUrl : undefined,
     })).filter((track: Track) => track.id && track.title)
     : []
   update(() => {

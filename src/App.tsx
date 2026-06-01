@@ -29,6 +29,7 @@ type Track = {
   artist: string
   playlist: string
   artworkUrl?: string
+  artworkThumbUrl?: string
 }
 
 type GameState = {
@@ -678,7 +679,7 @@ function ConsolePage() {
                           {tracks.map((track, index) => (
                             <li className="flex items-center gap-2.5 min-w-0 text-cream" key={`${track.id}-${index}`}>
                               <span className="w-7 shrink-0 text-right text-muted tabular-nums">{index + 1}</span>
-                              {track.artworkUrl && <img className="size-9 rounded-lg shrink-0" src={track.artworkUrl} alt="" />}
+                              {(track.artworkThumbUrl ?? track.artworkUrl) && <img className="size-9 rounded-lg shrink-0" src={track.artworkThumbUrl ?? track.artworkUrl} alt="" />}
                               <span className="min-w-0 grid">
                                 <span className="overflow-hidden text-ellipsis whitespace-nowrap font-bold">{track.title}</span>
                                 <span className="overflow-hidden text-ellipsis whitespace-nowrap text-muted text-sm">{track.artist}</span>
@@ -973,9 +974,10 @@ function TrackLane({ tracks, laneIndex, direction }: {
               assigned[i] = track.id
               handle.root.style.width = `${widths[trackIndex]}px` // タイトル実寸に伸縮
               if (handle.title) handle.title.textContent = track.title
-              if (track.artworkUrl) {
+              const artworkUrl = track.artworkThumbUrl ?? track.artworkUrl
+              if (artworkUrl) {
                 if (handle.artwork) {
-                  handle.artwork.src = track.artworkUrl
+                  handle.artwork.src = artworkUrl
                   handle.artwork.style.display = ''
                 }
                 if (handle.placeholder) handle.placeholder.style.display = 'none'
