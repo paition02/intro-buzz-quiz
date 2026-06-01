@@ -36,6 +36,7 @@ type GameState = {
   hostLoggedIn: boolean
   playlists: string[]
   players: Player[]
+  tracks: Track[]
   currentTrackIndex: number
   currentTrack: Track | null
   playbackSeconds: number
@@ -51,6 +52,7 @@ const initialState: GameState = {
   hostLoggedIn: false,
   playlists: [],
   players: [],
+  tracks: [],
   currentTrackIndex: -1,
   currentTrack: null,
   playbackSeconds: 3,
@@ -540,6 +542,116 @@ function gameboardMessage(state: GameState) {
   return phaseLabel(state.phase, state.step)
 }
 
+function useAnimationTime() {
+  const [animationTime, setAnimationTime] = useState(() => performance.now())
+
+  useEffect(() => {
+    let frameId = 0
+    const tick = (time: number) => {
+      setAnimationTime(time)
+      frameId = window.requestAnimationFrame(tick)
+    }
+    frameId = window.requestAnimationFrame(tick)
+    return () => window.cancelAnimationFrame(frameId)
+  }, [])
+
+  return animationTime
+}
+
+function useViewportSize() {
+  const [viewportSize, setViewportSize] = useState(() => ({
+    width: window.innerWidth,
+    height: window.innerHeight,
+  }))
+
+  useEffect(() => {
+    const update = () => setViewportSize({ width: window.innerWidth, height: window.innerHeight })
+    window.addEventListener('resize', update)
+    return () => window.removeEventListener('resize', update)
+  }, [])
+
+  return viewportSize
+}
+
+function TrackArtwork({ track }: { track: Track }) {
+  return track.artworkUrl
+    ? <img className="gameboard-track-artwork" src={track.artworkUrl} alt="" loading="lazy" />
+    : <span className="gameboard-track-artwork placeholder" aria-hidden="true">♪</span>
+}
+
+function TrackLane({ tracks, laneIndex, direction, animationTime, viewportWidth }: {
+  tracks: Track[]
+  laneIndex: number
+  direction: 'left' | 'right'
+  animationTime: number
+  viewportWidth: number
+}) {
+  const itemWidth = 260
+  const speed = 34 + (laneIndex % 3) * 7
+  const visibleCount = Math.min(tracks.length, Math.ceil(viewportWidth / itemWidth) + 3)
+  const distance = tracks.length * itemWidth
+  const rawOffset = distance === 0 ? 0 : (animationTime / 1000 * speed) % distance
+  const offset = direction === 'left' ? rawOffset : distance - rawOffset
+  const startIndex = distance === 0 ? 0 : Math.floor(offset / itemWidth) % tracks.length
+  const shift = distance === 0 ? 0 : offset % itemWidth
+
+  return (
+    <div className={`track-lane ${direction}`}>
+      {Array.from({ length: visibleCount }, (_, position) => {
+        const trackIndex = (startIndex + position) % tracks.length
+        const track = tracks[trackIndex]
+        const x = direction === 'left'
+          ? position * itemWidth - shift
+          : viewportWidth - (position + 1) * itemWidth + shift
+        return (
+          <div
+            className="gameboard-track-chip"
+            style={{ transform: `translate3d(${x}px, 0, 0)` }}
+            key={`${laneIndex}-${track.id}-${trackIndex}-${position}`}
+          >
+            <TrackArtwork track={track} />
+            <span className="gameboard-track-title">{track.title}</span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function ReadyTrackLanes({ tracks }: { tracks: Track[] }) {
+  const animationTime = useAnimationTime()
+  const viewportSize = useViewportSize()
+  const laneHeight = 74
+  const reservedHeight = 300
+  const laneCount = Math.max(1, Math.floor((viewportSize.height - reservedHeight) / laneHeight))
+  const tracksPerLane = Math.ceil(tracks.length / laneCount)
+  const lanes = Array.from({ length: laneCount }, (_, index) => {
+    const start = index * tracksPerLane
+    return tracks.slice(start, start + tracksPerLane)
+  }).filter((lane) => lane.length > 0)
+
+  return (
+    <div className="ready-track-lanes" aria-label="選択中の曲">
+      <div className="ready-track-lanes-head">
+        <span>選択中の曲</span>
+        <strong>{tracks.length}曲</strong>
+      </div>
+      <div className="track-lanes" style={{ '--lane-count': lanes.length } as CSSProperties}>
+        {lanes.map((laneTracks, index) => (
+          <TrackLane
+            tracks={laneTracks}
+            laneIndex={index}
+            direction={index % 2 === 0 ? 'right' : 'left'}
+            animationTime={animationTime}
+            viewportWidth={viewportSize.width}
+            key={index}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function GameboardPage() {
   const state = useGameState()
   const [now, setNow] = useState(() => Date.now())
@@ -551,12 +663,15 @@ function GameboardPage() {
   }, [])
 
   const isReacting = (player: Player) => player.lastActionAt != null && now - player.lastActionAt < 800
+  const showReadyTracks = state.phase === 'ready' && state.tracks.length > 0
 
   return (
     <main className={`gameboard ${state.step} ${state.lastResult ?? ''}`}>
-      <section className="board-card">
+      <section className={showReadyTracks ? 'board-card ready-board' : 'board-card'}>
         <p className="eyebrow">{phaseLabel(state.phase, state.step)}</p>
         <h1>{gameboardMessage(state)}</h1>
+
+        {showReadyTracks && <ReadyTrackLanes tracks={state.tracks} />}
 
         {state.step === 'playing' && <div className="pulse">♪</div>}
         {state.step === 'answering' && state.answererId && (
