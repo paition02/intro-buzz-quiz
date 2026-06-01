@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { useVirtualizer } from '@tanstack/react-virtual'
 import { io } from 'socket.io-client'
 import type { Socket } from 'socket.io-client'
 import { useMusicKitPlayback } from './useMusicKit'
@@ -718,69 +717,59 @@ function TrackLane({ tracks, laneIndex, direction }: {
   laneIndex: number
   direction: 'left' | 'right'
 }) {
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const cycleCount = 200
-  const virtualCount = tracks.length * cycleCount
-  const middleIndex = Math.floor(cycleCount / 2) * tracks.length
+  const laneRef = useRef<HTMLDivElement>(null)
+  const [laneWidth, setLaneWidth] = useState(0)
+  const [offset, setOffset] = useState(0)
+  const slotWidth = 340
   const speed = 34 + (laneIndex % 3) * 7
-  // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Virtual keeps hundreds of track chips/images out of the DOM.
-  const virtualizer = useVirtualizer({
-    count: virtualCount,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: () => 280,
-    horizontal: true,
-    overscan: 8,
-    gap: 12,
-  })
+  const cycleWidth = Math.max(slotWidth, tracks.length * slotWidth)
 
   useEffect(() => {
-    virtualizer.scrollToIndex(middleIndex, { align: 'start' })
-  }, [middleIndex, virtualizer])
+    const lane = laneRef.current
+    if (!lane) return undefined
+    const update = () => setLaneWidth(lane.clientWidth)
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(lane)
+    return () => observer.disconnect()
+  }, [])
 
   useEffect(() => {
-    const scrollElement = scrollRef.current
-    if (!scrollElement) return undefined
-
     let frameId = 0
-    let previousTime: number | null = null
-    const edgeBuffer = 2_000_000
-
+    let startTime: number | null = null
     const tick = (time: number) => {
-      if (previousTime !== null) {
-        const deltaSeconds = (time - previousTime) / 1000
-        const delta = speed * deltaSeconds * (direction === 'left' ? 1 : -1)
-        scrollElement.scrollLeft += delta
-
-        if (scrollElement.scrollLeft < edgeBuffer || scrollElement.scrollLeft > scrollElement.scrollWidth - edgeBuffer) {
-          virtualizer.scrollToIndex(middleIndex, { align: direction === 'left' ? 'start' : 'end' })
-        }
-      }
-      previousTime = time
+      startTime ??= time
+      setOffset(((time - startTime) / 1000 * speed) % cycleWidth)
       frameId = window.requestAnimationFrame(tick)
     }
-
     frameId = window.requestAnimationFrame(tick)
     return () => window.cancelAnimationFrame(frameId)
-  }, [direction, middleIndex, speed, virtualizer])
+  }, [cycleWidth, speed])
+
+  const logicalOffset = direction === 'left' ? offset : (cycleWidth - offset) % cycleWidth
+  const startIndex = Math.floor(logicalOffset / slotWidth)
+  const firstX = -(logicalOffset % slotWidth)
+  const visibleCount = Math.min(tracks.length + 1, Math.ceil(laneWidth / slotWidth) + 3)
+  const visibleItems = Array.from({ length: visibleCount }, (_, index) => {
+    const virtualIndex = startIndex + index
+    const track = tracks[virtualIndex % tracks.length]
+    return { track, x: firstX + index * slotWidth, virtualIndex }
+  })
 
   return (
-    <div className={`track-lane ${direction}`} ref={scrollRef}>
-      <div className="track-lane-spacer" style={{ width: virtualizer.getTotalSize() }}>
-        {virtualizer.getVirtualItems().map((virtualItem) => {
-          const track = tracks[virtualItem.index % tracks.length]
-          return (
-            <div
-              className="gameboard-track-chip"
-              data-index={virtualItem.index}
-              ref={virtualizer.measureElement}
-              style={{ transform: `translate3d(${virtualItem.start}px, 0, 0)` }}
-              key={virtualItem.key}
-            >
-              <TrackArtwork track={track} />
-              <span className="gameboard-track-title">{track.title}</span>
-            </div>
-          )
-        })}
+    <div className={`track-lane ${direction}`} ref={laneRef}>
+      <div className="track-lane-viewport">
+        {visibleItems.map(({ track, x, virtualIndex }) => (
+          <div
+            className="gameboard-track-chip"
+            data-index={virtualIndex}
+            style={{ transform: `translate3d(${x}px, 0, 0)` }}
+            key={`${virtualIndex}-${track.id}`}
+          >
+            <TrackArtwork track={track} />
+            <span className="gameboard-track-title">{track.title}</span>
+          </div>
+        ))}
       </div>
     </div>
   )
