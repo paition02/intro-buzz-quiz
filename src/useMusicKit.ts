@@ -49,6 +49,7 @@ type MusicApiParams = Record<string, string | number | string[]>
 
 const ARTWORK_THUMB_SIZE = '80x80'
 const ARTWORK_FULL_SIZE = '1000x1000'
+const QUEUE_CHUNK_SIZE = 50
 
 function artworkUrlForSize(template: string | undefined, size: string) {
   if (!template) return undefined
@@ -91,6 +92,8 @@ export function useMusicKitPlayback() {
   const stopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const tracksRef = useRef<MusicTrack[]>([])
   const loadPromiseRef = useRef<Promise<void>>(Promise.resolve())
+  const preparePromiseRef = useRef<Promise<void>>(Promise.resolve())
+  const queuedChunkStartRef = useRef<number | null>(null)
   const playbackGenerationRef = useRef(0)
 
   useEffect(() => {
@@ -180,28 +183,53 @@ export function useMusicKitPlayback() {
   const prepareQueue = useCallback(async (tracks: MusicTrack[]) => {
     if (tracks.length === 0) throw new Error('曲がありません')
     const mk = await getMusicKit()
+    tracksRef.current = tracks
+    queuedChunkStartRef.current = null
     setPreparing(true)
-    try {
-      tracksRef.current = tracks
-      await mk.setQueue({ songs: tracks.map((track) => track.id), startPlaying: false })
+    const promise = (async () => {
+      try {
+        const queueTracks = tracks.slice(0, QUEUE_CHUNK_SIZE)
+        mk.shuffleMode = MusicKit.PlayerShuffleMode.off
+        await mk.setQueue({ songs: queueTracks.map((track) => track.id), startPlaying: false })
+        queuedChunkStartRef.current = 0
+        mk.repeatMode = MusicKit.PlayerRepeatMode.one
+        loadPromiseRef.current = Promise.resolve()
+      } finally {
+        setPreparing(false)
+      }
+    })()
+    preparePromiseRef.current = promise
+    await promise
+  }, [])
+
+  const ensureTrackQueued = useCallback(async (mk: MusicKit.MusicKitInstance, trackIndex: number) => {
+    const tracks = tracksRef.current
+    if (trackIndex < 0 || trackIndex >= tracks.length) throw new Error('曲のインデックスが不正です')
+
+    const chunkStart = Math.floor(trackIndex / QUEUE_CHUNK_SIZE) * QUEUE_CHUNK_SIZE
+    const queueIndex = trackIndex - chunkStart
+    if (queuedChunkStartRef.current !== chunkStart) {
+      const queueTracks = tracks.slice(chunkStart, chunkStart + QUEUE_CHUNK_SIZE)
+      mk.shuffleMode = MusicKit.PlayerShuffleMode.off
+      await mk.setQueue({ songs: queueTracks.map((track) => track.id), startPlaying: false })
+      queuedChunkStartRef.current = chunkStart
       mk.repeatMode = MusicKit.PlayerRepeatMode.one
-      loadPromiseRef.current = Promise.resolve()
-    } finally {
-      setPreparing(false)
     }
+    if (mk.nowPlayingItemIndex !== queueIndex) await mk.changeToMediaAtIndex(queueIndex)
   }, [])
 
   const loadTrack = useCallback((index: number) => {
     playbackGenerationRef.current += 1
     const promise = (async () => {
+      await preparePromiseRef.current
       const mk = await getMusicKit()
-      await mk.changeToMediaAtIndex(index)
+      await ensureTrackQueued(mk, index)
       if (mk.isPlaying) mk.pause()
       await mk.seekToTime(0)
     })()
     loadPromiseRef.current = promise
     return promise
-  }, [])
+  }, [ensureTrackQueued])
 
   const playIntro = useCallback(async (seconds: number) => {
     const generation = ++playbackGenerationRef.current
@@ -226,7 +254,8 @@ export function useMusicKitPlayback() {
     const generation = ++playbackGenerationRef.current
     const mk = await getMusicKit()
     if (stopTimerRef.current) clearTimeout(stopTimerRef.current)
-    await mk.changeToMediaAtIndex(index)
+    await preparePromiseRef.current
+    await ensureTrackQueued(mk, index)
     if (generation !== playbackGenerationRef.current) return
     if (mk.isPlaying) mk.pause()
     await mk.seekToTime(0)
@@ -238,7 +267,7 @@ export function useMusicKitPlayback() {
       return
     }
     setPlaying(true)
-  }, [])
+  }, [ensureTrackQueued])
 
   const stop = useCallback(async () => {
     playbackGenerationRef.current += 1

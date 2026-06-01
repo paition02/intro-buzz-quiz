@@ -32,12 +32,17 @@ type Track = {
   artworkThumbUrl?: string
 }
 
+type Playlist = {
+  id: string
+  name: string
+}
+
 type GameState = {
   phase: Phase
   step: GameStep
   hostLoggedIn: boolean
   playlists: string[]
-  selectedPlaylistId: string | null
+  selectedPlaylistIds: string[]
   players: Player[]
   tracks: Track[]
   gameTrackOrder: number[]
@@ -59,7 +64,7 @@ const initialState: GameState = {
   step: 'idle',
   hostLoggedIn: false,
   playlists: [],
-  selectedPlaylistId: null,
+  selectedPlaylistIds: [],
   players: [],
   tracks: [],
   gameTrackOrder: [],
@@ -172,6 +177,15 @@ function playerColor(id: string) {
     border: `hsl(${hue} 76% 64% / 0.65)`,
     text: `hsl(${hue} 90% 92%)`,
   }
+}
+
+function uniqueTracksById(tracks: Track[]) {
+  const seenTrackIds = new Set<string>()
+  return tracks.filter((track) => {
+    if (seenTrackIds.has(track.id)) return false
+    seenTrackIds.add(track.id)
+    return true
+  })
 }
 
 // 共通の className 束。Tailwind ユーティリティを React 側でまとめて DRY に保つ。
@@ -362,7 +376,7 @@ function CircularSecondsSlider({ value, onChange }: { value: number; onChange: (
 function ConsolePage() {
   const state = useGameState()
   const musicKit = useMusicKitPlayback()
-  const [libraryPlaylists, setLibraryPlaylists] = useState<{ id: string; name: string }[]>([])
+  const [libraryPlaylists, setLibraryPlaylists] = useState<Playlist[]>([])
   const [playlistSearch, setPlaylistSearch] = useState('')
   const [expandedPlaylistIds, setExpandedPlaylistIds] = useState<Set<string>>(() => new Set())
   const [playlistTracks, setPlaylistTracks] = useState<Record<string, Track[]>>({})
@@ -386,7 +400,8 @@ function ConsolePage() {
   const playIntro = musicKit.playIntro
 
   const joinedPlayers = useMemo(() => state.players.filter((player) => player.joined), [state.players])
-  const selectedPlaylistId = state.selectedPlaylistId ?? ''
+  const selectedPlaylistIds = state.selectedPlaylistIds
+  const selectedPlaylistIdSet = useMemo(() => new Set(selectedPlaylistIds), [selectedPlaylistIds])
   const seconds = state.playbackSeconds
 
   const visiblePlaylists = useMemo(() => {
@@ -437,10 +452,10 @@ function ConsolePage() {
     }
   }
 
-  const loadLibraryPlaylists = useCallback(async (): Promise<{ id: string; name: string }[]> => {
+  const loadLibraryPlaylists = useCallback(async (): Promise<Playlist[]> => {
     setLoadingLibraryPlaylists(true)
     try {
-      const playlists = await getLibraryPlaylists() as { id: string; name: string }[]
+      const playlists = await getLibraryPlaylists() as Playlist[]
       const playlistIds = new Set(playlists.map((playlist) => playlist.id))
       setLibraryPlaylists(playlists)
       setExpandedPlaylistIds((current) => new Set([...current].filter((playlistId) => playlistIds.has(playlistId))))
@@ -466,8 +481,8 @@ function ConsolePage() {
   }, [libraryPlaylists.length, loadLibraryPlaylists, loadingLibraryPlaylists, musicKit.authorized, musicKit.ready])
 
   useEffect(() => {
-    if (!musicKit.ready || !musicKit.authorized || !state.selectedPlaylistId || state.tracks.length === 0) return
-    const queueKey = `${state.selectedPlaylistId}:${state.tracks.map((track) => track.id).join('|')}`
+    if (!musicKit.ready || !musicKit.authorized || state.selectedPlaylistIds.length === 0 || state.tracks.length === 0) return
+    const queueKey = `${state.selectedPlaylistIds.join('|')}:${state.tracks.map((track) => track.id).join('|')}`
     if (preparedQueueKeyRef.current === queueKey) return
     preparedQueueKeyRef.current = queueKey
     loadedTrackIndexRef.current = -1 // キューが入れ替わったらロード済み index も無効化
@@ -475,7 +490,7 @@ function ConsolePage() {
       preparedQueueKeyRef.current = null
       setConsoleMessage(error instanceof Error ? error.message : String(error))
     })
-  }, [musicKit.authorized, musicKit.ready, prepareQueue, state.selectedPlaylistId, state.tracks])
+  }, [musicKit.authorized, musicKit.ready, prepareQueue, state.selectedPlaylistIds, state.tracks])
 
   // 曲のロードは state.currentTrackIndex に追従する(旧 handleStart/handleNextRound の命令的ロードを置換)。
   // index が変わった時だけ読み直す。playing→beforePlayback の復帰みたいな step だけの変化では読み直さない。
@@ -511,7 +526,7 @@ function ConsolePage() {
     setConsoleMessage(`Apple Musicにログインしました。${playlists.length}件のライブラリプレイリストを取得しました`)
   })
 
-  const fetchPlaylistTracks = async (playlist: { id: string; name: string }) => {
+  const fetchPlaylistTracks = async (playlist: Playlist) => {
     if (playlistTracks[playlist.id]) return playlistTracks[playlist.id]
     setLoadingPlaylistIds((current) => new Set(current).add(playlist.id))
     setPlaylistErrors((current) => {
@@ -535,16 +550,36 @@ function ConsolePage() {
     }
   }
 
-  const selectPlaylist = (playlist: { id: string; name: string }) => run(async () => {
-    const tracks = await fetchPlaylistTracks(playlist)
-    await prepareQueue(tracks)
-    preparedQueueKeyRef.current = `${playlist.id}:${tracks.map((track) => track.id).join('|')}`
+  const togglePlaylistSelected = (playlist: Playlist) => run(async () => {
+    const currentSelectedIds = new Set(state.selectedPlaylistIds)
+    if (currentSelectedIds.has(playlist.id)) currentSelectedIds.delete(playlist.id)
+    else currentSelectedIds.add(playlist.id)
+
+    const selectedPlaylists = libraryPlaylists.filter((libraryPlaylist) => currentSelectedIds.has(libraryPlaylist.id))
+    const trackGroups = await Promise.all(selectedPlaylists.map((selectedPlaylist) => fetchPlaylistTracks(selectedPlaylist)))
+    const tracks = uniqueTracksById(trackGroups.flat())
+
+    if (tracks.length > 0) {
+      await prepareQueue(tracks)
+      preparedQueueKeyRef.current = `${selectedPlaylists.map((selectedPlaylist) => selectedPlaylist.id).join('|')}:${tracks.map((track) => track.id).join('|')}`
+    } else {
+      preparedQueueKeyRef.current = null
+    }
     loadedTrackIndexRef.current = -1
-    await consoleAction('console:playlists', { selectedPlaylistId: playlist.id, playlists: [playlist.name], tracks })
-    setConsoleMessage(`${playlist.name}: ${tracks.length}曲をMusicKitキューへ読み込みました`)
+    await consoleAction('console:playlists', {
+      selectedPlaylistIds: selectedPlaylists.map((selectedPlaylist) => selectedPlaylist.id),
+      playlists: selectedPlaylists.map((selectedPlaylist) => selectedPlaylist.name),
+      tracks,
+    })
+
+    if (selectedPlaylists.length === 0) {
+      setConsoleMessage('プレイリストの選択を解除しました')
+    } else {
+      setConsoleMessage(`${selectedPlaylists.length}件のプレイリストから${tracks.length}曲をMusicKitキューへ読み込みました`)
+    }
   })
 
-  const togglePlaylistExpanded = (playlist: { id: string; name: string }) => run(async () => {
+  const togglePlaylistExpanded = (playlist: Playlist) => run(async () => {
     const willExpand = !expandedPlaylistIds.has(playlist.id)
     setExpandedPlaylistIds((current) => {
       const next = new Set(current)
@@ -614,7 +649,7 @@ function ConsolePage() {
             <span className={`size-3.5 rounded-full shrink-0 ${!musicKit.ready ? 'bg-muted animate-dot-pulse' : musicKit.authorized ? 'bg-mint' : 'bg-rose'}`} />
             <div>
               <strong className="block text-cream">{musicKit.ready ? (musicKit.authorized ? 'Apple Music ログイン済み' : 'Apple Music 未ログイン') : 'MusicKit 準備中'}</strong>
-              <p className="mt-1 mb-0 text-subtle leading-snug">{musicKit.ready ? (musicKit.authorized ? 'ライブラリのプレイリストを選択できます' : 'ログインするとライブラリのプレイリストを取得できます') : 'MusicKit JS を初期化しています'}</p>
+              <p className="mt-1 mb-0 text-subtle leading-snug">{musicKit.ready ? (musicKit.authorized ? 'ライブラリのプレイリストを複数選択できます' : 'ログインするとライブラリのプレイリストを取得できます') : 'MusicKit JS を初期化しています'}</p>
             </div>
           </div>
           <div className="flex flex-wrap gap-2.5 mt-3.5 max-md:[&>button]:flex-1">
@@ -639,7 +674,7 @@ function ConsolePage() {
           />
           <ul className="list-none m-0 mt-2.5 p-0 grid gap-2 max-h-80 overflow-y-auto">
             {visiblePlaylists.length ? visiblePlaylists.map((playlist) => {
-              const selected = playlist.id === selectedPlaylistId
+              const selected = selectedPlaylistIdSet.has(playlist.id)
               const expanded = expandedPlaylistIds.has(playlist.id)
               const loading = loadingPlaylistIds.has(playlist.id)
               const error = playlistErrors[playlist.id]
@@ -651,7 +686,7 @@ function ConsolePage() {
                       type="button"
                       className="flex-1 min-w-0 px-3 py-2.5 bg-transparent text-inherit border-0 flex justify-start items-center gap-2.5 text-left cursor-pointer disabled:cursor-not-allowed"
                       disabled={busy || !musicKit.authorized}
-                      onClick={() => selectPlaylist(playlist)}
+                      onClick={() => togglePlaylistSelected(playlist)}
                       aria-pressed={selected}
                     >
                       <span className={`size-5 rounded-full border-2 inline-grid place-items-center shrink-0 ${selected ? 'bg-amber border-amber text-cocoa' : 'bg-white/10 border-white/40'}`}>
@@ -694,8 +729,13 @@ function ConsolePage() {
               )
             }) : <li className={HINT}>{loadingLibraryPlaylists ? 'ライブラリのプレイリストを読み込み中...' : libraryPlaylists.length ? '一致するプレイリストがありません' : 'ログイン後にライブラリのプレイリストを取得します'}</li>}
           </ul>
+          {selectedPlaylistIds.length > 0 && (
+            <p className="mt-3 mb-0 text-subtle leading-relaxed">
+              {selectedPlaylistIds.length}件のプレイリスト、{state.tracks.length}曲を選択中
+            </p>
+          )}
           <div className="flex flex-wrap gap-2.5 mt-3.5 max-md:[&>button]:flex-1">
-            <button className={BTN_PRIMARY} disabled={busy || state.phase !== 'ready' || !selectedPlaylistId || musicKit.preparing} onClick={handleStart}>ゲーム開始</button>
+            <button className={BTN_PRIMARY} disabled={busy || state.phase !== 'ready' || selectedPlaylistIds.length === 0 || state.tracks.length === 0 || musicKit.preparing} onClick={handleStart}>ゲーム開始</button>
           </div>
           <div className="flex items-center gap-2 flex-wrap mt-3">
             <span className={HINT}>参加中:</span>
@@ -791,10 +831,9 @@ function playGameboardSound(kind: 'correct' | 'wrong') {
   window.setTimeout(() => void audioContext.close(), 1300)
 }
 
-function GameboardPlayers({ players, answererId, isReacting }: {
+function GameboardPlayers({ players, answererId }: {
   players: Player[]
   answererId: string | null
-  isReacting: (player: Player) => boolean
 }) {
   if (players.length === 0) return null
   return (
@@ -804,11 +843,11 @@ function GameboardPlayers({ players, answererId, isReacting }: {
           <PlayerBadge
             id={player.id}
             active={player.id === answererId}
-            reacting={isReacting(player)}
+            reacting={player.lastActionAt != null}
             label={false}
             score={player.score}
             variant="gameboard"
-            key={player.id}
+            key={`${player.id}:${player.lastActionAt ?? 0}`}
           />
         ))}
       </div>
@@ -872,56 +911,43 @@ function measureTrackChipWidth(track: Track) {
   return width
 }
 
-type TrackChipHandle = {
-  root: HTMLDivElement | null
-  artwork: HTMLImageElement | null
-  placeholder: HTMLSpanElement | null
-  title: HTMLSpanElement | null
-}
-
 function TrackLane({ tracks, laneIndex, direction }: {
   tracks: Track[]
   laneIndex: number
   direction: 'left' | 'right'
 }) {
   const laneRef = useRef<HTMLDivElement>(null)
-  const handlesRef = useRef<TrackChipHandle[]>([])
-  const assignedRef = useRef<(string | null)[]>([])
   const [laneWidth, setLaneWidth] = useState(0)
+  const [startIndex, setStartIndex] = useState(0)
+  const [animationRun, setAnimationRun] = useState(0)
   const chipGap = 12
   const speed = 34 + (laneIndex % 3) * 7
 
-  // 親(GameboardPage)は 120ms 毎に再レンダリングし、その度に tracks は中身が同じでも
-  // 新しい配列参照で渡ってくる。rAF からは「参照」ではなく「最新の中身」を ref 経由で読み、
-  // アニメの useEffect は参照変化では再実行させない(再実行=startTime リセット=ワープ)。
-  const tracksRef = useRef(tracks)
-  useEffect(() => { tracksRef.current = tracks })
+  const slotWidths = useMemo(() => tracks.map((track) => measureTrackChipWidth(track) + chipGap), [tracks])
+  const minSlotWidth = Math.max(1, slotWidths.length > 0 ? Math.min(...slotWidths) : 170 + chipGap)
+  const visibleSlotCount = Math.max(2, Math.ceil(laneWidth / minSlotWidth) + 2)
+  const normalizedStart = tracks.length > 0 ? ((startIndex % tracks.length) + tracks.length) % tracks.length
+    : 0
 
-  // チップ幅はタイトルごとの実寸(伸縮)。均一じゃないので位置は累積和(prefix)で持つ。
-  // prefix[k] = 先頭から k 個分のスロット幅合計。cycleWidth = 1 周分の総幅。
-  const layout = useMemo(() => {
-    const widths = tracks.map(measureTrackChipWidth)
-    const slots = widths.map((width) => width + chipGap)
-    const prefix = [0]
-    for (const slot of slots) prefix.push(prefix[prefix.length - 1] + slot)
-    const cycleWidth = Math.max(1, prefix[prefix.length - 1])
-    const minSlot = slots.length > 0 ? Math.min(...slots) : 170 + chipGap
-    return { widths, slots, prefix, cycleWidth, minSlot }
-  }, [tracks])
+  const laneTracks = useMemo(() => {
+    if (tracks.length === 0 || visibleSlotCount === 0) return []
+    const firstIndex = direction === 'right'
+      ? (normalizedStart - 1 + tracks.length) % tracks.length
+      : normalizedStart
+    return Array.from({ length: visibleSlotCount + 1 }, (_, index) => tracks[(firstIndex + index) % tracks.length])
+  }, [direction, normalizedStart, tracks, visibleSlotCount])
 
-  // rAF は layout の配列を ref 経由で読む(参照変化でアニメを再実行=ワープさせないため)。
-  const layoutRef = useRef(layout)
-  useEffect(() => { layoutRef.current = layout })
+  const stepTrack = tracks.length === 0 ? null : direction === 'right'
+    ? tracks[(normalizedStart - 1 + tracks.length) % tracks.length]
+    : tracks[normalizedStart]
+  const stepWidth = stepTrack ? measureTrackChipWidth(stepTrack) + chipGap : minSlotWidth
 
-  // 仮想化は絶対。DOM ノード数は「レーンに見える分 + 前後バッファ」だけに固定し、曲数では増やさない。
-  // 可変幅なので最狭スロット基準でプール数を決める(どんなに細いチップが並んでも足りる上限)。
-  const poolSize = Math.max(2, Math.ceil(laneWidth / layout.minSlot) + 2)
+  const durationSeconds = Math.max(0.1, stepWidth / speed)
 
-  // 各プールスロットの DOM 参照をまとめて掴むためのヘルパ。callback ref から呼ぶ。
-  const handleAt = (index: number) => {
-    const handles = handlesRef.current
-    handles[index] ??= { root: null, artwork: null, placeholder: null, title: null }
-    return handles[index]
+  const handleAnimationEnd = () => {
+    if (tracks.length === 0) return
+    setStartIndex((current) => direction === 'right' ? current - 1 : current + 1)
+    setAnimationRun((current) => current + 1)
   }
 
   useEffect(() => {
@@ -934,105 +960,55 @@ function TrackLane({ tracks, laneIndex, direction }: {
     return () => observer.disconnect()
   }, [])
 
-  // ここが要点だ！1 つの rAF の中で「位置」「幅」「中身」を全部命令的に書く。
-  // 位置は prefix を辿って累積、担当トラックが変わった時だけ幅と中身を貼り替える。
-  // 同フレームで原子的に更新するから、可変幅で使い回し(recycle)してもズレ・隙間が出ない。
-  useEffect(() => {
-    assignedRef.current = [] // プール構成が変わったら割り当てキャッシュを捨てて中身を貼り直す
-    let frameId = 0
-    let startTime: number | null = null
-    const tick = (time: number) => {
-      startTime ??= time
-      const { widths, slots, prefix, cycleWidth } = layoutRef.current
-      const tracks = tracksRef.current // 参照は ref から。エフェクト再実行に依存しない
-      const total = tracks.length
-      if (total > 0) {
-        const distance = (time - startTime) / 1000 * speed
-        const wrapped = ((distance % cycleWidth) + cycleWidth) % cycleWidth
-        const offset = direction === 'left' ? wrapped : (cycleWidth - wrapped) % cycleWidth
-
-        // 左端に半分隠れたチップ = prefix[start] <= offset < prefix[start+1] を二分探索で求める。
-        let lo = 0
-        let hi = total - 1
-        let start = 0
-        while (lo <= hi) {
-          const mid = (lo + hi) >> 1
-          if (prefix[mid] <= offset) { start = mid; lo = mid + 1 } else { hi = mid - 1 }
-        }
-
-        const handles = handlesRef.current
-        const assigned = assignedRef.current
-        let x = prefix[start] - offset // 左端チップの座標(0 以下から始まる)
-        for (let i = 0; i < poolSize; i += 1) {
-          const trackIndex = (start + i) % total
-          const handle = handles[i]
-          if (handle?.root) {
-            // 位置は毎フレーム。幅・中身は担当トラックが変わった時だけ(毎フレーム img を触らない)。
-            handle.root.style.transform = `translate3d(${x}px, 0, 0)`
-            const track = tracks[trackIndex]
-            if (assigned[i] !== track.id) {
-              assigned[i] = track.id
-              handle.root.style.width = `${widths[trackIndex]}px` // タイトル実寸に伸縮
-              if (handle.title) handle.title.textContent = track.title
-              const artworkUrl = track.artworkThumbUrl ?? track.artworkUrl
-              if (artworkUrl) {
-                if (handle.artwork) {
-                  handle.artwork.src = artworkUrl
-                  handle.artwork.style.display = ''
-                }
-                if (handle.placeholder) handle.placeholder.style.display = 'none'
-              } else {
-                if (handle.artwork) {
-                  handle.artwork.removeAttribute('src')
-                  handle.artwork.style.display = 'none'
-                }
-                if (handle.placeholder) handle.placeholder.style.display = ''
-              }
-            }
-          }
-          x += slots[trackIndex] // 次のチップは自分の幅 + gap ぶん右へ
-        }
-      }
-      frameId = window.requestAnimationFrame(tick)
-    }
-    frameId = window.requestAnimationFrame(tick)
-    return () => window.cancelAnimationFrame(frameId)
-  }, [layout.cycleWidth, direction, speed, poolSize])
-
   return (
     <div
       className={`relative min-h-16 overflow-hidden rounded-2xl border border-white/10 ${direction === 'right' ? 'bg-linear-to-r from-sky/5 to-white/5' : 'bg-linear-to-r from-white/5 to-amber/5'}`}
       ref={laneRef}
     >
-      <div className="relative h-full will-change-transform">
-        {Array.from({ length: poolSize }).map((_, i) => (
-          // プールスロット。key は物理位置に固定し、中身は rAF が差し替える(remount させない)。
-          // 寸法 (artwork 36px / gap 10px / 横 padding 22px / title 16px・900) は
-          // measureTrackChipWidth の前提なので、ここを動かすと marquee がズレる。
-          <div
-            className="absolute top-2 left-0 w-max h-12 flex items-center gap-2.5 py-1.5 pr-3.5 pl-2 overflow-hidden rounded-xl bg-black/70 border border-white/10 shadow-lg whitespace-nowrap will-change-transform"
-            key={i}
-            ref={(el) => { handleAt(i).root = el }}
-          >
-            <img
-              className="size-9 rounded-lg shrink-0 object-cover bg-linear-to-br from-pink to-amber"
-              alt=""
-              loading="lazy"
-              style={{ display: 'none' }}
-              ref={(el) => { handleAt(i).artwork = el }}
-            />
-            <span
-              className="size-9 rounded-lg shrink-0 bg-linear-to-br from-pink to-amber grid place-items-center text-cocoa font-black"
-              aria-hidden="true"
-              ref={(el) => { handleAt(i).placeholder = el }}
-            >♪</span>
-            <span
-              className="min-w-0 overflow-hidden whitespace-nowrap text-cream font-black text-base text-left"
-              ref={(el) => { handleAt(i).title = el }}
-            />
-          </div>
-        ))}
+      <div
+        className={`track-lane-strip track-lane-strip-${direction}-${animationRun % 2 === 0 ? 'a' : 'b'} flex h-full`}
+        onAnimationEnd={handleAnimationEnd}
+        style={{
+          '--track-lane-duration': `${durationSeconds}s`,
+          '--track-lane-step': `${stepWidth}px`,
+        } as CSSProperties}
+      >
+        <TrackLaneGroup tracks={laneTracks} />
       </div>
+    </div>
+  )
+}
+
+function TrackLaneGroup({ tracks, ariaHidden = false }: { tracks: Track[]; ariaHidden?: boolean }) {
+  return (
+    <div className="flex shrink-0 gap-3 py-2 pr-3" aria-hidden={ariaHidden}>
+      {tracks.map((track, index) => (
+        <TrackChip track={track} key={`${track.id}:${index}`} />
+      ))}
+    </div>
+  )
+}
+
+function TrackChip({ track }: { track: Track }) {
+  const artworkUrl = track.artworkThumbUrl ?? track.artworkUrl
+  return (
+    <div
+      className="w-max h-12 flex shrink-0 items-center gap-2.5 py-1.5 pr-3.5 pl-2 overflow-hidden rounded-xl bg-black/70 border border-white/10 shadow-lg whitespace-nowrap"
+      style={{ width: `${measureTrackChipWidth(track)}px` }}
+    >
+      <img
+        className="size-9 rounded-lg shrink-0 object-cover bg-linear-to-br from-pink to-amber"
+        src={artworkUrl}
+        alt=""
+        loading="lazy"
+        style={{ display: artworkUrl ? undefined : 'none' }}
+      />
+      <span
+        className="size-9 rounded-lg shrink-0 bg-linear-to-br from-pink to-amber grid place-items-center text-cocoa font-black"
+        aria-hidden="true"
+        style={{ display: artworkUrl ? 'none' : undefined }}
+      >♪</span>
+      <span className="min-w-0 overflow-hidden whitespace-nowrap text-cream font-black text-base text-left">{track.title}</span>
     </div>
   )
 }
@@ -1042,11 +1018,13 @@ function ReadyTrackLanes({ tracks }: { tracks: Track[] }) {
   const laneHeight = 72
   const reservedHeight = 300
   const laneCount = Math.max(1, Math.floor((viewportSize.height - reservedHeight) / laneHeight))
-  const tracksPerLane = Math.ceil(tracks.length / laneCount)
-  const lanes = Array.from({ length: laneCount }, (_, index) => {
-    const start = index * tracksPerLane
-    return tracks.slice(start, start + tracksPerLane)
-  }).filter((lane) => lane.length > 0)
+  const lanes = useMemo(() => {
+    const tracksPerLane = Math.ceil(tracks.length / laneCount)
+    return Array.from({ length: laneCount }, (_, index) => {
+      const start = index * tracksPerLane
+      return tracks.slice(start, start + tracksPerLane)
+    }).filter((lane) => lane.length > 0)
+  }, [laneCount, tracks])
 
   return (
     <div className="w-full shrink-0" aria-label="選択中の曲">
@@ -1070,19 +1048,12 @@ function ReadyTrackLanes({ tracks }: { tracks: Track[] }) {
 function GameboardPage() {
   const state = useGameState()
   const connected = useConnected()
-  const [now, setNow] = useState(() => Date.now())
   const joinedPlayers = state.players.filter((player) => player.joined)
   const previousStepRef = useRef<GameStep>(state.step)
 
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 120)
-    return () => window.clearInterval(timer)
-  }, [])
-
-  const isReacting = (player: Player) => player.lastActionAt != null && now - player.lastActionAt < 800
   const showReadyTracks = state.phase === 'ready' && state.tracks.length > 0
   const sortedPlayers = [...joinedPlayers].sort((a, b) => b.score - a.score || a.id.localeCompare(b.id))
-  const players = <GameboardPlayers players={joinedPlayers} answererId={state.answererId} isReacting={isReacting} />
+  const players = <GameboardPlayers players={joinedPlayers} answererId={state.answererId} />
 
   useEffect(() => {
     if (previousStepRef.current !== state.step) {

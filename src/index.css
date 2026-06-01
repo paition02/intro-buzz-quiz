@@ -71,3 +71,48 @@
       var(--color-ink);
   }
 }
+
+@layer components {
+  .track-lane-strip {
+    animation-duration: var(--track-lane-duration, 5s);
+    animation-fill-mode: forwards;
+    animation-timing-function: linear;
+    will-change: transform;
+  }
+
+  .track-lane-strip-left-a {
+    animation-name: track-lane-scroll-left-a;
+  }
+
+  .track-lane-strip-left-b {
+    animation-name: track-lane-scroll-left-b;
+  }
+
+  .track-lane-strip-right-a {
+    animation-name: track-lane-scroll-right-a;
+  }
+
+  .track-lane-strip-right-b {
+    animation-name: track-lane-scroll-right-b;
+  }
+}
+
+@keyframes track-lane-scroll-left-a {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(calc(var(--track-lane-step, 0px) * -1), 0, 0); }
+}
+
+@keyframes track-lane-scroll-left-b {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(calc(var(--track-lane-step, 0px) * -1), 0, 0); }
+}
+
+@keyframes track-lane-scroll-right-a {
+  from { transform: translate3d(calc(var(--track-lane-step, 0px) * -1), 0, 0); }
+  to { transform: translate3d(0, 0, 0); }
+}
+
+@keyframes track-lane-scroll-right-b {
+  from { transform: translate3d(calc(var(--track-lane-step, 0px) * -1), 0, 0); }
+  to { transform: translate3d(0, 0, 0); }
+}

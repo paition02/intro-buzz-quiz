@@ -40,7 +40,7 @@ type GameState = {
   step: GameStep
   hostLoggedIn: boolean
   playlists: string[]
-  selectedPlaylistId: string | null
+  selectedPlaylistIds: string[]
   players: Record<string, Player>
   tracks: Track[]
   gameTrackOrder: number[]
@@ -60,7 +60,7 @@ let state: GameState = {
   step: 'idle',
   hostLoggedIn: false,
   playlists: [],
-  selectedPlaylistId: null,
+  selectedPlaylistIds: [],
   players: {},
   tracks: [],
   gameTrackOrder: [],
@@ -161,6 +161,7 @@ function loadCurrentTrack() {
 
 type ConsolePlaylistPayload = {
   playlists?: unknown
+  selectedPlaylistIds?: unknown
   selectedPlaylistId?: unknown
   tracks?: Partial<Track>[]
 }
@@ -182,9 +183,11 @@ function consoleLogin() {
 
 function consoleSetPlaylists(payload: ConsolePlaylistPayload = {}) {
   const playlists = Array.isArray(payload.playlists) ? payload.playlists.map(String).filter(Boolean) : []
-  const selectedPlaylistId = typeof payload.selectedPlaylistId === 'string' && payload.selectedPlaylistId.trim()
-    ? payload.selectedPlaylistId.trim()
-    : null
+  const selectedPlaylistIds = Array.isArray(payload.selectedPlaylistIds)
+    ? payload.selectedPlaylistIds.map(String).map((id) => id.trim()).filter(Boolean)
+    : typeof payload.selectedPlaylistId === 'string' && payload.selectedPlaylistId.trim()
+      ? [payload.selectedPlaylistId.trim()]
+      : []
   const tracks = Array.isArray(payload.tracks)
     ? payload.tracks.map((track: Partial<Track>) => ({
       id: String(track.id ?? ''),
@@ -197,7 +200,7 @@ function consoleSetPlaylists(payload: ConsolePlaylistPayload = {}) {
     : []
   update(() => {
     state.playlists = playlists
-    state.selectedPlaylistId = selectedPlaylistId
+    state.selectedPlaylistIds = selectedPlaylistIds
     state.tracks = tracks.length > 0
       ? tracks
       : []
@@ -206,7 +209,7 @@ function consoleSetPlaylists(payload: ConsolePlaylistPayload = {}) {
     state.currentTrackIndex = -1
     state.currentTrack = null
     state.hasPlayedCurrentTrack = false
-    state.message = state.tracks.length > 0 ? `${state.tracks.length}曲を選択中。開始できます` : '曲がありません'
+    state.message = state.tracks.length > 0 ? `${playlists.length}件のプレイリストから${state.tracks.length}曲を選択中。開始できます` : '曲がありません'
   })
   return publicState()
 }
@@ -356,7 +359,7 @@ function consoleReset() {
       step: 'idle',
       hostLoggedIn: false,
       playlists: [],
-      selectedPlaylistId: null,
+      selectedPlaylistIds: [],
       players: {},
       tracks: [],
       gameTrackOrder: [],
