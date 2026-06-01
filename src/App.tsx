@@ -463,7 +463,7 @@ function ConsolePage() {
       </section>
 
       <section className="grid">
-        <div className="panel">
+        <div className="panel console-panel-init">
           <h2>1. 初期化</h2>
           <p>Apple Musicにログインして、MusicKitで実際に再生できる状態にします。</p>
           <div className={musicKit.ready ? (musicKit.authorized ? 'login-status signed-in' : 'login-status signed-out') : 'login-status loading'}>
@@ -479,7 +479,7 @@ function ConsolePage() {
           </div>
         </div>
 
-        <div className="panel">
+        <div className="panel console-panel-setup">
           <h2>2. 準備</h2>
           <div className="field-head">
             <span>ライブラリプレイリスト</span>
@@ -558,7 +558,7 @@ function ConsolePage() {
           </div>
         </div>
 
-        <div className="panel">
+        <div className="panel console-panel-control">
           <h2>3. 進行</h2>
           <div className="seconds-control">
             <span className="seconds-label">再生秒数</span>
@@ -575,7 +575,7 @@ function ConsolePage() {
           </div>
         </div>
 
-        <div className="panel">
+        <div className="panel console-panel-track">
           <h2>曲情報</h2>
           {state.currentTrack ? (
             <div className="track-card small">

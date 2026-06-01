@@ -183,9 +183,17 @@ button.danger {
 .grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-areas:
+    "init control"
+    "setup track";
   gap: var(--panel-gap);
   align-items: start;
 }
+
+.console-panel-init { grid-area: init; }
+.console-panel-setup { grid-area: setup; }
+.console-panel-control { grid-area: control; }
+.console-panel-track { grid-area: track; }
 
 .panel {
   border-radius: clamp(20px, 2.4vw, 28px);
@@ -421,7 +429,14 @@ textarea { min-height: 110px; resize: vertical; }
 
 @media (max-width: 760px) {
   .topbar, .status-card { align-items: stretch; flex-direction: column; }
-  .grid { grid-template-columns: 1fr; }
+  .grid {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "init"
+      "setup"
+      "control"
+      "track";
+  }
   .actions > button, .actions > .button { flex: 1 1 160px; }
   .gameboard { padding: 12px; }
   .board-card { padding: 22px 16px; }
