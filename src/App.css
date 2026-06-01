@@ -119,39 +119,13 @@ button.danger {
   opacity: 1;
 }
 
-.action-content {
-  display: grid;
-  justify-items: center;
-  gap: clamp(10px, 2.6svh, 18px);
-  text-align: center;
-  max-width: min(92vw, 560px);
-}
-
 .action-circle {
   width: min(68vw, 42svh, 320px);
   aspect-ratio: 1;
   border-radius: 999px;
-  display: grid;
-  place-items: center;
+  display: block;
   background: radial-gradient(circle at 35% 25%, rgba(255,255,255,0.42), transparent 28%), var(--player-color, #ff4e77);
-  color: var(--player-color-text, #f7f2ea);
   box-shadow: 0 24px 80px var(--player-color-glow, rgba(255, 78, 119, 0.36)), inset 0 0 0 12px rgba(255,255,255,0.22);
-  font-size: clamp(4rem, 24vw, 8rem);
-  font-weight: 1000;
-}
-
-.action-content h1 {
-  margin: 0;
-  font-size: clamp(2.2rem, 12vw, 5.8rem);
-  line-height: 0.95;
-  letter-spacing: -0.07em;
-}
-
-.action-content p {
-  margin: 0;
-  color: #d4c8ce;
-  font-weight: 800;
-  line-height: 1.5;
 }
 
 .action-button.pressed {

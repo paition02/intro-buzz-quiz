@@ -770,16 +770,12 @@ function ActionPage() {
   const [actorId] = useState(getActionActorId)
   const [busy, setBusy] = useState(false)
   const [visualState, setVisualState] = useState<ActionVisualState>('idle')
-  const [title, setTitle] = useState('押す')
-  const [status, setStatus] = useState('スマホ全体が早押しボタンです')
   const audioContextRef = useRef<AudioContext | null>(null)
   const color = playerColor(actorId)
 
   const resetSoon = () => {
     window.setTimeout(() => {
       setVisualState('idle')
-      setTitle('押す')
-      setStatus('スマホ全体が早押しボタンです')
     }, 760)
   }
 
@@ -821,33 +817,21 @@ function ActionPage() {
       if (res.status === 200) {
         await playPingPong()
         setVisualState('pressed')
-        setTitle('ピンポーン！')
-        setStatus('反応しました')
         resetSoon()
       } else if (res.status === 204) {
         setVisualState('muted')
-        setTitle('反応なし')
-        setStatus('押せましたが、反応はありません')
         resetSoon()
       } else if (res.status === 409) {
         setVisualState('muted')
-        setTitle('待って')
-        setStatus('今は押せません')
         resetSoon()
       } else if (res.status === 429) {
         setVisualState('muted')
-        setTitle('少し待って')
-        setStatus('連打はクールダウン中です')
         resetSoon()
       } else {
         setVisualState('error')
-        setTitle('エラー')
-        setStatus(`送信に失敗しました: ${res.status}`)
       }
     } catch {
       setVisualState('error')
-      setTitle('エラー')
-      setStatus('接続できませんでした')
     } finally {
       window.setTimeout(() => setBusy(false), 180)
     }
@@ -864,12 +848,7 @@ function ActionPage() {
       } as CSSProperties}
     >
       <button className={`action-button ${visualState}`} type="button" disabled={busy} onClick={act} aria-label="早押しボタン">
-        <span className="action-content">
-          <span className="eyebrow">Intro Buzz Button</span>
-          <span className="action-circle" aria-hidden="true">!</span>
-          <h1>{title}</h1>
-          <p>{status}</p>
-        </span>
+        <span className="action-circle" aria-hidden="true" />
       </button>
     </main>
   )
