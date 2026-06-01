@@ -5,8 +5,8 @@ PCでゲームサーバーを起動し、スマホのホストコンソール、
 ## 起動
 
 ```bash
-npm install
-npm run dev
+bun install
+bun dev
 ```
 
 - ホスト操作: <http://localhost:5173/console>

@@ -1,15 +1,9 @@
-import express from 'express'
-import { createServer } from 'node:http'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { SignJWT, importPKCS8 } from 'jose'
 import { Server } from 'socket.io'
-import dotenv from 'dotenv'
+import { Server as Engine } from '@socket.io/bun-engine'
+import index from '../index.html'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const rootDir = path.resolve(__dirname, '..')
-dotenv.config({ path: path.join(rootDir, '.env') })
-
+// Bun は cwd の .env を自動で読むので dotenv は不要。
 const isProduction = process.env.NODE_ENV === 'production'
 
 type Phase = 'initialization' | 'ready' | 'game'
@@ -387,11 +381,15 @@ function acknowledge<T>(callback: unknown, action: () => T) {
   }
 }
 
-const app = express()
-const server = createServer(app)
-const io = new Server(server, {
+// socket.io を Bun ネイティブの engine に bind する。
+// engine.handler() が Bun.serve 用の websocket / idleTimeout 等を返し、
+// /socket.io/ への HTTP・WS アップグレードは engine.handleRequest が一手に引き受ける。
+const io = new Server()
+const engine = new Engine({
+  path: '/socket.io/',
   cors: { origin: true },
 })
+io.bind(engine)
 
 io.on('connection', (socket) => {
   socket.emit('state', publicState())
@@ -408,37 +406,29 @@ io.on('connection', (socket) => {
   socket.on('console:reset', (callback) => acknowledge(callback, consoleReset))
 })
 
-app.use(express.json())
-
-
-app.get('/api/token', async (_req, res) => {
+async function handleToken() {
   if (!hasAppleMusicCredentials()) {
-    res.status(401).json({ error: 'Apple Music credentials are not configured' })
-    return
+    return Response.json({ error: 'Apple Music credentials are not configured' }, { status: 401 })
   }
   try {
     const { token, expiresAt } = await generateAppleMusicToken()
-    res.json({ token, expiresAt: expiresAt.toISOString() })
+    return Response.json({ token, expiresAt: expiresAt.toISOString() })
   } catch (error) {
-    res.status(500).json({ error: error instanceof Error ? error.message : 'Token generation failed' })
+    return Response.json({ error: error instanceof Error ? error.message : 'Token generation failed' }, { status: 500 })
   }
-})
+}
 
-
-app.post('/api/act/:actorId', (req, res) => {
+// アクション API はボディではなくステータスコードで反応有無を示す(レスポンスボディは空)。
+function handleAct(req: Bun.BunRequest<'/api/act/:actorId'>) {
   const now = Date.now()
   const actorId = req.params.actorId.trim()
 
-  if (!actorId) {
-    res.status(400).end()
-    return
-  }
+  if (!actorId) return new Response(null, { status: 400 })
 
   const player = ensurePlayer(actorId)
 
   if (player.lastActionAt !== null && now - player.lastActionAt < actionCooldownMs) {
-    res.set('Retry-After', '1').status(429).end()
-    return
+    return new Response(null, { status: 429, headers: { 'Retry-After': '1' } })
   }
 
   let status: 200 | 204 | 409 = 409
@@ -476,27 +466,34 @@ app.post('/api/act/:actorId', (req, res) => {
     status = 409
   })
 
-  res.status(status).end()
-})
-
-
-if (isProduction) {
-  app.use(express.static(path.join(rootDir, 'dist')))
-  app.get(['/gameboard', '/console', '/action'], (_req, res) => res.sendFile(path.join(rootDir, 'dist', 'index.html')))
-} else {
-  const { createServer: createViteServer } = await import('vite')
-  const vite = await createViteServer({
-    root: rootDir,
-    server: {
-      middlewareMode: true,
-      allowedHosts: ['.lhr.life'],
-    },
-    appType: 'spa',
-  })
-  app.use(vite.middlewares)
+  return new Response(null, { status })
 }
 
+// engine.handler() から Bun.serve 用の websocket / idleTimeout / maxRequestBodySize を取り出す。
+const { websocket, idleTimeout, maxRequestBodySize } = engine.handler()
 const port = Number(process.env.PORT ?? 5173)
-server.listen(port, '0.0.0.0', () => {
-  console.log(`Intro Buzz Quiz server listening on http://localhost:${port}`)
+
+const server = Bun.serve({
+  port,
+  hostname: '0.0.0.0',
+  development: !isProduction,
+  idleTimeout,
+  maxRequestBodySize,
+  routes: {
+    // SPA は単一の index.html。表示の出し分けはクライアント側が pathname で行う。
+    '/': index,
+    '/console': index,
+    '/gameboard': index,
+    '/action': index,
+    '/api/token': { GET: handleToken },
+    '/api/act/:actorId': { POST: handleAct },
+  },
+  // routes に無いものだけここに落ちる。/socket.io/ は engine に丸ごと委ねる(HTTP も WS アップグレードも)。
+  fetch(req, server) {
+    if (new URL(req.url).pathname.startsWith('/socket.io/')) return engine.handleRequest(req, server)
+    return new Response('Not Found', { status: 404 })
+  },
+  websocket,
 })
+
+console.log(`Intro Buzz Quiz server listening on http://localhost:${server.port}`)
