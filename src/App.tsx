@@ -894,7 +894,7 @@ function GameboardPage() {
   } else if (state.step === 'playing') {
     content = (
       <>
-        <div className="pulse">♪</div>
+        <div className="gameboard-symbol playing-symbol">♪</div>
         {players}
       </>
     )

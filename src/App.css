@@ -321,6 +321,17 @@ textarea { min-height: 110px; resize: vertical; }
   color: rgba(247, 242, 234, 0.28);
 }
 
+.playing-symbol {
+  color: #ffb14e;
+  text-shadow: 0 0 28px rgba(255, 177, 78, 0.52), 0 0 72px rgba(255, 78, 119, 0.32);
+  animation: playing-symbol-pulse 0.8s ease-in-out infinite alternate;
+}
+
+@keyframes playing-symbol-pulse {
+  from { transform: scale(0.94); filter: brightness(0.95); }
+  to { transform: scale(1.08); filter: brightness(1.18); }
+}
+
 .board-card.ready-board {
   width: min(1320px, 100%);
   height: calc(100svh - var(--page-gutter) * 2);
