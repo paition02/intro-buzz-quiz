@@ -296,11 +296,29 @@ textarea { min-height: 110px; resize: vertical; }
   text-align: center;
 }
 
+.gameboard-card {
+  min-height: min(720px, calc(100svh - var(--page-gutter) * 2));
+  display: grid;
+  place-items: center;
+  gap: clamp(22px, 4vh, 42px);
+}
+
+.gameboard-title,
 .board-card h1 {
   font-size: clamp(2.2rem, 7vw, 6.8rem);
   line-height: 1;
   letter-spacing: -0.07em;
-  margin: 0 auto 32px;
+  margin: 0 auto;
+}
+
+.gameboard-symbol {
+  font-size: clamp(7rem, 26vw, 18rem);
+  font-weight: 1000;
+  line-height: 1;
+}
+
+.waiting-symbol {
+  color: rgba(247, 242, 234, 0.28);
 }
 
 .board-card.ready-board {
@@ -312,8 +330,8 @@ textarea { min-height: 110px; resize: vertical; }
   overflow: hidden;
 }
 
-.ready-board h1 {
-  margin-bottom: 14px;
+.ready-board .ready-title {
+  margin-bottom: 0;
   font-size: clamp(2.4rem, 5.8vw, 5.6rem);
 }
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { io } from 'socket.io-client'
 import type { Socket } from 'socket.io-client'
 import { useMusicKitPlayback } from './useMusicKit'
@@ -643,19 +643,6 @@ function ConsolePage() {
 }
 
 
-function gameboardMessage(state: GameState) {
-  if (state.phase === 'initialization' || state.phase === 'ready') return 'ボタンを押してご参加ください'
-  if (state.step === 'loading') return '曲を準備中'
-  if (state.step === 'beforePlayback') return '♪'
-  if (state.step === 'playing') return '♪'
-  if (state.step === 'answering') return '解答をどうぞ！'
-  if (state.step === 'correct') return '○'
-  if (state.step === 'wrong') return '×'
-  if (state.step === 'reveal') return ''
-  if (state.step === 'results') return ''
-  return phaseLabel(state.phase, state.step)
-}
-
 function playGameboardSound(kind: 'correct' | 'wrong') {
   const AudioContextCtor = window.AudioContext ?? (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
   if (!AudioContextCtor) return
@@ -691,6 +678,30 @@ function playGameboardSound(kind: 'correct' | 'wrong') {
   }
 
   window.setTimeout(() => void audioContext.close(), 1300)
+}
+
+function GameboardPlayers({ players, answererId, isReacting }: {
+  players: Player[]
+  answererId: string | null
+  isReacting: (player: Player) => boolean
+}) {
+  if (players.length === 0) return null
+  return (
+    <div className="players">
+      <div className="player-list">
+        {players.map((player) => (
+          <PlayerBadge
+            id={player.id}
+            active={player.id === answererId}
+            reacting={isReacting(player)}
+            label={false}
+            score={player.score}
+            key={player.id}
+          />
+        ))}
+      </div>
+    </div>
+  )
 }
 
 function useViewportSize() {
@@ -818,6 +829,7 @@ function GameboardPage() {
   const isReacting = (player: Player) => player.lastActionAt != null && now - player.lastActionAt < 800
   const showReadyTracks = state.phase === 'ready' && state.tracks.length > 0
   const sortedPlayers = [...joinedPlayers].sort((a, b) => b.score - a.score || a.id.localeCompare(b.id))
+  const players = <GameboardPlayers players={joinedPlayers} answererId={state.answererId} isReacting={isReacting} />
 
   useEffect(() => {
     if (previousStepRef.current !== state.step) {
@@ -827,15 +839,41 @@ function GameboardPage() {
     }
   }, [state.step])
 
-  return (
-    <main className={`gameboard ${state.step} ${state.lastResult ?? ''}`}>
-      <section className={showReadyTracks ? 'board-card ready-board' : 'board-card'}>
-        {gameboardMessage(state) && <h1 className={state.step === 'beforePlayback' ? 'muted-symbol' : undefined}>{gameboardMessage(state)}</h1>}
+  let content: ReactNode
+  let cardClassName = 'board-card gameboard-card'
 
+  if (state.phase === 'initialization') {
+    content = <h1 className="gameboard-title">ボタンを押してご参加ください</h1>
+  } else if (state.phase === 'ready') {
+    cardClassName = showReadyTracks ? 'board-card gameboard-card ready-board' : 'board-card gameboard-card'
+    content = (
+      <>
+        <h1 className="gameboard-title ready-title">ボタンを押してご参加ください</h1>
         {showReadyTracks && <ReadyTrackLanes tracks={state.tracks} />}
-
-        {state.step === 'playing' && <div className="pulse">♪</div>}
-        {state.step === 'answering' && state.answererId && (
+        {players}
+      </>
+    )
+  } else if (state.step === 'loading') {
+    content = <h1 className="gameboard-title">曲を準備中</h1>
+  } else if (state.step === 'beforePlayback') {
+    content = (
+      <>
+        <div className="gameboard-symbol waiting-symbol">♪</div>
+        {players}
+      </>
+    )
+  } else if (state.step === 'playing') {
+    content = (
+      <>
+        <div className="pulse">♪</div>
+        {players}
+      </>
+    )
+  } else if (state.step === 'answering') {
+    content = (
+      <>
+        <h1 className="gameboard-title">解答をどうぞ！</h1>
+        {state.answererId && (
           <div
             className="answerer colored"
             style={{ '--player-color': playerColor(state.answererId).background } as CSSProperties}
@@ -843,37 +881,50 @@ function GameboardPage() {
             aria-label={state.answererId}
           />
         )}
-        {state.step === 'correct' && <div className="effect success">○</div>}
-        {state.step === 'wrong' && <div className="effect miss">×</div>}
-
-        {state.step === 'reveal' && state.currentTrack && (
-          <div className="track-card reveal">
-            <TrackArtwork track={state.currentTrack} />
-            <strong>{state.currentTrack.title}</strong>
-            <span>{state.currentTrack.artist}</span>
+        {players}
+      </>
+    )
+  } else if (state.step === 'correct') {
+    content = (
+      <>
+        <div className="effect success">○</div>
+        {players}
+      </>
+    )
+  } else if (state.step === 'wrong') {
+    content = (
+      <>
+        <div className="effect miss">×</div>
+        {players}
+      </>
+    )
+  } else if (state.step === 'reveal' && state.currentTrack) {
+    content = (
+      <div className="track-card reveal">
+        <TrackArtwork track={state.currentTrack} />
+        <strong>{state.currentTrack.title}</strong>
+        <span>{state.currentTrack.artist}</span>
+      </div>
+    )
+  } else if (state.step === 'results') {
+    content = (
+      <div className="results-board">
+        {sortedPlayers.map((player) => (
+          <div className="result-player" key={player.id}>
+            <PlayerBadge id={player.id} label={false} />
+            <strong>{player.score}</strong>
           </div>
-        )}
+        ))}
+      </div>
+    )
+  } else {
+    content = <h1 className="gameboard-title">待機中</h1>
+  }
 
-        {state.step === 'results' && (
-          <div className="results-board">
-            {sortedPlayers.map((player) => (
-              <div className="result-player" key={player.id}>
-                <PlayerBadge id={player.id} label={false} />
-                <strong>{player.score}</strong>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {state.step !== 'results' && (
-        <div className="players">
-          <div className="player-list">
-            {joinedPlayers.length ? joinedPlayers.map((player) => (
-              <PlayerBadge id={player.id} active={player.id === state.answererId} reacting={isReacting(player)} label={false} score={player.score} key={player.id} />
-            )) : null}
-          </div>
-        </div>
-        )}
+  return (
+    <main className={`gameboard ${state.step} ${state.lastResult ?? ''}`}>
+      <section className={cardClassName}>
+        {content}
       </section>
     </main>
   )
