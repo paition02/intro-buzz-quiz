@@ -725,6 +725,26 @@ function TrackArtwork({ track }: { track: Track }) {
     : <span className="gameboard-track-artwork placeholder" aria-hidden="true">♪</span>
 }
 
+function estimateTrackChipWidth(track: Track) {
+  const textWidth = [...track.title].reduce((width, character) => {
+    const codePoint = character.codePointAt(0) ?? 0
+    const isWide = codePoint > 0x3000 || (codePoint >= 0xff00 && codePoint <= 0xffef)
+    return width + (isWide ? 17 : 9)
+  }, 0)
+  return Math.max(150, Math.ceil(36 + 10 + 8 + 14 + textWidth))
+}
+
+function findTrackIndexAtOffset(prefixWidths: number[], offset: number) {
+  let low = 0
+  let high = prefixWidths.length - 1
+  while (low < high) {
+    const middle = Math.floor((low + high + 1) / 2)
+    if (prefixWidths[middle] <= offset) low = middle
+    else high = middle - 1
+  }
+  return low
+}
+
 function TrackLane({ tracks, laneIndex, direction }: {
   tracks: Track[]
   laneIndex: number
@@ -733,9 +753,15 @@ function TrackLane({ tracks, laneIndex, direction }: {
   const laneRef = useRef<HTMLDivElement>(null)
   const [laneWidth, setLaneWidth] = useState(0)
   const [offset, setOffset] = useState(0)
-  const slotWidth = 340
+  const chipGap = 12
   const speed = 34 + (laneIndex % 3) * 7
-  const cycleWidth = Math.max(slotWidth, tracks.length * slotWidth)
+  const chipWidths = useMemo(() => tracks.map(estimateTrackChipWidth), [tracks])
+  const prefixWidths = useMemo(() => {
+    const widths = [0]
+    chipWidths.forEach((width) => widths.push(widths[widths.length - 1] + width + chipGap))
+    return widths
+  }, [chipWidths])
+  const cycleWidth = Math.max(1, prefixWidths[prefixWidths.length - 1] ?? 1)
 
   useEffect(() => {
     const lane = laneRef.current
@@ -760,23 +786,26 @@ function TrackLane({ tracks, laneIndex, direction }: {
   }, [cycleWidth, speed])
 
   const logicalOffset = direction === 'left' ? offset : (cycleWidth - offset) % cycleWidth
-  const startIndex = Math.floor(logicalOffset / slotWidth)
-  const firstX = -(logicalOffset % slotWidth)
-  const visibleCount = Math.min(tracks.length + 1, Math.ceil(laneWidth / slotWidth) + 3)
-  const visibleItems = Array.from({ length: visibleCount }, (_, index) => {
-    const virtualIndex = startIndex + index
-    const track = tracks[virtualIndex % tracks.length]
-    return { track, x: firstX + index * slotWidth, virtualIndex }
-  })
+  const startIndex = findTrackIndexAtOffset(prefixWidths, logicalOffset)
+  const visibleItems: { track: Track; x: number; virtualIndex: number; width: number }[] = []
+  let cursor = prefixWidths[startIndex] - logicalOffset
+  let index = startIndex
+  while (visibleItems.length < tracks.length + 1 && cursor < laneWidth + chipGap) {
+    const trackIndex = index % tracks.length
+    const width = chipWidths[trackIndex]
+    visibleItems.push({ track: tracks[trackIndex], x: cursor, virtualIndex: index, width })
+    cursor += width + chipGap
+    index += 1
+  }
 
   return (
     <div className={`track-lane ${direction}`} ref={laneRef}>
       <div className="track-lane-viewport">
-        {visibleItems.map(({ track, x, virtualIndex }) => (
+        {visibleItems.map(({ track, x, virtualIndex, width }) => (
           <div
             className="gameboard-track-chip"
             data-index={virtualIndex}
-            style={{ transform: `translate3d(${x}px, 0, 0)` }}
+            style={{ transform: `translate3d(${x}px, 0, 0)`, width: `${width}px` }}
             key={`${virtualIndex}-${track.id}`}
           >
             <TrackArtwork track={track} />
