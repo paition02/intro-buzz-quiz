@@ -205,6 +205,17 @@ export function useMusicKitPlayback() {
     }, seconds * 1000)
   }, [])
 
+  const playFullLoop = useCallback(async () => {
+    const mk = await getMusicKit()
+    if (stopTimerRef.current) clearTimeout(stopTimerRef.current)
+    await loadPromiseRef.current
+    if (mk.isPlaying) mk.pause()
+    await mk.seekToTime(0)
+    mk.repeatMode = MusicKit.PlayerRepeatMode.one
+    await mk.play()
+    setPlaying(true)
+  }, [])
+
   const stop = useCallback(async () => {
     if (stopTimerRef.current) clearTimeout(stopTimerRef.current)
     const mk = await getMusicKit()
@@ -227,6 +238,7 @@ export function useMusicKitPlayback() {
     prepareQueue,
     loadTrack,
     playIntro,
+    playFullLoop,
     stop,
   }
 }

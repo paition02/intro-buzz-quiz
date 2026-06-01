@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { useVirtualizer } from '@tanstack/react-virtual'
 import { io } from 'socket.io-client'
 import type { Socket } from 'socket.io-client'
 import { useMusicKitPlayback } from './useMusicKit'
@@ -16,11 +15,13 @@ type GameStep =
   | 'correct'
   | 'wrong'
   | 'reveal'
+  | 'results'
 
 type Player = {
   id: string
   joined: boolean
   lastActionAt: number | null
+  score: number
 }
 
 type Track = {
@@ -157,7 +158,7 @@ function playerColor(id: string) {
   }
 }
 
-function PlayerBadge({ id, active = false, reacting = false, label = true }: { id: string; active?: boolean; reacting?: boolean; label?: boolean }) {
+function PlayerBadge({ id, active = false, reacting = false, label = true, score }: { id: string; active?: boolean; reacting?: boolean; label?: boolean; score?: number }) {
   const color = playerColor(id)
   return (
     <span
@@ -177,6 +178,7 @@ function PlayerBadge({ id, active = false, reacting = false, label = true }: { i
         </span>
       )}
       {label && id}
+      {score != null && <span className="player-score">{score}</span>}
     </span>
   )
 }
@@ -194,6 +196,7 @@ function phaseLabel(phase: Phase, step: GameStep) {
     correct: '正答ステップ',
     wrong: '誤答ステップ',
     reveal: '正解発表ステップ',
+    results: '結果発表ステップ',
   }
   return labels[step]
 }
@@ -279,6 +282,7 @@ function ConsolePage() {
   const [consoleMessage, setConsoleMessage] = useState<string | null>(null)
   const preparedQueueKeyRef = useRef<string | null>(null)
   const autoLoadLibraryPlaylistsRequestedRef = useRef(false)
+  const wasRevealStepRef = useRef(false)
   const getLibraryPlaylists = musicKit.getLibraryPlaylists
   const prepareQueue = musicKit.prepareQueue
 
@@ -302,6 +306,28 @@ function ConsolePage() {
       setConsoleMessage(error instanceof Error ? error.message : String(error))
     })
   }, [state.step, musicKit])
+
+  useEffect(() => {
+    if (state.step !== 'reveal' || state.currentTrackIndex < 0) return
+    void (async () => {
+      await musicKit.loadTrack(state.currentTrackIndex)
+      await musicKit.playFullLoop()
+    })().catch((error) => {
+      setConsoleMessage(error instanceof Error ? error.message : String(error))
+    })
+  }, [musicKit, state.currentTrackIndex, state.step])
+
+  useEffect(() => {
+    if (state.step === 'reveal') {
+      wasRevealStepRef.current = true
+      return
+    }
+    if (!wasRevealStepRef.current) return
+    wasRevealStepRef.current = false
+    void musicKit.stop().catch((error) => {
+      setConsoleMessage(error instanceof Error ? error.message : String(error))
+    })
+  }, [musicKit, state.step])
 
   const visiblePlaylists = useMemo(() => {
     const query = playlistSearch.trim().toLowerCase()
@@ -437,9 +463,25 @@ function ConsolePage() {
     await consoleAction('console:judge', { result })
   })
 
+  const handleGiveUp = () => run(async () => {
+    await musicKit.stop()
+    await consoleAction('console:give-up')
+  })
+
   const handleNextRound = () => run(async () => {
+    await musicKit.stop()
     const nextState = await consoleAction('console:next-round')
     if (nextState.currentTrackIndex >= 0) await musicKit.loadTrack(nextState.currentTrackIndex)
+  })
+
+  const handleShowResults = () => run(async () => {
+    await musicKit.stop()
+    await consoleAction('console:show-results')
+  })
+
+  const handleNextGame = () => run(async () => {
+    await musicKit.stop()
+    await consoleAction('console:next-game')
   })
 
   return (
@@ -462,7 +504,8 @@ function ConsolePage() {
         <button className="danger" onClick={() => consoleAction('console:reset')}>リセット</button>
       </section>
 
-      <section className="grid">
+      <section className="grid console-flow">
+        <div className="console-flow-column">
         <div className="panel console-panel-init">
           <h2>1. 初期化</h2>
           <p>Apple Musicにログインして、MusicKitで実際に再生できる状態にします。</p>
@@ -558,6 +601,10 @@ function ConsolePage() {
           </div>
         </div>
 
+        </div>
+
+        <div className="console-flow-column">
+
         <div className="panel console-panel-control">
           <h2>3. 進行</h2>
           <div className="seconds-control">
@@ -568,10 +615,12 @@ function ConsolePage() {
             <button disabled={busy || state.step !== 'beforePlayback'} onClick={handlePlay}>{musicKit.playing ? '再生中' : '再生'}</button>
             <button disabled={busy || state.step !== 'answering'} onClick={() => handleJudge('correct')}>正解</button>
             <button disabled={busy || state.step !== 'answering'} onClick={() => handleJudge('wrong')}>不正解</button>
+            <button disabled={busy || state.phase !== 'game' || !['beforePlayback', 'playing', 'answering', 'wrong'].includes(state.step)} onClick={handleGiveUp}>ギブアップ</button>
           </div>
           <div className="actions">
             <button disabled={busy || state.step !== 'reveal'} onClick={handleNextRound}>次のラウンドへ</button>
-            <button disabled={busy || state.phase !== 'game'} onClick={() => consoleAction('console:next-game')}>次のゲームへ</button>
+            <button disabled={busy || state.step !== 'reveal'} onClick={handleShowResults}>結果発表へ</button>
+            <button disabled={busy || state.step !== 'results'} onClick={handleNextGame}>次のゲームへ</button>
           </div>
         </div>
 
@@ -585,6 +634,7 @@ function ConsolePage() {
             </div>
           ) : <p>まだ曲はロードされていません。</p>}
         </div>
+        </div>
       </section>
     </main>
   )
@@ -592,15 +642,53 @@ function ConsolePage() {
 
 
 function gameboardMessage(state: GameState) {
-  if (state.phase === 'initialization' || state.phase === 'ready') return '準備中'
+  if (state.phase === 'initialization' || state.phase === 'ready') return 'ボタンを押してご参加ください'
   if (state.step === 'loading') return '曲を準備中'
-  if (state.step === 'beforePlayback') return '次のイントロを待っています'
-  if (state.step === 'playing') return '早押し！'
-  if (state.step === 'answering') return '解答中'
-  if (state.step === 'correct') return '正解！'
-  if (state.step === 'wrong') return '不正解'
-  if (state.step === 'reveal') return '正解発表'
+  if (state.step === 'beforePlayback') return '♪'
+  if (state.step === 'playing') return '♪'
+  if (state.step === 'answering') return '解答をどうぞ！'
+  if (state.step === 'correct') return '○'
+  if (state.step === 'wrong') return '×'
+  if (state.step === 'reveal') return ''
+  if (state.step === 'results') return ''
   return phaseLabel(state.phase, state.step)
+}
+
+function playGameboardSound(kind: 'correct' | 'wrong') {
+  const AudioContextCtor = window.AudioContext ?? (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+  if (!AudioContextCtor) return
+  const audioContext = new AudioContextCtor()
+  const start = audioContext.currentTime
+  const master = audioContext.createGain()
+  master.gain.setValueAtTime(0.7, start)
+  master.connect(audioContext.destination)
+
+  const playTone = (frequency: number, offset: number, duration: number, type: OscillatorType = 'sine') => {
+    const oscillator = audioContext.createOscillator()
+    const gain = audioContext.createGain()
+    const toneStart = start + offset
+    oscillator.type = type
+    oscillator.frequency.setValueAtTime(frequency, toneStart)
+    gain.gain.setValueAtTime(0.001, toneStart)
+    gain.gain.exponentialRampToValueAtTime(0.9, toneStart + 0.01)
+    gain.gain.exponentialRampToValueAtTime(0.001, toneStart + duration)
+    oscillator.connect(gain)
+    gain.connect(master)
+    oscillator.start(toneStart)
+    oscillator.stop(toneStart + duration + 0.03)
+  }
+
+  if (kind === 'correct') {
+    playTone(880, 0, 0.18)
+    playTone(1174.66, 0.14, 0.18)
+    playTone(880, 0.36, 0.18)
+    playTone(1174.66, 0.5, 0.48)
+  } else {
+    playTone(160, 0, 0.62, 'sawtooth')
+    playTone(110, 0.08, 0.54, 'sawtooth')
+  }
+
+  window.setTimeout(() => void audioContext.close(), 1300)
 }
 
 function useViewportSize() {
@@ -629,64 +717,19 @@ function TrackLane({ tracks, laneIndex, direction }: {
   laneIndex: number
   direction: 'left' | 'right'
 }) {
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const virtualCycleCount = 1000
-  const virtualCount = Math.max(tracks.length, tracks.length * virtualCycleCount)
-  const middleIndex = Math.floor(virtualCount / 2 / tracks.length) * tracks.length
-  const speed = 34 + (laneIndex % 3) * 7
-  // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Virtual is intentionally used for variable-width horizontal lanes.
-  const virtualizer = useVirtualizer({
-    count: virtualCount,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: () => 280,
-    horizontal: true,
-    overscan: 8,
-    gap: 12,
-  })
-
-  useEffect(() => {
-    virtualizer.scrollToIndex(middleIndex, { align: 'start' })
-  }, [middleIndex, virtualizer])
-
-  useEffect(() => {
-    const scrollElement = scrollRef.current
-    if (!scrollElement) return undefined
-
-    let frameId = 0
-    let previousTime: number | null = null
-    const tick = (time: number) => {
-      if (previousTime !== null) {
-        const deltaSeconds = (time - previousTime) / 1000
-        const delta = speed * deltaSeconds * (direction === 'left' ? 1 : -1)
-        scrollElement.scrollLeft += delta
-
-        if (scrollElement.scrollLeft < scrollElement.clientWidth) {
-          virtualizer.scrollToIndex(middleIndex, { align: 'start' })
-        } else if (scrollElement.scrollLeft > scrollElement.scrollWidth - scrollElement.clientWidth * 2) {
-          virtualizer.scrollToIndex(middleIndex, { align: 'end' })
-        }
-      }
-      previousTime = time
-      frameId = window.requestAnimationFrame(tick)
-    }
-
-    frameId = window.requestAnimationFrame(tick)
-    return () => window.cancelAnimationFrame(frameId)
-  }, [direction, middleIndex, speed, virtualizer])
+  const duration = 34 + (laneIndex % 3) * 7
+  const renderedTracks = [...tracks, ...tracks]
 
   return (
-    <div className={`track-lane ${direction}`} ref={scrollRef}>
-      <div className="track-lane-spacer" style={{ width: virtualizer.getTotalSize() }}>
-        {virtualizer.getVirtualItems().map((virtualItem) => {
-          const trackIndex = virtualItem.index % tracks.length
-          const track = tracks[trackIndex]
+    <div className={`track-lane ${direction}`}>
+      <div className="track-lane-marquee" style={{ '--lane-duration': `${duration}s` } as CSSProperties}>
+        {renderedTracks.map((track, index) => {
+          const duplicate = index >= tracks.length
           return (
             <div
               className="gameboard-track-chip"
-              data-index={virtualItem.index}
-              ref={virtualizer.measureElement}
-              style={{ transform: `translate3d(${virtualItem.start}px, 0, 0)` }}
-              key={virtualItem.key}
+              aria-hidden={duplicate ? 'true' : undefined}
+              key={`${duplicate ? 'copy' : 'base'}-${track.id}-${index}`}
             >
               <TrackArtwork track={track} />
               <span className="gameboard-track-title">{track.title}</span>
@@ -711,10 +754,6 @@ function ReadyTrackLanes({ tracks }: { tracks: Track[] }) {
 
   return (
     <div className="ready-track-lanes" aria-label="選択中の曲">
-      <div className="ready-track-lanes-head">
-        <span>選択中の曲</span>
-        <strong>{tracks.length}曲</strong>
-      </div>
       <div className="track-lanes" style={{ '--lane-count': lanes.length } as CSSProperties}>
         {lanes.map((laneTracks, index) => (
           <TrackLane
@@ -733,6 +772,7 @@ function GameboardPage() {
   const state = useGameState()
   const [now, setNow] = useState(() => Date.now())
   const joinedPlayers = state.players.filter((player) => player.joined)
+  const previousStepRef = useRef<GameStep>(state.step)
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 120)
@@ -741,12 +781,20 @@ function GameboardPage() {
 
   const isReacting = (player: Player) => player.lastActionAt != null && now - player.lastActionAt < 800
   const showReadyTracks = state.phase === 'ready' && state.tracks.length > 0
+  const sortedPlayers = [...joinedPlayers].sort((a, b) => b.score - a.score || a.id.localeCompare(b.id))
+
+  useEffect(() => {
+    if (previousStepRef.current !== state.step) {
+      if (state.step === 'correct') playGameboardSound('correct')
+      if (state.step === 'wrong') playGameboardSound('wrong')
+      previousStepRef.current = state.step
+    }
+  }, [state.step])
 
   return (
     <main className={`gameboard ${state.step} ${state.lastResult ?? ''}`}>
       <section className={showReadyTracks ? 'board-card ready-board' : 'board-card'}>
-        <p className="eyebrow">{phaseLabel(state.phase, state.step)}</p>
-        <h1>{gameboardMessage(state)}</h1>
+        {gameboardMessage(state) && <h1 className={state.step === 'beforePlayback' ? 'muted-symbol' : undefined}>{gameboardMessage(state)}</h1>}
 
         {showReadyTracks && <ReadyTrackLanes tracks={state.tracks} />}
 
@@ -759,25 +807,37 @@ function GameboardPage() {
             aria-label={state.answererId}
           />
         )}
-        {state.step === 'correct' && <div className="effect success">正解！</div>}
-        {state.step === 'wrong' && <div className="effect miss">不正解</div>}
+        {state.step === 'correct' && <div className="effect success">○</div>}
+        {state.step === 'wrong' && <div className="effect miss">×</div>}
 
         {state.step === 'reveal' && state.currentTrack && (
           <div className="track-card reveal">
-            <p>正解</p>
+            <TrackArtwork track={state.currentTrack} />
             <strong>{state.currentTrack.title}</strong>
             <span>{state.currentTrack.artist}</span>
           </div>
         )}
 
+        {state.step === 'results' && (
+          <div className="results-board">
+            {sortedPlayers.map((player) => (
+              <div className="result-player" key={player.id}>
+                <PlayerBadge id={player.id} label={false} />
+                <strong>{player.score}</strong>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {state.step !== 'results' && (
         <div className="players">
-          <h2>Players</h2>
           <div className="player-list">
             {joinedPlayers.length ? joinedPlayers.map((player) => (
-              <PlayerBadge id={player.id} active={player.id === state.answererId} reacting={isReacting(player)} label={false} key={player.id} />
-            )) : <span className="hint">準備フェーズでボタンを押すと参加できます</span>}
+              <PlayerBadge id={player.id} active={player.id === state.answererId} reacting={isReacting(player)} label={false} score={player.score} key={player.id} />
+            )) : null}
           </div>
         </div>
+        )}
       </section>
     </main>
   )
@@ -836,17 +896,17 @@ function ActionPage() {
       const gain = audioContext.createGain()
       oscillator.type = 'sine'
       oscillator.frequency.setValueAtTime(frequency, start)
-      gain.gain.setValueAtTime(0, start)
-      gain.gain.linearRampToValueAtTime(1, start + 0.012)
+      gain.gain.setValueAtTime(0.001, start)
+      gain.gain.exponentialRampToValueAtTime(1, start + 0.01)
       gain.gain.exponentialRampToValueAtTime(0.001, start + duration)
       oscillator.connect(gain)
       gain.connect(master)
       oscillator.start(start)
-      oscillator.stop(start + duration + 0.02)
+      oscillator.stop(start + duration + 0.03)
     }
 
-    playTone(880, now, 0.18)
-    playTone(1174.66, now + 0.16, 0.24)
+    playTone(987.77, now, 0.18)
+    playTone(1318.51, now + 0.28, 0.62)
   }
 
   const act = async () => {
