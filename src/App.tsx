@@ -719,18 +719,20 @@ function TrackArtwork({ track }: { track: Track }) {
     : <span className="gameboard-track-artwork placeholder" aria-hidden="true">♪</span>
 }
 
-function estimateTrackChipWidth(track: Track) {
-  const textWidth = [...track.title].reduce((width, character) => {
-    const codePoint = character.codePointAt(0) ?? 0
-    const isWide = codePoint > 0x3000 || (codePoint >= 0xff00 && codePoint <= 0xffef)
-    const isNarrow = /[\s!.,:;|]/u.test(character)
-    if (isWide) return width + 24
-    if (isNarrow) return width + 8
-    return width + 18
-  }, 0)
+function measureTrackChipWidth(track: Track) {
   const artworkWidth = 36
   const contentGap = 10
   const horizontalPadding = 22
+  const fallbackTextWidth = track.title.length * 18
+
+  if (typeof document === 'undefined') return Math.max(170, artworkWidth + contentGap + horizontalPadding + fallbackTextWidth)
+
+  const canvas = document.createElement('canvas')
+  const context = canvas.getContext('2d')
+  if (!context) return Math.max(170, artworkWidth + contentGap + horizontalPadding + fallbackTextWidth)
+
+  context.font = '900 16px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+  const textWidth = context.measureText(track.title).width
   return Math.max(170, Math.ceil(artworkWidth + contentGap + horizontalPadding + textWidth))
 }
 
@@ -755,7 +757,7 @@ function TrackLane({ tracks, laneIndex, direction }: {
   const [offset, setOffset] = useState(0)
   const chipGap = 12
   const speed = 34 + (laneIndex % 3) * 7
-  const chipWidths = useMemo(() => tracks.map(estimateTrackChipWidth), [tracks])
+  const chipWidths = useMemo(() => tracks.map(measureTrackChipWidth), [tracks])
   const prefixWidths = useMemo(() => {
     const widths = [0]
     chipWidths.forEach((width) => widths.push(widths[widths.length - 1] + width + chipGap))
