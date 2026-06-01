@@ -231,6 +231,16 @@ textarea { min-height: 110px; resize: vertical; }
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.045);
   border: 1px solid rgba(255, 255, 255, 0.08);
+  scrollbar-width: none;
+}
+
+.track-lane::-webkit-scrollbar {
+  display: none;
+}
+
+.track-lane-spacer {
+  position: relative;
+  height: 100%;
 }
 
 .track-lane.right {
@@ -245,16 +255,18 @@ textarea { min-height: 110px; resize: vertical; }
   position: absolute;
   top: 7px;
   left: 0;
-  width: 244px;
+  width: max-content;
+  max-width: none;
   height: 52px;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 12px 8px 8px;
+  padding: 8px 14px 8px 8px;
   border-radius: 14px;
   background: rgba(12, 10, 16, 0.72);
   border: 1px solid rgba(255, 255, 255, 0.12);
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.22);
+  white-space: nowrap;
   will-change: transform;
 }
 
@@ -275,9 +287,6 @@ textarea { min-height: 110px; resize: vertical; }
 }
 
 .gameboard-track-title {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   color: #f7f2ea;
   font-weight: 900;

@@ -11,6 +11,7 @@
     "preview": "NODE_ENV=production node --import tsx server/index.ts"
   },
   "dependencies": {
+    "@tanstack/react-virtual": "^3.13.26",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "jose": "^6.2.3",

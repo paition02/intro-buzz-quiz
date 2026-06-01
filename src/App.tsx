@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { io } from 'socket.io-client'
 import type { Socket } from 'socket.io-client'
 import { useMusicKitPlayback } from './useMusicKit'
@@ -542,22 +543,6 @@ function gameboardMessage(state: GameState) {
   return phaseLabel(state.phase, state.step)
 }
 
-function useAnimationTime() {
-  const [animationTime, setAnimationTime] = useState(() => performance.now())
-
-  useEffect(() => {
-    let frameId = 0
-    const tick = (time: number) => {
-      setAnimationTime(time)
-      frameId = window.requestAnimationFrame(tick)
-    }
-    frameId = window.requestAnimationFrame(tick)
-    return () => window.cancelAnimationFrame(frameId)
-  }, [])
-
-  return animationTime
-}
-
 function useViewportSize() {
   const [viewportSize, setViewportSize] = useState(() => ({
     width: window.innerWidth,
@@ -579,47 +564,81 @@ function TrackArtwork({ track }: { track: Track }) {
     : <span className="gameboard-track-artwork placeholder" aria-hidden="true">♪</span>
 }
 
-function TrackLane({ tracks, laneIndex, direction, animationTime, viewportWidth }: {
+function TrackLane({ tracks, laneIndex, direction }: {
   tracks: Track[]
   laneIndex: number
   direction: 'left' | 'right'
-  animationTime: number
-  viewportWidth: number
 }) {
-  const itemWidth = 260
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const virtualCycleCount = 1000
+  const virtualCount = Math.max(tracks.length, tracks.length * virtualCycleCount)
+  const middleIndex = Math.floor(virtualCount / 2 / tracks.length) * tracks.length
   const speed = 34 + (laneIndex % 3) * 7
-  const visibleCount = Math.min(tracks.length, Math.ceil(viewportWidth / itemWidth) + 3)
-  const distance = tracks.length * itemWidth
-  const rawOffset = distance === 0 ? 0 : (animationTime / 1000 * speed) % distance
-  const offset = direction === 'left' ? rawOffset : distance - rawOffset
-  const startIndex = distance === 0 ? 0 : Math.floor(offset / itemWidth) % tracks.length
-  const shift = distance === 0 ? 0 : offset % itemWidth
+  // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Virtual is intentionally used for variable-width horizontal lanes.
+  const virtualizer = useVirtualizer({
+    count: virtualCount,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 280,
+    horizontal: true,
+    overscan: 8,
+    gap: 12,
+  })
+
+  useEffect(() => {
+    virtualizer.scrollToIndex(middleIndex, { align: 'start' })
+  }, [middleIndex, virtualizer])
+
+  useEffect(() => {
+    const scrollElement = scrollRef.current
+    if (!scrollElement) return undefined
+
+    let frameId = 0
+    let previousTime: number | null = null
+    const tick = (time: number) => {
+      if (previousTime !== null) {
+        const deltaSeconds = (time - previousTime) / 1000
+        const delta = speed * deltaSeconds * (direction === 'left' ? 1 : -1)
+        scrollElement.scrollLeft += delta
+
+        if (scrollElement.scrollLeft < scrollElement.clientWidth) {
+          virtualizer.scrollToIndex(middleIndex, { align: 'start' })
+        } else if (scrollElement.scrollLeft > scrollElement.scrollWidth - scrollElement.clientWidth * 2) {
+          virtualizer.scrollToIndex(middleIndex, { align: 'end' })
+        }
+      }
+      previousTime = time
+      frameId = window.requestAnimationFrame(tick)
+    }
+
+    frameId = window.requestAnimationFrame(tick)
+    return () => window.cancelAnimationFrame(frameId)
+  }, [direction, middleIndex, speed, virtualizer])
 
   return (
-    <div className={`track-lane ${direction}`}>
-      {Array.from({ length: visibleCount }, (_, position) => {
-        const trackIndex = (startIndex + position) % tracks.length
-        const track = tracks[trackIndex]
-        const x = direction === 'left'
-          ? position * itemWidth - shift
-          : viewportWidth - (position + 1) * itemWidth + shift
-        return (
-          <div
-            className="gameboard-track-chip"
-            style={{ transform: `translate3d(${x}px, 0, 0)` }}
-            key={`${laneIndex}-${track.id}-${trackIndex}-${position}`}
-          >
-            <TrackArtwork track={track} />
-            <span className="gameboard-track-title">{track.title}</span>
-          </div>
-        )
-      })}
+    <div className={`track-lane ${direction}`} ref={scrollRef}>
+      <div className="track-lane-spacer" style={{ width: virtualizer.getTotalSize() }}>
+        {virtualizer.getVirtualItems().map((virtualItem) => {
+          const trackIndex = virtualItem.index % tracks.length
+          const track = tracks[trackIndex]
+          return (
+            <div
+              className="gameboard-track-chip"
+              data-index={virtualItem.index}
+              ref={virtualizer.measureElement}
+              style={{ transform: `translate3d(${virtualItem.start}px, 0, 0)` }}
+              key={virtualItem.key}
+            >
+              <TrackArtwork track={track} />
+              <span className="gameboard-track-title">{track.title}</span>
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }
 
 function ReadyTrackLanes({ tracks }: { tracks: Track[] }) {
-  const animationTime = useAnimationTime()
   const viewportSize = useViewportSize()
   const laneHeight = 74
   const reservedHeight = 300
@@ -642,8 +661,6 @@ function ReadyTrackLanes({ tracks }: { tracks: Track[] }) {
             tracks={laneTracks}
             laneIndex={index}
             direction={index % 2 === 0 ? 'right' : 'left'}
-            animationTime={animationTime}
-            viewportWidth={viewportSize.width}
             key={index}
           />
         ))}
