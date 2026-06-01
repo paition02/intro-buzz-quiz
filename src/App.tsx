@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { io } from 'socket.io-client'
 import type { Socket } from 'socket.io-client'
 import { useMusicKitPlayback } from './useMusicKit'
@@ -717,19 +718,63 @@ function TrackLane({ tracks, laneIndex, direction }: {
   laneIndex: number
   direction: 'left' | 'right'
 }) {
-  const duration = 34 + (laneIndex % 3) * 7
-  const renderedTracks = [...tracks, ...tracks]
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const cycleCount = 200
+  const virtualCount = tracks.length * cycleCount
+  const middleIndex = Math.floor(cycleCount / 2) * tracks.length
+  const speed = 34 + (laneIndex % 3) * 7
+  // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Virtual keeps hundreds of track chips/images out of the DOM.
+  const virtualizer = useVirtualizer({
+    count: virtualCount,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 280,
+    horizontal: true,
+    overscan: 8,
+    gap: 12,
+  })
+
+  useEffect(() => {
+    virtualizer.scrollToIndex(middleIndex, { align: 'start' })
+  }, [middleIndex, virtualizer])
+
+  useEffect(() => {
+    const scrollElement = scrollRef.current
+    if (!scrollElement) return undefined
+
+    let frameId = 0
+    let previousTime: number | null = null
+    const edgeBuffer = 2_000_000
+
+    const tick = (time: number) => {
+      if (previousTime !== null) {
+        const deltaSeconds = (time - previousTime) / 1000
+        const delta = speed * deltaSeconds * (direction === 'left' ? 1 : -1)
+        scrollElement.scrollLeft += delta
+
+        if (scrollElement.scrollLeft < edgeBuffer || scrollElement.scrollLeft > scrollElement.scrollWidth - edgeBuffer) {
+          virtualizer.scrollToIndex(middleIndex, { align: direction === 'left' ? 'start' : 'end' })
+        }
+      }
+      previousTime = time
+      frameId = window.requestAnimationFrame(tick)
+    }
+
+    frameId = window.requestAnimationFrame(tick)
+    return () => window.cancelAnimationFrame(frameId)
+  }, [direction, middleIndex, speed, virtualizer])
 
   return (
-    <div className={`track-lane ${direction}`}>
-      <div className="track-lane-marquee" style={{ '--lane-duration': `${duration}s` } as CSSProperties}>
-        {renderedTracks.map((track, index) => {
-          const duplicate = index >= tracks.length
+    <div className={`track-lane ${direction}`} ref={scrollRef}>
+      <div className="track-lane-spacer" style={{ width: virtualizer.getTotalSize() }}>
+        {virtualizer.getVirtualItems().map((virtualItem) => {
+          const track = tracks[virtualItem.index % tracks.length]
           return (
             <div
               className="gameboard-track-chip"
-              aria-hidden={duplicate ? 'true' : undefined}
-              key={`${duplicate ? 'copy' : 'base'}-${track.id}-${index}`}
+              data-index={virtualItem.index}
+              ref={virtualizer.measureElement}
+              style={{ transform: `translate3d(${virtualItem.start}px, 0, 0)` }}
+              key={virtualItem.key}
             >
               <TrackArtwork track={track} />
               <span className="gameboard-track-title">{track.title}</span>

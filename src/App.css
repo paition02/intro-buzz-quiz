@@ -322,6 +322,11 @@ textarea { min-height: 110px; resize: vertical; }
   display: none;
 }
 
+.track-lane-spacer {
+  position: relative;
+  height: 100%;
+}
+
 .track-lane.right {
   background: linear-gradient(90deg, rgba(88, 185, 255, 0.06), rgba(255, 255, 255, 0.045));
 }
@@ -330,28 +335,10 @@ textarea { min-height: 110px; resize: vertical; }
   background: linear-gradient(90deg, rgba(255, 255, 255, 0.045), rgba(255, 177, 78, 0.06));
 }
 
-.track-lane-marquee {
+.gameboard-track-chip {
   position: absolute;
   top: 7px;
   left: 0;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: max-content;
-  will-change: transform;
-  animation: lane-marquee var(--lane-duration, 38s) linear infinite;
-}
-
-.track-lane.right .track-lane-marquee {
-  animation-direction: reverse;
-}
-
-@keyframes lane-marquee {
-  from { transform: translate3d(0, 0, 0); }
-  to { transform: translate3d(-50%, 0, 0); }
-}
-
-.gameboard-track-chip {
   width: max-content;
   max-width: none;
   height: 52px;
