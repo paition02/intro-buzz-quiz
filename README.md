@@ -11,29 +11,26 @@ npm run dev
 
 - ホスト操作: <http://localhost:5173/console>
 - スクリーン表示: <http://localhost:5173/gameboard>
-- 早押しボタンデバッグ: <http://localhost:5173/debug/action>
+- スマホ早押しボタン: <http://localhost:5173/action>
 
-LAN内のスマホやボタンから使う場合は、PCのIPアドレスで `http://<PCのIP>:5173/console` や `POST http://<PCのIP>:5173/api/act/<actor_id>` にアクセスします。
+LAN内のスマホやボタンから使う場合は、PCのIPアドレスで `http://<PCのIP>:5173/console`、`http://<PCのIP>:5173/action`、または `POST http://<PCのIP>:5173/api/act/<actor_id>` にアクセスします。
 
 ## 実装済みエンドポイント
 
 - `GET /gameboard` — プレイヤー共通表示
 - `GET /console` — ホスト進行画面
+- `GET /action` — スマホを早押しボタンとして使うプレイヤー向けページ
 - `POST /api/act/:actor_id` — プレイヤー/物理ボタンのアクション信号
-- `GET /debug/action` — アクション送信シミュレーター
-- `GET /api/state` — 現在状態
-- `GET /api/events` — Server-Sent Eventsによる状態配信
+- `GET /api/token` — MusicKit developer token
 
 ## 現在のMVP仕様
 
-- 準備フェーズでは、アクションでプレイヤー参加をトグルし、常に `{ "shouldReact": true }` を返します。
-- 再生中ステップでは、最初に押した参加プレイヤーだけが解答権を得て `{ "shouldReact": true }`、それ以外は `{ "shouldReact": false }` です。
-- Apple Music/MusicKit連携は未接続で、ログイン・プレイリスト選択・曲ロードの差し込み口だけ用意しています。
-- 曲データはサンプルトラックで進行します。
-
-## 次にやること
-
-- MusicKit JSの認証とプレイリスト取得
-- 実音源の指定秒数再生・停止
-- 物理ボタンのHTTPクライアント例
-- ゲーム設定（効果音、表示時間、同一曲の再出題制御など）
+- 準備フェーズでは、アクションでプレイヤー参加をトグルします。
+- ゲーム中は、イントロ再生中、またはその曲が1回以上再生済みの再生前ステップで、最初に押した参加プレイヤーだけが解答権を得ます。
+- アクションAPIはレスポンスボディではなくステータスコードで反応有無を示します。
+  - `200 OK`: 反応あり
+  - `204 No Content`: 正常だが反応なし
+  - `400 Bad Request`: リクエスト不正
+  - `409 Conflict`: 状態的に今は受け付けられない
+  - `429 Too Many Requests`: 連打・クールダウン
+- Apple Music/MusicKitでログインし、ライブラリプレイリストから曲を選択して実音源を再生します。

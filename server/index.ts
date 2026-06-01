@@ -391,112 +391,162 @@ app.post('/api/act/:actorId', (req, res) => {
 })
 
 
-app.get('/debug/action', (_req, res) => {
+app.get('/action', (_req, res) => {
   res.type('html').send(`<!doctype html>
 <html lang="ja">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Debug Action</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>早押しボタン</title>
   <style>
-    :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #16131d; color: #f7f2ea; }
-    body { margin: 0; padding: 24px; }
-    main { max-width: 720px; margin: 0 auto; }
-    h1 { margin: 0 0 8px; }
-    p { color: #d4c8ce; line-height: 1.6; }
-    button { border: 0; border-radius: 999px; padding: 12px 18px; font-weight: 800; cursor: pointer; }
-    button:disabled { opacity: 0.5; cursor: not-allowed; }
-    #add { background: linear-gradient(135deg, #ff4e77, #ffb14e); color: #21131a; }
-    .actor-list { display: grid; gap: 12px; margin-top: 20px; padding: 0; list-style: none; }
-    .actor-item { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 14px; border-radius: 18px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12); transition: border-color 0.16s ease, background 0.16s ease, transform 0.16s ease; }
-    .actor-item.pressed { background: rgba(255, 177, 78, 0.14); border-color: rgba(255, 177, 78, 0.7); transform: scale(1.015); }
-    .actor-item.error { background: rgba(255, 138, 163, 0.12); border-color: rgba(255, 138, 163, 0.65); }
-    .act { background: #f7f2ea; color: #21131a; min-width: 96px; }
-    .meta { color: #a99ca4; font-size: 0.9rem; }
-    .actor-main { min-width: 0; }
+    :root { color-scheme: dark; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #16131d; color: #f7f2ea; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; -webkit-user-select: none; }
+    html, body { margin: 0; min-width: 320px; min-height: 100%; overscroll-behavior: none; touch-action: manipulation; }
+    body {
+      min-height: 100vh;
+      min-height: 100svh;
+      background:
+        radial-gradient(circle at 20% 10%, rgba(255, 78, 119, 0.28), transparent 28rem),
+        radial-gradient(circle at 80% 20%, rgba(255, 177, 78, 0.2), transparent 26rem),
+        #16131d;
+    }
+    button {
+      width: 100vw;
+      min-height: 100vh;
+      min-height: 100svh;
+      border: 0;
+      padding: max(28px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(28px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
+      display: grid;
+      place-items: center;
+      background: transparent;
+      color: inherit;
+      cursor: pointer;
+      font: inherit;
+      transition: transform 0.08s ease, filter 0.16s ease, background 0.16s ease;
+    }
+    button:disabled { cursor: wait; }
+    .content { display: grid; justify-items: center; gap: 18px; text-align: center; }
+    .eyebrow { color: #ffb14e; text-transform: uppercase; letter-spacing: 0.16em; font-size: 0.78rem; font-weight: 1000; }
+    .circle {
+      width: min(72vw, 320px);
+      aspect-ratio: 1;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(135deg, #ff4e77, #ffb14e);
+      color: #21131a;
+      box-shadow: 0 24px 80px rgba(255, 78, 119, 0.36), inset 0 0 0 12px rgba(255,255,255,0.22);
+      font-size: clamp(4rem, 24vw, 8rem);
+      font-weight: 1000;
+    }
+    h1 { margin: 0; font-size: clamp(2.2rem, 12vw, 5.8rem); line-height: 0.95; letter-spacing: -0.07em; }
+    p { margin: 0; color: #d4c8ce; font-weight: 800; line-height: 1.5; }
+    .actor { color: #a99ca4; font-size: 0.82rem; overflow-wrap: anywhere; }
+    .pressed .circle { animation: pop 0.62s ease-out both; }
+    .pressed { background: rgba(255, 177, 78, 0.12); }
+    .idle .circle { filter: saturate(1); }
+    .muted .circle { filter: saturate(0.72) brightness(0.82); }
+    .error .circle { background: linear-gradient(135deg, #ff8aa3, #7c2438); color: #fff; }
+    @keyframes pop {
+      0% { transform: scale(1); box-shadow: 0 24px 80px rgba(255, 78, 119, 0.36), inset 0 0 0 12px rgba(255,255,255,0.22); }
+      22% { transform: scale(1.12); box-shadow: 0 0 0 36px rgba(255, 177, 78, 0.18), 0 30px 90px rgba(255, 177, 78, 0.52), inset 0 0 0 12px rgba(255,255,255,0.28); }
+      100% { transform: scale(1); box-shadow: 0 24px 80px rgba(255, 78, 119, 0.36), inset 0 0 0 12px rgba(255,255,255,0.22); }
+    }
   </style>
 </head>
 <body>
-  <main>
-    <h1>早押しボタン Debug</h1>
-    <p>「ボタン追加」で早押しボタンをリストに追加します。各リストアイテムの ACT が物理ボタン1個分です。同じタブのセッション中だけ保持します。</p>
-    <button id="add">ボタン追加</button>
-    <ul id="actors" class="actor-list"></ul>
-  </main>
+  <button id="action" class="idle" type="button" aria-label="早押しボタン">
+    <span class="content">
+      <span class="eyebrow">Intro Buzz Button</span>
+      <span class="circle" aria-hidden="true">!</span>
+      <h1 id="title">押す</h1>
+      <p id="status">スマホ全体が早押しボタンです</p>
+      <span class="actor" id="actor"></span>
+    </span>
+  </button>
   <script>
-    const storageKey = 'intro-buzz-debug-actors'
-    const actorsEl = document.querySelector('#actors')
-    const loadActors = () => {
+    const storageKey = 'intro-buzz-action-actor-id'
+    const action = document.querySelector('#action')
+    const title = document.querySelector('#title')
+    const status = document.querySelector('#status')
+    const actor = document.querySelector('#actor')
+    const createActorId = () => 'action-' + (crypto.randomUUID?.() || Math.random().toString(36).slice(2))
+    const getActorId = () => {
+      const stored = sessionStorage.getItem(storageKey)
+      if (stored) return stored
+      const id = createActorId()
+      sessionStorage.setItem(storageKey, id)
+      return id
+    }
+
+    const actorId = getActorId()
+    actor.textContent = actorId
+    let audioContext = null
+
+    const setState = (className, titleText, statusText) => {
+      action.className = className
+      title.textContent = titleText
+      status.textContent = statusText
+    }
+
+    const playPingPong = async () => {
+      const AudioContext = window.AudioContext || window.webkitAudioContext
+      if (!AudioContext) return
+      audioContext ??= new AudioContext()
+      if (audioContext.state === 'suspended') await audioContext.resume()
+
+      const now = audioContext.currentTime
+      const master = audioContext.createGain()
+      master.gain.setValueAtTime(1, now)
+      master.connect(audioContext.destination)
+
+      const playTone = (frequency, start, duration) => {
+        const oscillator = audioContext.createOscillator()
+        const gain = audioContext.createGain()
+        oscillator.type = 'sine'
+        oscillator.frequency.setValueAtTime(frequency, start)
+        gain.gain.setValueAtTime(0, start)
+        gain.gain.linearRampToValueAtTime(1, start + 0.012)
+        gain.gain.exponentialRampToValueAtTime(0.001, start + duration)
+        oscillator.connect(gain)
+        gain.connect(master)
+        oscillator.start(start)
+        oscillator.stop(start + duration + 0.02)
+      }
+
+      playTone(880, now, 0.18)
+      playTone(1174.66, now + 0.16, 0.24)
+    }
+
+    const act = async () => {
+      if (action.disabled) return
+      action.disabled = true
       try {
-        const parsed = JSON.parse(sessionStorage.getItem(storageKey) || '[]')
-        return Array.isArray(parsed) ? parsed.filter((value) => typeof value === 'string') : []
-      } catch {
-        return []
+        const res = await fetch('/api/act/' + encodeURIComponent(actorId), { method: 'POST' })
+        if (res.status === 200) {
+          await playPingPong()
+          setState('pressed', 'ピンポーン！', '反応しました')
+          window.setTimeout(() => setState('idle', '押す', 'スマホ全体が早押しボタンです'), 760)
+        } else if (res.status === 204) {
+          setState('muted', '反応なし', '押せましたが、反応はありません')
+          window.setTimeout(() => setState('idle', '押す', 'スマホ全体が早押しボタンです'), 760)
+        } else if (res.status === 409) {
+          setState('muted', '待って', '今は押せません')
+          window.setTimeout(() => setState('idle', '押す', 'スマホ全体が早押しボタンです'), 760)
+        } else if (res.status === 429) {
+          setState('muted', '少し待って', '連打はクールダウン中です')
+          window.setTimeout(() => setState('idle', '押す', 'スマホ全体が早押しボタンです'), 760)
+        } else {
+          setState('error', 'エラー', '送信に失敗しました: ' + res.status)
+        }
+      } catch (error) {
+        setState('error', 'エラー', '接続できませんでした')
+      } finally {
+        window.setTimeout(() => { action.disabled = false }, 180)
       }
     }
 
-    const saveActors = (actors) => sessionStorage.setItem(storageKey, JSON.stringify(actors))
-    const createActorId = () => 'actor-' + (crypto.randomUUID?.() || Math.random().toString(36).slice(2))
-
-    let actors = loadActors()
-
-    function render() {
-      actorsEl.textContent = ''
-      if (actors.length === 0) {
-        const empty = document.createElement('li')
-        empty.className = 'meta'
-        empty.textContent = 'まだボタンがありません'
-        actorsEl.append(empty)
-        return
-      }
-
-      for (const [index, actorId] of actors.entries()) {
-        const item = document.createElement('li')
-        item.className = 'actor-item'
-
-        const info = document.createElement('div')
-        info.className = 'actor-main'
-        const label = document.createElement('div')
-        label.className = 'meta'
-        label.textContent = 'ボタン ' + (index + 1)
-        info.append(label)
-
-        const button = document.createElement('button')
-        button.className = 'act'
-        button.textContent = 'ACT'
-        button.addEventListener('click', async () => {
-          button.disabled = true
-          try {
-            const res = await fetch('/api/act/' + encodeURIComponent(actorId), { method: 'POST' })
-            item.classList.remove('pressed', 'error')
-            if (res.status === 200) {
-              item.classList.add('pressed')
-              setTimeout(() => item.classList.remove('pressed'), 650)
-            } else if (!res.ok && res.status !== 409 && res.status !== 429) {
-              item.classList.add('error')
-              setTimeout(() => item.classList.remove('error'), 650)
-            }
-          } catch (error) {
-            item.classList.remove('pressed')
-            item.classList.add('error')
-            setTimeout(() => item.classList.remove('error'), 650)
-          } finally {
-            button.disabled = false
-          }
-        })
-
-        item.append(info, button)
-        actorsEl.append(item)
-      }
-    }
-
-    document.querySelector('#add').addEventListener('click', () => {
-      actors = [...actors, createActorId()]
-      saveActors(actors)
-      render()
-    })
-
-    render()
+    action.addEventListener('click', () => { void act() })
   </script>
 </body>
 </html>`)

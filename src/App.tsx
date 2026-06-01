@@ -733,7 +733,7 @@ function HomePage() {
       <div className="actions">
         <a className="button" href="/console">/console</a>
         <a className="button" href="/gameboard">/gameboard</a>
-        <a className="button ghost" href="/debug/action">/debug/action</a>
+        <a className="button ghost" href="/action">/action</a>
       </div>
     </main>
   )
