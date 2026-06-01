@@ -723,9 +723,15 @@ function estimateTrackChipWidth(track: Track) {
   const textWidth = [...track.title].reduce((width, character) => {
     const codePoint = character.codePointAt(0) ?? 0
     const isWide = codePoint > 0x3000 || (codePoint >= 0xff00 && codePoint <= 0xffef)
-    return width + (isWide ? 17 : 9)
+    const isNarrow = /[\s!.,:;|]/u.test(character)
+    if (isWide) return width + 24
+    if (isNarrow) return width + 8
+    return width + 18
   }, 0)
-  return Math.max(150, Math.ceil(36 + 10 + 8 + 14 + textWidth))
+  const artworkWidth = 36
+  const contentGap = 10
+  const horizontalPadding = 22
+  return Math.max(170, Math.ceil(artworkWidth + contentGap + horizontalPadding + textWidth))
 }
 
 function findTrackIndexAtOffset(prefixWidths: number[], offset: number) {
