@@ -1,0 +1,5 @@
+# Bun.serve の HTML バンドラに Tailwind を通す。index.html → main.tsx → index.css の
+# import チェーンをバンドルする際、bun-plugin-tailwind が @import "tailwindcss" を解決し、
+# className を走査してユーティリティを生成する。dev / production(start)双方の serve で効く。
+[serve.static]
+plugins = ["bun-plugin-tailwind"]

@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { io } from 'socket.io-client'
 import type { Socket } from 'socket.io-client'
 import { useMusicKitPlayback } from './useMusicKit'
-import './App.css'
 
 type Phase = 'initialization' | 'ready' | 'game'
 type GameStep =
@@ -174,27 +173,91 @@ function playerColor(id: string) {
   }
 }
 
-function PlayerBadge({ id, active = false, reacting = false, label = true, score }: { id: string; active?: boolean; reacting?: boolean; label?: boolean; score?: number }) {
+// 共通の className 束。Tailwind ユーティリティを React 側でまとめて DRY に保つ。
+const GLASS = 'bg-white/5 border border-white/10 shadow-2xl backdrop-blur-lg'
+const BTN = 'inline-flex items-center justify-center rounded-full font-bold cursor-pointer no-underline transition disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none'
+const BTN_PRIMARY = `${BTN} px-5 py-3 text-cocoa bg-linear-to-br from-pink to-amber shadow-lg`
+const BTN_GHOST = `${BTN} px-5 py-3 text-cream bg-white/10 border border-white/10`
+const BTN_GHOST_SMALL = `${BTN} px-3 py-1.5 text-sm text-cream bg-white/10 border border-white/10`
+const BTN_DANGER = `${BTN} px-5 py-3 text-rose bg-rose/10`
+const INPUT_BASE = 'w-full rounded-2xl border border-white/10 bg-black/20 text-white px-4 py-3 disabled:opacity-60'
+const HINT = 'text-muted'
+const EYEBROW = 'text-amber uppercase tracking-widest text-xs font-black mb-2'
+
+// CSS の ::before/::after で描いていた形は inline SVG コンポーネントにした。
+// inline なら fill / stroke / currentColor がそのまま効く(外部ファイル参照だとホスト CSS が
+// 中に届かないので不可)。塗り = プレイヤー色、白縁 = stroke、グロー = style の filter で出す。
+// viewBox は stroke がはみ出ても切れないよう周囲に 2 単位の余白を持たせている。
+function PersonGlyph({ color, className, style, label }: { color: string; className?: string; style?: CSSProperties; label?: string }) {
+  return (
+    <svg
+      viewBox="-2 -2 40 56"
+      className={className}
+      style={style}
+      role={label ? 'img' : undefined}
+      aria-label={label}
+      aria-hidden={label ? undefined : true}
+    >
+      <g fill={color} stroke="rgba(255,255,255,0.5)" strokeWidth={2.5} strokeLinejoin="round">
+        {/* 胴体を先、顔を後に描いて顔(head)を前面に出す */}
+        <path d="M0,40 A18,18 0 0 1 36,40 L36,42 A10,10 0 0 1 26,52 L10,52 A10,10 0 0 1 0,42 Z" />
+        <circle cx="18" cy="12" r="12" />
+      </g>
+    </svg>
+  )
+}
+
+function ChevronGlyph({ color, className }: { color?: string; className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" stroke={color ?? 'currentColor'} strokeWidth={3.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M6 9 L12 15 L18 9" />
+    </svg>
+  )
+}
+
+function PlayerBadge({ id, active = false, reacting = false, label = true, score, variant = 'console' }: { id: string; active?: boolean; reacting?: boolean; label?: boolean; score?: number; variant?: 'console' | 'gameboard' }) {
   const color = playerColor(id)
+
+  if (!label && variant === 'gameboard') {
+    // ゲームボード上はプレイヤーを人型シルエットで表示。正解者は拡大 + 白縁グロー。
+    return (
+      <span className={['relative flex w-14 flex-col items-center transition-transform', active && 'scale-125'].filter(Boolean).join(' ')} aria-label="参加者">
+        <PersonGlyph
+          color={color.background}
+          className={['block w-9 h-12', reacting && 'animate-react-pop'].filter(Boolean).join(' ')}
+          style={{ filter: active ? `drop-shadow(0 0 28px ${color.background}) drop-shadow(0 0 10px white)` : `drop-shadow(0 0 18px ${color.background})` }}
+        />
+        {score != null && <span className="mt-2 text-amber text-2xl leading-none font-black">{score}</span>}
+      </span>
+    )
+  }
+
+  if (!label) {
+    // コンソールの参加者一覧。プレイヤー色のソフトな pill にシルエットを収める。
+    return (
+      <span
+        className="inline-flex items-center gap-2 rounded-full px-4 py-2.5 border"
+        style={{ backgroundColor: color.softBackground, borderColor: color.border, color: color.text }}
+        aria-label="参加者"
+      >
+        <PersonGlyph color={color.background} className="block w-6 h-9" style={{ filter: `drop-shadow(0 0 10px ${color.background})` }} />
+        {score != null && <span>{score}</span>}
+      </span>
+    )
+  }
+
+  // label 付き: 色ドット + ID テキスト。
   return (
     <span
-      className={['player', active && 'active', reacting && 'reacting'].filter(Boolean).join(' ')}
-      style={{
-        '--player-color': color.background,
-        '--player-color-soft': color.softBackground,
-        '--player-color-border': color.border,
-        '--player-color-text': color.text,
-      } as CSSProperties}
-      aria-label={label ? '参加者' : '参加者'}
+      className="inline-flex items-center gap-2 rounded-full px-4 py-2.5 border font-bold"
+      style={active
+        ? { backgroundColor: color.background, color: '#fff', borderColor: 'rgba(255,255,255,0.52)' }
+        : { backgroundColor: color.softBackground, color: color.text, borderColor: color.border }}
+      aria-label="参加者"
     >
-      {label ? <span className="player-color-dot" /> : (
-        <span className="player-figure" aria-hidden="true">
-          <span className="player-figure-head" />
-          <span className="player-figure-body" />
-        </span>
-      )}
-      {label && id}
-      {score != null && <span className="player-score">{score}</span>}
+      <span className="size-2.5 rounded-full shrink-0 ring-4 ring-white/20" style={{ backgroundColor: active ? '#fff' : color.background }} />
+      {id}
+      {score != null && <span>{score}</span>}
     </span>
   )
 }
@@ -243,9 +306,9 @@ function CircularSecondsSlider({ value, onChange }: { value: number; onChange: (
   }
 
   return (
-    <div className="circular-slider-wrap">
+    <div className="grid place-items-center w-60 max-w-full mx-auto">
       <svg
-        className="circular-slider"
+        className="group w-56 max-w-full touch-none outline-none overflow-visible"
         viewBox="0 0 192 192"
         role="slider"
         aria-label="再生秒数"
@@ -266,18 +329,21 @@ function CircularSecondsSlider({ value, onChange }: { value: number; onChange: (
           if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') onChange(Number(Math.max(min, value - step).toFixed(1)))
         }}
       >
-        <circle className="circular-slider-track" cx={center} cy={center} r={radius} />
+        <circle className="fill-none stroke-white/15" strokeWidth={18} cx={center} cy={center} r={radius} />
         <circle
-          className="circular-slider-progress"
+          className="fill-none stroke-amber"
+          strokeWidth={18}
+          strokeLinecap="round"
+          transform="rotate(-90 96 96)"
           cx={center}
           cy={center}
           r={radius}
           strokeDasharray={circumference}
           strokeDashoffset={dashOffset}
         />
-        <circle className="circular-slider-knob" cx={knobX} cy={knobY} r="15" />
-        <text className="circular-slider-value" x={center} y={center - 4} textAnchor="middle">{value.toFixed(1)}</text>
-        <text className="circular-slider-unit" x={center} y={center + 22} textAnchor="middle">秒</text>
+        <circle className="fill-pink stroke-cream group-focus-visible:stroke-white" strokeWidth={4} cx={knobX} cy={knobY} r="15" />
+        <text className="fill-cream text-3xl font-black pointer-events-none" dominantBaseline="middle" x={center} y={center - 4} textAnchor="middle">{value.toFixed(1)}</text>
+        <text className="fill-subtle text-sm font-bold pointer-events-none" dominantBaseline="middle" x={center} y={center + 22} textAnchor="middle">秒</text>
       </svg>
     </div>
   )
@@ -510,57 +576,58 @@ function ConsolePage() {
   })
 
   return (
-    <main className="shell console">
-      <header className="topbar">
+    <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
+      <header className={`${GLASS} rounded-3xl p-6 flex flex-col items-stretch justify-between gap-4 mb-4 md:flex-row md:items-center`}>
         <div>
-          <p className="eyebrow">Host Console</p>
-          <h1>早押しイントロクイズ</h1>
+          <p className={EYEBROW}>Host Console</p>
+          <h1 className="m-0 text-4xl sm:text-6xl font-black tracking-tighter">早押しイントロクイズ</h1>
         </div>
       </header>
 
-      <section className="status-card">
+      <section className={`${GLASS} rounded-3xl p-6 flex flex-col items-stretch justify-between gap-4 mb-4 md:flex-row md:items-center`}>
         <div>
-          <p className="eyebrow">現在</p>
-          <h2>{phaseLabel(state.phase, state.step)}</h2>
-          <p>{state.message}</p>
-          {consoleMessage && <p className="hint">{consoleMessage}</p>}
-          {musicKit.error && <p className="error">MusicKit: {musicKit.error}</p>}
+          <p className={EYEBROW}>現在</p>
+          <h2 className="m-0 mb-2.5 text-2xl font-bold">{phaseLabel(state.phase, state.step)}</h2>
+          <p className="mt-0 text-subtle leading-relaxed">{state.message}</p>
+          {consoleMessage && <p className={`mt-0 leading-relaxed ${HINT}`}>{consoleMessage}</p>}
+          {musicKit.error && <p className="mt-0 leading-relaxed text-rose font-bold">MusicKit: {musicKit.error}</p>}
         </div>
-        <button className="danger" onClick={() => consoleAction('console:reset')}>リセット</button>
+        <button className={BTN_DANGER} onClick={() => consoleAction('console:reset')}>リセット</button>
       </section>
 
-      <section className="grid console-flow">
-        <div className="console-flow-column">
-        <div className="panel console-panel-init">
-          <h2>1. 初期化</h2>
-          <p>Apple Musicにログインして、MusicKitで実際に再生できる状態にします。</p>
-          <div className={musicKit.ready ? (musicKit.authorized ? 'login-status signed-in' : 'login-status signed-out') : 'login-status loading'}>
-            <span className="status-dot" />
+      <section className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+        <div className="flex flex-col gap-4 min-w-0">
+        <div className={`${GLASS} rounded-2xl p-6 min-w-0`}>
+          <h2 className="m-0 mb-2.5 text-2xl font-bold">1. 初期化</h2>
+          <p className="mt-0 text-subtle leading-relaxed">Apple Musicにログインして、MusicKitで実際に再生できる状態にします。</p>
+          <div className={`flex items-center gap-3 my-4 p-3.5 rounded-2xl border ${!musicKit.ready ? 'bg-white/5 border-white/10' : musicKit.authorized ? 'bg-mint/10 border-mint/30' : 'bg-rose/10 border-rose/30'}`}>
+            <span className={`size-3.5 rounded-full shrink-0 ${!musicKit.ready ? 'bg-muted animate-dot-pulse' : musicKit.authorized ? 'bg-mint' : 'bg-rose'}`} />
             <div>
-              <strong>{musicKit.ready ? (musicKit.authorized ? 'Apple Music ログイン済み' : 'Apple Music 未ログイン') : 'MusicKit 準備中'}</strong>
-              <p>{musicKit.ready ? (musicKit.authorized ? 'ライブラリのプレイリストを選択できます' : 'ログインするとライブラリのプレイリストを取得できます') : 'MusicKit JS を初期化しています'}</p>
+              <strong className="block text-cream">{musicKit.ready ? (musicKit.authorized ? 'Apple Music ログイン済み' : 'Apple Music 未ログイン') : 'MusicKit 準備中'}</strong>
+              <p className="mt-1 mb-0 text-subtle leading-snug">{musicKit.ready ? (musicKit.authorized ? 'ライブラリのプレイリストを選択できます' : 'ログインするとライブラリのプレイリストを取得できます') : 'MusicKit JS を初期化しています'}</p>
             </div>
           </div>
-          <div className="actions">
-            <button disabled={busy || !musicKit.ready || musicKit.authorized} onClick={handleLogin}>Apple Musicにログイン</button>
-            <button className="ghost" disabled={busy || !musicKit.authorized} onClick={() => run(musicKit.unauthorize)}>ログアウト</button>
+          <div className="flex flex-wrap gap-2.5 mt-3.5 max-md:[&>button]:flex-1">
+            <button className={BTN_PRIMARY} disabled={busy || !musicKit.ready || musicKit.authorized} onClick={handleLogin}>Apple Musicにログイン</button>
+            <button className={BTN_GHOST} disabled={busy || !musicKit.authorized} onClick={() => run(musicKit.unauthorize)}>ログアウト</button>
           </div>
         </div>
 
-        <div className="panel console-panel-setup">
-          <h2>2. 準備</h2>
-          <div className="field-head">
+        <div className={`${GLASS} rounded-2xl p-6 min-w-0`}>
+          <h2 className="m-0 mb-2.5 text-2xl font-bold">2. 準備</h2>
+          <div className="flex items-center justify-between gap-3 text-cream font-bold mt-4 mb-3">
             <span>ライブラリプレイリスト</span>
-            <button className="ghost small" disabled={busy || loadingLibraryPlaylists || !musicKit.authorized} onClick={() => run(async () => { await loadLibraryPlaylists() })}>{loadingLibraryPlaylists ? '読み込み中' : '再読み込み'}</button>
+            <button className={BTN_GHOST_SMALL} disabled={busy || loadingLibraryPlaylists || !musicKit.authorized} onClick={() => run(async () => { await loadLibraryPlaylists() })}>{loadingLibraryPlaylists ? '読み込み中' : '再読み込み'}</button>
           </div>
           <input
             type="search"
+            className={INPUT_BASE}
             placeholder="プレイリスト名で検索"
             value={playlistSearch}
             onChange={(event) => setPlaylistSearch(event.target.value)}
             disabled={busy || !musicKit.authorized || libraryPlaylists.length === 0}
           />
-          <ul className="playlist-list">
+          <ul className="list-none m-0 mt-2.5 p-0 grid gap-2 max-h-80 overflow-y-auto">
             {visiblePlaylists.length ? visiblePlaylists.map((playlist) => {
               const selected = playlist.id === selectedPlaylistId
               const expanded = expandedPlaylistIds.has(playlist.id)
@@ -568,42 +635,42 @@ function ConsolePage() {
               const error = playlistErrors[playlist.id]
               const tracks = playlistTracks[playlist.id]
               return (
-                <li className="playlist-item" key={playlist.id}>
-                  <div className={selected ? 'playlist-row selected' : 'playlist-row'}>
+                <li className="rounded-2xl bg-white/5" key={playlist.id}>
+                  <div className={`w-full rounded-2xl border flex items-stretch overflow-hidden text-cream ${selected ? 'bg-amber/20 border-amber/50' : 'bg-white/5 border-white/10'}`}>
                     <button
                       type="button"
-                      className="playlist-select"
+                      className="flex-1 min-w-0 px-3 py-2.5 bg-transparent text-inherit border-0 flex justify-start items-center gap-2.5 text-left cursor-pointer disabled:cursor-not-allowed"
                       disabled={busy || !musicKit.authorized}
                       onClick={() => selectPlaylist(playlist)}
                       aria-pressed={selected}
                     >
-                      <span className="playlist-check">{selected ? '✓' : ''}</span>
-                      <span className="playlist-name">{playlist.name}</span>
+                      <span className={`size-5 rounded-full border-2 inline-grid place-items-center shrink-0 text-cocoa ${selected ? 'bg-amber border-amber' : 'bg-white/10 border-white/40'}`}>{selected ? '✓' : ''}</span>
+                      <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{playlist.name}</span>
                     </button>
                     <button
                       type="button"
-                      className={expanded ? 'playlist-expand expanded' : 'playlist-expand'}
+                      className={`w-12 grid place-items-center border-0 border-l border-white/10 cursor-pointer disabled:cursor-not-allowed ${expanded ? 'bg-white/5 text-amber' : 'bg-transparent text-cream'}`}
                       disabled={busy || !musicKit.authorized}
                       onClick={() => togglePlaylistExpanded(playlist)}
                       aria-label={expanded ? 'プレイリストを閉じる' : 'プレイリストを開く'}
                     >
-                      <span className="expand-icon" />
+                      <ChevronGlyph color={expanded ? '#ffb14e' : '#f7f2ea'} className={`w-3 h-3 transition-transform ${expanded ? 'rotate-180' : ''}`} />
                     </button>
                   </div>
                   {expanded && (
-                    <div className="playlist-songs">
-                      {loading && <p className="hint">曲を読み込み中...</p>}
-                      {!loading && error && <p className="error">{error}</p>}
-                      {!loading && !error && tracks?.length === 0 && <p className="hint">曲がありません</p>}
+                    <div className="mt-2 p-2.5 rounded-xl bg-black/20 border border-white/10 max-h-72 overflow-y-auto">
+                      {loading && <p className={HINT}>曲を読み込み中...</p>}
+                      {!loading && error && <p className="text-rose font-bold">{error}</p>}
+                      {!loading && !error && tracks?.length === 0 && <p className={HINT}>曲がありません</p>}
                       {!loading && !error && tracks && tracks.length > 0 && (
-                        <ul className="song-list">
+                        <ul className="list-none m-0 p-0 grid gap-2">
                           {tracks.map((track, index) => (
-                            <li className="song-row" key={`${track.id}-${index}`}>
-                              <span className="song-index">{index + 1}</span>
-                              {track.artworkUrl && <img className="song-artwork" src={track.artworkUrl} alt="" />}
-                              <span className="song-meta">
-                                <span className="song-title">{track.title}</span>
-                                <span className="song-artist">{track.artist}</span>
+                            <li className="flex items-center gap-2.5 min-w-0 text-cream" key={`${track.id}-${index}`}>
+                              <span className="w-7 shrink-0 text-right text-muted tabular-nums">{index + 1}</span>
+                              {track.artworkUrl && <img className="size-9 rounded-lg shrink-0" src={track.artworkUrl} alt="" />}
+                              <span className="min-w-0 grid">
+                                <span className="overflow-hidden text-ellipsis whitespace-nowrap font-bold">{track.title}</span>
+                                <span className="overflow-hidden text-ellipsis whitespace-nowrap text-muted text-sm">{track.artist}</span>
                               </span>
                             </li>
                           ))}
@@ -613,27 +680,27 @@ function ConsolePage() {
                   )}
                 </li>
               )
-            }) : <li className="hint">{loadingLibraryPlaylists ? 'ライブラリのプレイリストを読み込み中...' : libraryPlaylists.length ? '一致するプレイリストがありません' : 'ログイン後にライブラリのプレイリストを取得します'}</li>}
+            }) : <li className={HINT}>{loadingLibraryPlaylists ? 'ライブラリのプレイリストを読み込み中...' : libraryPlaylists.length ? '一致するプレイリストがありません' : 'ログイン後にライブラリのプレイリストを取得します'}</li>}
           </ul>
-          <div className="actions">
-            <button disabled={busy || state.phase !== 'ready' || !selectedPlaylistId || musicKit.preparing} onClick={handleStart}>ゲーム開始</button>
+          <div className="flex flex-wrap gap-2.5 mt-3.5 max-md:[&>button]:flex-1">
+            <button className={BTN_PRIMARY} disabled={busy || state.phase !== 'ready' || !selectedPlaylistId || musicKit.preparing} onClick={handleStart}>ゲーム開始</button>
           </div>
-          <div className="joined-player-list">
-            <span className="hint">参加中:</span>
+          <div className="flex items-center gap-2 flex-wrap mt-3">
+            <span className={HINT}>参加中:</span>
             {joinedPlayers.length ? joinedPlayers.map((player) => (
               <PlayerBadge id={player.id} label={false} key={player.id} />
-            )) : <span className="hint">まだいません</span>}
+            )) : <span className={HINT}>まだいません</span>}
           </div>
         </div>
 
         </div>
 
-        <div className="console-flow-column">
+        <div className="flex flex-col gap-4 min-w-0">
 
-        <div className="panel console-panel-control">
-          <h2>3. 進行</h2>
-          <div className="seconds-control">
-            <span className="seconds-label">再生秒数</span>
+        <div className={`${GLASS} rounded-2xl p-6 min-w-0`}>
+          <h2 className="m-0 mb-2.5 text-2xl font-bold">3. 進行</h2>
+          <div className="grid justify-items-center gap-2.5">
+            <span className="justify-self-start text-cream font-bold">再生秒数</span>
             <CircularSecondsSlider
               value={seconds}
               onChange={(value) => {
@@ -643,30 +710,30 @@ function ConsolePage() {
               }}
             />
           </div>
-          <div className="console-action-stack">
-            <div className="console-action-grid two-columns">
-              <button disabled={busy || state.step !== 'beforePlayback'} onClick={handlePlay}>{musicKit.playing ? '再生中' : '再生'}</button>
-              <button className="ghost" disabled={busy || state.phase !== 'game' || !['beforePlayback', 'playing', 'answering', 'wrong'].includes(state.step)} onClick={handleGiveUp}>ギブアップ</button>
-              <button disabled={busy || state.step !== 'answering'} onClick={() => handleJudge('correct')}>正解</button>
-              <button disabled={busy || state.step !== 'answering'} onClick={() => handleJudge('wrong')}>不正解</button>
+          <div className="grid gap-3.5 mt-4">
+            <div className="grid gap-2.5 grid-cols-1 md:grid-cols-2 [&>button]:min-h-14">
+              <button className={BTN_PRIMARY} disabled={busy || state.step !== 'beforePlayback'} onClick={handlePlay}>{musicKit.playing ? '再生中' : '再生'}</button>
+              <button className={BTN_GHOST} disabled={busy || state.phase !== 'game' || !['beforePlayback', 'playing', 'answering', 'wrong'].includes(state.step)} onClick={handleGiveUp}>ギブアップ</button>
+              <button className={BTN_PRIMARY} disabled={busy || state.step !== 'answering'} onClick={() => handleJudge('correct')}>正解</button>
+              <button className={BTN_PRIMARY} disabled={busy || state.step !== 'answering'} onClick={() => handleJudge('wrong')}>不正解</button>
             </div>
-            <div className="console-action-grid flow-actions">
-              <button disabled={busy || state.step !== 'reveal'} onClick={handleNextRound}>次のラウンドへ</button>
-              <button disabled={busy || state.step !== 'reveal'} onClick={handleShowResults}>結果発表へ</button>
-              <button disabled={busy || state.step !== 'results'} onClick={handleNextGame}>次のゲームへ</button>
+            <div className="grid gap-2.5 grid-cols-1 md:grid-cols-3 pt-3.5 border-t border-white/10 [&>button]:min-h-14">
+              <button className={BTN_PRIMARY} disabled={busy || state.step !== 'reveal'} onClick={handleNextRound}>次のラウンドへ</button>
+              <button className={BTN_PRIMARY} disabled={busy || state.step !== 'reveal'} onClick={handleShowResults}>結果発表へ</button>
+              <button className={BTN_PRIMARY} disabled={busy || state.step !== 'results'} onClick={handleNextGame}>次のゲームへ</button>
             </div>
           </div>
         </div>
 
-        <div className="panel console-panel-track">
-          <h2>曲情報</h2>
+        <div className={`${GLASS} rounded-2xl p-6 min-w-0`}>
+          <h2 className="m-0 mb-2.5 text-2xl font-bold">曲情報</h2>
           {state.currentTrack ? (
-            <div className="track-card small">
-              <p>{state.currentTrack.playlist}</p>
-              <strong>{state.currentTrack.title}</strong>
-              <span>{state.currentTrack.artist}</span>
+            <div className="rounded-2xl p-5 bg-linear-to-br from-pink/20 to-sky/20 border border-white/10">
+              <p className="m-0 mb-2 text-amber">{state.currentTrack.playlist}</p>
+              <strong className="block text-2xl font-bold leading-tight">{state.currentTrack.title}</strong>
+              <span className="block mt-2.5 text-subtle">{state.currentTrack.artist}</span>
             </div>
-          ) : <p>まだ曲はロードされていません。</p>}
+          ) : <p className="mt-0 text-subtle leading-relaxed">まだ曲はロードされていません。</p>}
         </div>
         </div>
       </section>
@@ -719,8 +786,8 @@ function GameboardPlayers({ players, answererId, isReacting }: {
 }) {
   if (players.length === 0) return null
   return (
-    <div className="players">
-      <div className="player-list">
+    <div className="w-full mt-6 pt-5 border-t border-white/10">
+      <div className="flex justify-center gap-2.5 flex-wrap">
         {players.map((player) => (
           <PlayerBadge
             id={player.id}
@@ -728,6 +795,7 @@ function GameboardPlayers({ players, answererId, isReacting }: {
             reacting={isReacting(player)}
             label={false}
             score={player.score}
+            variant="gameboard"
             key={player.id}
           />
         ))}
@@ -752,9 +820,11 @@ function useViewportSize() {
 }
 
 function TrackArtwork({ track }: { track: Track }) {
+  // 正解発表カードの大きいアートワーク。チップ内の小さいものとは別サイズ。
+  const base = 'size-64 sm:size-72 rounded-3xl shrink-0 object-cover bg-linear-to-br from-pink to-amber'
   return track.artworkUrl
-    ? <img className="gameboard-track-artwork" src={track.artworkUrl} alt="" loading="lazy" />
-    : <span className="gameboard-track-artwork placeholder" aria-hidden="true">♪</span>
+    ? <img className={base} src={track.artworkUrl} alt="" loading="lazy" />
+    : <span className={`${base} grid place-items-center text-cocoa font-black`} aria-hidden="true">♪</span>
 }
 
 const TRACK_CHIP_FONT = '900 16px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
@@ -917,29 +987,34 @@ function TrackLane({ tracks, laneIndex, direction }: {
   }, [layout.cycleWidth, direction, speed, poolSize])
 
   return (
-    <div className={`track-lane ${direction}`} ref={laneRef}>
-      <div className="track-lane-viewport">
+    <div
+      className={`relative min-h-16 overflow-hidden rounded-2xl border border-white/10 ${direction === 'right' ? 'bg-linear-to-r from-sky/5 to-white/5' : 'bg-linear-to-r from-white/5 to-amber/5'}`}
+      ref={laneRef}
+    >
+      <div className="relative h-full will-change-transform">
         {Array.from({ length: poolSize }).map((_, i) => (
           // プールスロット。key は物理位置に固定し、中身は rAF が差し替える(remount させない)。
+          // 寸法 (artwork 36px / gap 10px / 横 padding 22px / title 16px・900) は
+          // measureTrackChipWidth の前提なので、ここを動かすと marquee がズレる。
           <div
-            className="gameboard-track-chip"
+            className="absolute top-2 left-0 w-max h-12 flex items-center gap-2.5 py-1.5 pr-3.5 pl-2 overflow-hidden rounded-xl bg-black/70 border border-white/10 shadow-lg whitespace-nowrap will-change-transform"
             key={i}
             ref={(el) => { handleAt(i).root = el }}
           >
             <img
-              className="gameboard-track-artwork"
+              className="size-9 rounded-lg shrink-0 object-cover bg-linear-to-br from-pink to-amber"
               alt=""
               loading="lazy"
               style={{ display: 'none' }}
               ref={(el) => { handleAt(i).artwork = el }}
             />
             <span
-              className="gameboard-track-artwork placeholder"
+              className="size-9 rounded-lg shrink-0 bg-linear-to-br from-pink to-amber grid place-items-center text-cocoa font-black"
               aria-hidden="true"
               ref={(el) => { handleAt(i).placeholder = el }}
             >♪</span>
             <span
-              className="gameboard-track-title"
+              className="min-w-0 overflow-hidden whitespace-nowrap text-cream font-black text-base text-left"
               ref={(el) => { handleAt(i).title = el }}
             />
           </div>
@@ -951,7 +1026,7 @@ function TrackLane({ tracks, laneIndex, direction }: {
 
 function ReadyTrackLanes({ tracks }: { tracks: Track[] }) {
   const viewportSize = useViewportSize()
-  const laneHeight = 74
+  const laneHeight = 72
   const reservedHeight = 300
   const laneCount = Math.max(1, Math.floor((viewportSize.height - reservedHeight) / laneHeight))
   const tracksPerLane = Math.ceil(tracks.length / laneCount)
@@ -961,8 +1036,11 @@ function ReadyTrackLanes({ tracks }: { tracks: Track[] }) {
   }).filter((lane) => lane.length > 0)
 
   return (
-    <div className="ready-track-lanes" aria-label="選択中の曲">
-      <div className="track-lanes" style={{ '--lane-count': lanes.length } as CSSProperties}>
+    <div className="w-full flex-1 min-h-0 grid grid-rows-1" aria-label="選択中の曲">
+      <div
+        className="w-full min-h-0 grid grid-rows-[repeat(var(--lane-count),64px)] gap-2 overflow-hidden"
+        style={{ '--lane-count': lanes.length } as CSSProperties}
+      >
         {lanes.map((laneTracks, index) => (
           <TrackLane
             tracks={laneTracks}
@@ -1001,98 +1079,119 @@ function GameboardPage() {
     }
   }, [state.step])
 
+  // ボード上の共通レイアウトはユーティリティ束を定数化して step ごとに付け替える。
+  const TITLE = 'text-5xl sm:text-7xl font-black leading-none tracking-tighter mx-auto'
+  const READY_TITLE = 'text-4xl sm:text-6xl font-black leading-none tracking-tighter mx-auto text-center'
+  const CARD = `${GLASS} w-full max-w-5xl rounded-3xl text-center p-6 sm:p-12`
+  // flex 縦並び。STAGE 側を flex-1 で伸ばし、players は下に自然に積む(grid テンプレ不要)。
+  const CARD_GB = `${CARD} min-h-96 flex flex-col items-center justify-center gap-6`
+  const CARD_PLAYERS = CARD_GB
+  // ready 盤は親 main の flex-col 内で flex-1 して縦いっぱいに伸びる(明示高さ不要)。
+  const CARD_READY = `${GLASS} text-center w-full max-w-7xl rounded-3xl flex flex-col items-center gap-6 overflow-hidden p-4 sm:p-8 flex-1 min-h-0`
+  const STAGE = 'w-full min-h-0 flex-1 grid place-items-center'
+  const SYMBOL = 'text-9xl font-black leading-none'
+  // glow-icon::before を before: ユーティリティで再現。色は使用箇所で before:bg-... を足す。
+  const GLOW = "relative isolate before:content-[''] before:absolute before:-z-10 before:left-1/2 before:top-1/2 before:-translate-x-1/2 before:-translate-y-1/2 before:size-80 before:rounded-full before:blur-3xl before:pointer-events-none"
+  const EFFECT = 'text-9xl font-black tracking-tighter mb-8'
+
   let content: ReactNode
-  let cardClassName = 'board-card gameboard-card'
+  let cardClassName = CARD_GB
 
   if (state.phase === 'initialization') {
-    content = <h1 className="gameboard-title ready-title">ボタンを押してご参加ください</h1>
+    content = <h1 className={READY_TITLE}>ボタンを押してご参加ください</h1>
   } else if (state.phase === 'ready') {
-    cardClassName = showReadyTracks ? 'board-card gameboard-card ready-board' : 'board-card gameboard-card'
+    cardClassName = showReadyTracks ? CARD_READY : CARD_GB
     content = (
       <>
-        <h1 className="gameboard-title ready-title">ボタンを押してご参加ください</h1>
+        <h1 className={READY_TITLE}>ボタンを押してご参加ください</h1>
         {showReadyTracks && <ReadyTrackLanes tracks={state.tracks} />}
         {players}
       </>
     )
   } else if (state.step === 'loading') {
-    content = <h1 className="gameboard-title">曲を準備中</h1>
+    content = <h1 className={TITLE}>曲を準備中</h1>
   } else if (state.step === 'beforePlayback') {
-    cardClassName = 'board-card gameboard-card with-players'
+    cardClassName = CARD_PLAYERS
     content = (
       <>
-        <div className="gameboard-stage"><div className="gameboard-symbol waiting-symbol">♪</div></div>
+        <div className={STAGE}><div className={`${SYMBOL} text-cream/30`}>♪</div></div>
         {players}
       </>
     )
   } else if (state.step === 'playing') {
-    cardClassName = 'board-card gameboard-card with-players'
+    cardClassName = CARD_PLAYERS
     content = (
       <>
-        <div className="gameboard-stage"><div className="gameboard-symbol playing-symbol glow-icon playing-glow">♪</div></div>
+        <div className={STAGE}><div className={`${SYMBOL} text-amber animate-symbol-pulse ${GLOW} before:bg-amber/30`}>♪</div></div>
         {players}
       </>
     )
   } else if (state.step === 'answering') {
-    cardClassName = 'board-card gameboard-card with-players'
+    cardClassName = CARD_PLAYERS
+    const answererColor = state.answererId ? playerColor(state.answererId).background : null
     content = (
       <>
-        <div className="gameboard-stage answering-stage">
-        <h1 className="gameboard-title">解答をどうぞ！</h1>
-        {state.answererId && (
-          <div
-            className="answerer colored"
-            style={{ '--player-color': playerColor(state.answererId).background } as CSSProperties}
-            title={state.answererId}
-            aria-label={state.answererId}
-          />
-        )}
+        <div className={`${STAGE} content-center gap-8`}>
+          <h1 className={TITLE}>解答をどうぞ！</h1>
+          {state.answererId && answererColor && (
+            <PersonGlyph
+              color={answererColor}
+              className="w-40 h-56 mx-auto"
+              style={{ filter: `drop-shadow(0 0 72px ${answererColor})` }}
+              label={state.answererId}
+            />
+          )}
         </div>
         {players}
       </>
     )
   } else if (state.step === 'correct') {
-    cardClassName = 'board-card gameboard-card with-players'
+    cardClassName = CARD_PLAYERS
     content = (
       <>
-        <div className="gameboard-stage"><div className="effect success glow-icon success-glow">○</div></div>
+        <div className={STAGE}><div className={`${EFFECT} text-mint ${GLOW} before:bg-mint/30`}>○</div></div>
         {players}
       </>
     )
   } else if (state.step === 'wrong') {
-    cardClassName = 'board-card gameboard-card with-players'
+    cardClassName = CARD_PLAYERS
     content = (
       <>
-        <div className="gameboard-stage"><div className="effect miss glow-icon miss-glow">×</div></div>
+        <div className={STAGE}><div className={`${EFFECT} text-rose ${GLOW} before:bg-pink/30`}>×</div></div>
         {players}
       </>
     )
   } else if (state.step === 'reveal' && state.currentTrack) {
     content = (
-      <div className="track-card reveal">
+      <div className="rounded-3xl p-5 bg-linear-to-br from-pink/20 to-sky/20 border border-white/10 grid justify-items-center gap-4">
         <TrackArtwork track={state.currentTrack} />
-        <strong>{state.currentTrack.title}</strong>
-        <span>{state.currentTrack.artist}</span>
+        <strong className="block text-3xl sm:text-5xl font-bold leading-tight">{state.currentTrack.title}</strong>
+        <span className="block mt-2.5 text-subtle">{state.currentTrack.artist}</span>
       </div>
     )
   } else if (state.step === 'results') {
     content = (
-      <div className="results-board">
+      <div className="flex justify-center items-end gap-8 sm:gap-16 flex-wrap">
         {sortedPlayers.map((player) => (
-          <div className="result-player" key={player.id}>
-            <PlayerBadge id={player.id} label={false} />
-            <strong>{player.score}</strong>
+          <div className="grid justify-items-center gap-4" key={player.id}>
+            <div className="scale-150 m-8">
+              <PlayerBadge id={player.id} label={false} variant="gameboard" />
+            </div>
+            <strong className="text-6xl sm:text-7xl font-black text-amber leading-none">{player.score}</strong>
           </div>
         ))}
       </div>
     )
   } else {
-    content = <h1 className="gameboard-title">待機中</h1>
+    content = <h1 className={TITLE}>待機中</h1>
   }
 
+  // playing / correct / wrong だけ背景色を切り替える。他 step は body のグラデを透かす。
+  const stepBg = state.step === 'correct' ? 'bg-board-correct' : state.step === 'wrong' ? 'bg-board-wrong' : state.step === 'playing' ? 'bg-ink' : ''
+
   return (
-    <main className={`gameboard ${state.step}`}>
-      {!connected && <div className="connection-indicator" role="status">再接続中…</div>}
+    <main className={`min-h-svh flex flex-col items-center justify-center p-4 sm:p-6 transition-colors duration-300 ${stepBg}`}>
+      {!connected && <div className="fixed top-4 left-1/2 -translate-x-1/2 z-10 px-4 py-1.5 rounded-full text-sm font-bold tracking-wide text-amber bg-ink/90 shadow-lg ring-1 ring-amber/40" role="status">再接続中…</div>}
       <section className={cardClassName}>
         {content}
       </section>
@@ -1102,13 +1201,13 @@ function GameboardPage() {
 
 function HomePage() {
   return (
-    <main className="shell home">
-      <h1>早押しイントロクイズ</h1>
-      <p>PCでサーバーを起動し、スマホはホスト操作、スクリーンはゲームボード、物理ボタンはAPIにアクセスします。</p>
-      <div className="actions">
-        <a className="button" href="/console">/console</a>
-        <a className="button" href="/gameboard">/gameboard</a>
-        <a className="button ghost" href="/action">/action</a>
+    <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6 min-h-svh grid place-content-center gap-5 justify-items-start">
+      <h1 className="m-0 text-4xl sm:text-6xl font-black tracking-tighter">早押しイントロクイズ</h1>
+      <p className="max-w-2xl m-0 text-subtle leading-loose">PCでサーバーを起動し、スマホはホスト操作、スクリーンはゲームボード、物理ボタンはAPIにアクセスします。</p>
+      <div className="flex flex-wrap gap-2.5 mt-1 max-md:[&>a]:flex-1">
+        <a className={BTN_PRIMARY} href="/console">/console</a>
+        <a className={BTN_PRIMARY} href="/gameboard">/gameboard</a>
+        <a className={BTN_GHOST} href="/action">/action</a>
       </div>
     </main>
   )
@@ -1194,18 +1293,32 @@ function ActionPage() {
     }
   }
 
+  const circleFx = visualState === 'pressed' ? 'animate-action-pop' : visualState === 'muted' ? 'opacity-60' : ''
+
   return (
     <main
-      className="action-page"
+      className="min-h-svh overflow-hidden grid place-items-center"
       style={{
-        '--player-color': color.background,
-        '--player-color-text': color.text,
         '--player-color-soft': color.softBackground,
         '--player-color-glow': `hsl(${color.hue} 76% 52% / 0.46)`,
       } as CSSProperties}
     >
-      <button className={`action-button ${visualState}`} type="button" disabled={busy} onClick={act} aria-label="早押しボタン">
-        <span className="action-circle" aria-hidden="true" />
+      <button
+        className="w-screen min-h-svh border-0 rounded-none grid place-items-center text-inherit cursor-pointer shadow-none p-4 transition touch-manipulation disabled:cursor-wait disabled:opacity-100"
+        style={{ backgroundColor: visualState === 'pressed' ? color.softBackground : 'transparent' }}
+        type="button"
+        disabled={busy}
+        onClick={act}
+        aria-label="早押しボタン"
+      >
+        <span
+          className={`block size-72 rounded-full ${circleFx}`}
+          style={{
+            backgroundColor: visualState === 'error' ? '#ff8aa3' : color.background,
+            boxShadow: '0 24px 80px var(--player-color-glow), inset 0 0 0 12px rgba(255,255,255,0.22)',
+          }}
+          aria-hidden="true"
+        />
       </button>
     </main>
   )
