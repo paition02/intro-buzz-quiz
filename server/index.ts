@@ -3,6 +3,7 @@ import { createServer } from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SignJWT, importPKCS8 } from 'jose'
+import { nanoid } from 'nanoid'
 import { Server } from 'socket.io'
 import dotenv from 'dotenv'
 
@@ -392,6 +393,7 @@ app.post('/api/act/:actorId', (req, res) => {
 
 
 app.get('/action', (_req, res) => {
+  const actorId = nanoid()
   res.type('html').send(`<!doctype html>
 <html lang="ja">
 <head>
@@ -470,13 +472,12 @@ app.get('/action', (_req, res) => {
     const title = document.querySelector('#title')
     const status = document.querySelector('#status')
     const actor = document.querySelector('#actor')
-    const createActorId = () => 'action-' + (crypto.randomUUID?.() || Math.random().toString(36).slice(2))
+    const generatedActorId = '${actorId}'
     const getActorId = () => {
       const stored = sessionStorage.getItem(storageKey)
       if (stored) return stored
-      const id = createActorId()
-      sessionStorage.setItem(storageKey, id)
-      return id
+      sessionStorage.setItem(storageKey, generatedActorId)
+      return generatedActorId
     }
 
     const actorId = getActorId()
