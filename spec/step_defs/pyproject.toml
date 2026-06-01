@@ -1,0 +1,19 @@
+[project]
+name = "intro-buzz-quiz-spec"
+version = "0.0.0"
+requires-python = ">=3.13"
+
+[tool.setuptools]
+packages = []
+
+[tool.pytest.ini_options]
+testpaths = ["backend"]
+addopts = "-q"
+
+[dependency-groups]
+dev = [
+  "httpx>=0.28.1",
+  "pytest>=9.0.2",
+  "pytest-bdd>=8.1.0",
+  "python-socketio[client]>=5.15.0",
+]

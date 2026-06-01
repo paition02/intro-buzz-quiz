@@ -166,6 +166,7 @@ MusicKit JS 用の Apple Music developer token を返します。`jose` で ES25
 | `bun start` | 本番起動（`NODE_ENV=production`） |
 | `bun run preview` | 本番相当で起動 |
 | `bun run lint` | ESLint |
+| `bun run test:spec` | feature / step defs による回帰テスト |
 
 ## 技術スタック
 

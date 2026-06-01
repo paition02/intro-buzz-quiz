@@ -8,7 +8,9 @@
     "build": "tsc -b",
     "start": "NODE_ENV=production bun server/index.ts",
     "lint": "eslint .",
-    "preview": "NODE_ENV=production bun server/index.ts"
+    "preview": "NODE_ENV=production bun server/index.ts",
+    "test:spec": "cd spec/step_defs && uv run pytest",
+    "test": "bun run test:spec"
   },
   "dependencies": {
     "@socket.io/bun-engine": "^0.1.1",
