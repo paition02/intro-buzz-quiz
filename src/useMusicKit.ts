@@ -8,6 +8,44 @@ type MusicTrack = {
   artworkUrl?: string
 }
 
+type MusicApiPage<T> = {
+  data?: T[]
+  next?: string
+}
+
+type MusicApiArtwork = {
+  url?: string
+}
+
+type MusicApiAttributes = {
+  name?: string
+  artistName?: string
+  artwork?: MusicApiArtwork
+}
+
+type MusicApiPlaylist = {
+  id: string
+  attributes?: Pick<MusicApiAttributes, 'name'>
+}
+
+type MusicApiTrack = {
+  id: string
+  attributes?: MusicApiAttributes
+  relationships?: {
+    catalog?: {
+      data?: MusicApiTrack[]
+    }
+  }
+}
+
+type MusicApiSearchResponse = {
+  results?: {
+    playlists?: MusicApiPage<MusicApiPlaylist>
+  }
+}
+
+type MusicApiParams = Record<string, string | number | string[]>
+
 async function fetchToken(): Promise<{ token: string; expiresAt: Date }> {
   const res = await fetch('/api/token', { cache: 'no-store' })
   const data = await res.json()
@@ -71,17 +109,17 @@ export function useMusicKitPlayback() {
 
   const getLibraryPlaylists = useCallback(async () => {
     const mk = await getMusicKit()
-    const allPlaylists: any[] = []
+    const allPlaylists: MusicApiPlaylist[] = []
     let url: string | null = '/v1/me/library/playlists'
-    let params: Record<string, any> | undefined = { limit: 100 }
+    let params: MusicApiParams | undefined = { limit: 100 }
     while (url) {
-      const response = await mk.api.music(url, params)
-      const data = response.data as any
+      const response: { data: MusicApiPage<MusicApiPlaylist> } = await mk.api.music(url, params)
+      const data: MusicApiPage<MusicApiPlaylist> = response.data
       allPlaylists.push(...(data?.data ?? []))
       url = data?.next ?? null
       params = undefined
     }
-    return allPlaylists.map((playlist: any) => ({
+    return allPlaylists.map((playlist) => ({
       id: playlist.id,
       name: playlist.attributes?.name ?? playlist.id,
     }))
@@ -89,13 +127,13 @@ export function useMusicKitPlayback() {
 
   const searchCatalogPlaylists = useCallback(async (term: string) => {
     const mk = await getMusicKit()
-    const response = await mk.api.music('/v1/catalog/{{storefrontId}}/search', {
+    const response = await mk.api.music<MusicApiSearchResponse>('/v1/catalog/{{storefrontId}}/search', {
       term,
       types: 'playlists',
       limit: 10,
     })
-    const playlists = (response.data as any)?.results?.playlists?.data ?? []
-    return playlists.map((playlist: any) => ({
+    const playlists = response.data.results?.playlists?.data ?? []
+    return playlists.map((playlist) => ({
       id: playlist.id,
       name: playlist.attributes?.name ?? playlist.id,
     }))
@@ -103,19 +141,19 @@ export function useMusicKitPlayback() {
 
   const getPlaylistTracks = useCallback(async (playlistId: string, playlistName: string, source: 'library' | 'catalog') => {
     const mk = await getMusicKit()
-    const allTracks: any[] = []
+    const allTracks: MusicApiTrack[] = []
     let url: string | null = source === 'library'
       ? `/v1/me/library/playlists/${playlistId}/tracks`
       : `/v1/catalog/{{storefrontId}}/playlists/${playlistId}/tracks`
-    let params: Record<string, any> | undefined = source === 'library' ? { limit: 100, include: 'catalog' } : { limit: 100 }
+    let params: MusicApiParams | undefined = source === 'library' ? { limit: 100, include: 'catalog' } : { limit: 100 }
     while (url) {
-      const response = await mk.api.music(url, params)
-      const data = response.data as any
+      const response: { data: MusicApiPage<MusicApiTrack> } = await mk.api.music(url, params)
+      const data: MusicApiPage<MusicApiTrack> = response.data
       allTracks.push(...(data?.data ?? []))
       url = data?.next ?? null
       params = undefined
     }
-    return allTracks.map((track: any): MusicTrack => {
+    return allTracks.map((track): MusicTrack => {
       const catalog = track.relationships?.catalog?.data?.[0]
       return {
         id: catalog?.id ?? track.id,
