@@ -73,7 +73,7 @@ class SocketClient:
         self.sio = socketio.Client(reconnection=False, logger=False, engineio_logger=False)
         self.events: list[dict[str, Any]] = []
         self.sio.on("state", self._on_state)
-        self.sio.connect(server_url, transports=["websocket"], socketio_path="socket.io")
+        self.sio.connect(server_url, transports=["websocket"], socketio_path="socket.io", wait_timeout=5)
 
     def _on_state(self, payload: dict[str, Any]) -> None:
         self.events.append(payload)

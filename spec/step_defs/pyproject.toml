@@ -7,7 +7,7 @@ requires-python = ">=3.13"
 packages = []
 
 [tool.pytest.ini_options]
-testpaths = ["backend"]
+testpaths = ["backend", "frontend"]
 addopts = "-q"
 
 [dependency-groups]
@@ -16,4 +16,5 @@ dev = [
   "pytest>=9.0.2",
   "pytest-bdd>=8.1.0",
   "python-socketio[client]>=5.15.0",
+  "playwright>=1.57.0",
 ]
