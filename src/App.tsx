@@ -1051,7 +1051,7 @@ function ReadyTrackLanes({ tracks }: { tracks: Track[] }) {
   return (
     <div className="w-full shrink-0" aria-label="選択中の曲">
       <div
-        className="w-full min-h-0 grid grid-rows-[repeat(var(--lane-count),64px)] gap-2 overflow-hidden"
+        className="w-full min-h-0 grid grid-rows-[repeat(var(--lane-count),64px)] gap-2 overflow-hidden mask-x-from-92% mask-x-to-100%"
         style={{ '--lane-count': lanes.length } as CSSProperties}
       >
         {lanes.map((laneTracks, index) => (
