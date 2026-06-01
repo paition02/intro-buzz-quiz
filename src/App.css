@@ -77,7 +77,7 @@ button.danger {
   letter-spacing: -0.06em;
 }
 
-.home p { max-width: 680px; color: #d4c8ce; line-height: 1.8; margin: 0; }
+.home p { max-width: 860px; color: #d4c8ce; line-height: 1.8; margin: 0; }
 
 .home .actions { margin-top: 4px; }
 
@@ -289,11 +289,31 @@ textarea { min-height: 110px; resize: vertical; }
 .gameboard.correct { background: #101b17; }
 .gameboard.wrong { background: #1d1118; }
 
+/* 切断中だけ出る小さなバッジ。観客画面が"古い state を掴んでる可能性"を可視化する。 */
+.connection-indicator {
+  position: fixed;
+  top: clamp(10px, 2vh, 20px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  padding: 6px 16px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #ffd7a8;
+  background: rgba(40, 26, 14, 0.86);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4), inset 0 0 0 1px rgba(255, 177, 78, 0.4);
+}
+
 .board-card {
   width: min(1080px, 100%);
   border-radius: var(--card-radius);
   padding: clamp(24px, 5vw, 64px);
   text-align: center;
+  /* タイトルをビューポートではなくカード幅基準(cqi)で測れるようにする。
+     カードが固定幅で頭打ちになっても文字がはみ出さない要。 */
+  container-type: inline-size;
 }
 
 .gameboard-card {
@@ -382,9 +402,11 @@ textarea { min-height: 110px; resize: vertical; }
   overflow: hidden;
 }
 
-.ready-board .ready-title {
-  margin-bottom: 0;
-  font-size: clamp(1.4rem, 6.2vw, 5.6rem);
+/* 参加導線タイトルは常に 1 行。font-size はカード幅基準(cqi)なので、
+   どんな画面幅でもカードからはみ出さない。詳細度 (0,2,1) で `.board-card h1` (0,1,1) に勝たせる。 */
+.board-card h1.ready-title {
+  margin: 0 auto;
+  font-size: min(5.6rem, 6.4cqi);
   white-space: nowrap;
 }
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 import { io } from 'socket.io-client'
 import type { Socket } from 'socket.io-client'
 import { useMusicKitPlayback } from './useMusicKit'
@@ -67,26 +67,59 @@ const initialState: GameState = {
   currentTrackIndex: -1,
   currentTrack: null,
   hasPlayedCurrentTrack: false,
-  playbackSeconds: 3,
+  playbackSeconds: 0.5,
   answererId: null,
   lastResult: null,
   message: '接続中...',
   updatedAt: Date.now(),
 }
 
+// サーバが唯一の真実(single source of truth)。ここが肝心なんだ!
+// socket と 'state' リスナーはモジュール読込時に"同期で"張る。io() の直後に on('state') を
+// 張るから、接続ハンドシェイク完了(=最初の state 到着)より必ず先にリスナーが居る。
+// 旧実装は useEffect(初回レンダー後)で張っていたので、接続がレンダーを追い越すと
+// 初回 state を取りこぼし、gameboard が固まることがあった。それを構造ごと潰す。
 const socket: Socket = io()
 
+// 外部ストア(socket)を React に橋渡しする。useSyncExternalStore は getSnapshot を毎レンダーで
+// 読むので、購読登録とレンダーの隙間に届いた分も取りこぼさない(初回 race を構造で潰す要)。
+let latestState: GameState = initialState
+let connected = socket.connected
+const stateListeners = new Set<() => void>()
+const connectedListeners = new Set<() => void>()
+
+socket.on('state', (state: GameState) => {
+  latestState = state
+  stateListeners.forEach((notify) => notify())
+})
+
+function setConnected(next: boolean) {
+  if (connected === next) return
+  connected = next
+  connectedListeners.forEach((notify) => notify())
+}
+
+// 再接続は新規 connection としてサーバ側 connection ハンドラを再発火させ、
+// 接続時 emit('state') が再送される(=自動で最新へ追いつく)。ここでは表示用に状態だけ持つ。
+socket.on('connect', () => setConnected(true))
+socket.on('disconnect', () => setConnected(false))
+
+function subscribeState(notify: () => void) {
+  stateListeners.add(notify)
+  return () => { stateListeners.delete(notify) }
+}
+
+function subscribeConnected(notify: () => void) {
+  connectedListeners.add(notify)
+  return () => { connectedListeners.delete(notify) }
+}
+
 function useGameState() {
-  const [state, setState] = useState<GameState>(initialState)
+  return useSyncExternalStore(subscribeState, () => latestState)
+}
 
-  useEffect(() => {
-    socket.on('state', setState)
-    return () => {
-      socket.off('state', setState)
-    }
-  }, [])
-
-  return state
+function useConnected() {
+  return useSyncExternalStore(subscribeConnected, () => connected)
 }
 
 function consoleAction<T = GameState>(event: string, body?: unknown): Promise<T> {
@@ -265,10 +298,16 @@ function ConsolePage() {
   const preparedQueueKeyRef = useRef<string | null>(null)
   const autoLoadLibraryPlaylistsRequestedRef = useRef(false)
   const wasRevealStepRef = useRef(false)
+  // MusicKit の再生は state を唯一の駆動源にする(命令的ハンドラからは触らない)。
+  // 二重ロード防止用の「いま読んでいる曲 index」と、playing への遷移を 1 回だけ拾うための「直前 step」。
+  const loadedTrackIndexRef = useRef(-1)
+  const previousStepForPlaybackRef = useRef<GameStep>(state.step)
   const getLibraryPlaylists = musicKit.getLibraryPlaylists
   const prepareQueue = musicKit.prepareQueue
   const stopPlayback = musicKit.stop
   const playFullLoopTrack = musicKit.playFullLoopTrack
+  const loadTrack = musicKit.loadTrack
+  const playIntro = musicKit.playIntro
 
   const joinedPlayers = useMemo(() => state.players.filter((player) => player.joined), [state.players])
   const selectedPlaylistId = state.selectedPlaylistId ?? ''
@@ -355,11 +394,39 @@ function ConsolePage() {
     const queueKey = `${state.selectedPlaylistId}:${state.tracks.map((track) => track.id).join('|')}`
     if (preparedQueueKeyRef.current === queueKey) return
     preparedQueueKeyRef.current = queueKey
+    loadedTrackIndexRef.current = -1 // キューが入れ替わったらロード済み index も無効化
     void prepareQueue(state.tracks).catch((error) => {
       preparedQueueKeyRef.current = null
       setConsoleMessage(error instanceof Error ? error.message : String(error))
     })
   }, [musicKit.authorized, musicKit.ready, prepareQueue, state.selectedPlaylistId, state.tracks])
+
+  // 曲のロードは state.currentTrackIndex に追従する(旧 handleStart/handleNextRound の命令的ロードを置換)。
+  // index が変わった時だけ読み直す。playing→beforePlayback の復帰みたいな step だけの変化では読み直さない。
+  useEffect(() => {
+    if (!musicKit.ready || !musicKit.authorized) return
+    if (state.currentTrackIndex < 0) {
+      loadedTrackIndexRef.current = -1
+      return
+    }
+    if (loadedTrackIndexRef.current === state.currentTrackIndex) return
+    loadedTrackIndexRef.current = state.currentTrackIndex
+    void loadTrack(state.currentTrackIndex).catch((error) => {
+      setConsoleMessage(error instanceof Error ? error.message : String(error))
+    })
+  }, [loadTrack, musicKit.authorized, musicKit.ready, state.currentTrackIndex])
+
+  // イントロ再生は step が playing に"入った"瞬間に 1 回だけ。停止は下の step 監視 effect が担う。
+  // step 遷移(playing→beforePlayback への復帰)はサーバ所有のまま、クライアントはそれに追従する。
+  useEffect(() => {
+    const previousStep = previousStepForPlaybackRef.current
+    previousStepForPlaybackRef.current = state.step
+    if (state.step === 'playing' && previousStep !== 'playing') {
+      void playIntro(state.playbackSeconds).catch((error) => {
+        setConsoleMessage(error instanceof Error ? error.message : String(error))
+      })
+    }
+  }, [playIntro, state.playbackSeconds, state.step])
 
   const handleLogin = () => run(async () => {
     await musicKit.authorize()
@@ -396,6 +463,7 @@ function ConsolePage() {
     const tracks = await fetchPlaylistTracks(playlist)
     await prepareQueue(tracks)
     preparedQueueKeyRef.current = `${playlist.id}:${tracks.map((track) => track.id).join('|')}`
+    loadedTrackIndexRef.current = -1
     await consoleAction('console:playlists', { selectedPlaylistId: playlist.id, playlists: [playlist.name], tracks })
     setConsoleMessage(`${playlist.name}: ${tracks.length}曲をMusicKitキューへ読み込みました`)
   })
@@ -411,53 +479,33 @@ function ConsolePage() {
     if (willExpand) await fetchPlaylistTracks(playlist)
   })
 
+  // ここからのハンドラは"intent を送るだけ"。MusicKit の再生/停止/ロードは上の reconciler が
+  // state を見て一手に引き受ける。命令的呼び出しと effect の二重駆動をここで断ち切る。
   const handleStart = () => run(async () => {
-    const nextState = await consoleAction('console:start')
-    if (nextState.currentTrackIndex >= 0) await musicKit.loadTrack(nextState.currentTrackIndex)
+    await consoleAction('console:start')
   })
 
-  const handlePlay = async () => {
-    setBusy(true)
-    setConsoleMessage(null)
-    try {
-      await consoleAction('console:play', { seconds })
-    } catch (error) {
-      setConsoleMessage(error instanceof Error ? error.message : String(error))
-      setBusy(false)
-      return
-    }
-
-    setBusy(false)
-    try {
-      await musicKit.playIntro(seconds)
-    } catch (error) {
-      setConsoleMessage(error instanceof Error ? error.message : String(error))
-    }
-  }
+  const handlePlay = () => run(async () => {
+    await consoleAction('console:play', { seconds })
+  })
 
   const handleJudge = (result: 'correct' | 'wrong') => run(async () => {
-    await musicKit.stop()
     await consoleAction('console:judge', { result })
   })
 
   const handleGiveUp = () => run(async () => {
-    await musicKit.stop()
     await consoleAction('console:give-up')
   })
 
   const handleNextRound = () => run(async () => {
-    await musicKit.stop()
-    const nextState = await consoleAction('console:next-round')
-    if (nextState.currentTrackIndex >= 0) await musicKit.loadTrack(nextState.currentTrackIndex)
+    await consoleAction('console:next-round')
   })
 
   const handleShowResults = () => run(async () => {
-    await musicKit.stop()
     await consoleAction('console:show-results')
   })
 
   const handleNextGame = () => run(async () => {
-    await musicKit.stop()
     await consoleAction('console:next-game')
   })
 
@@ -709,21 +757,44 @@ function TrackArtwork({ track }: { track: Track }) {
     : <span className="gameboard-track-artwork placeholder" aria-hidden="true">♪</span>
 }
 
+const TRACK_CHIP_FONT = '900 16px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+
+// canvas / 2d コンテキストは 1 個だけ生成して使い回す(計測ごとに作らない)。
+// `undefined` = 未初期化、`null` = 取得失敗(以後 fallback)。
+let trackChipMeasureContext: CanvasRenderingContext2D | null | undefined
+
+// タイトル → 実測幅のキャッシュ。同じタイトルは二度測らない(幅はタイトルの純関数)。
+const trackChipWidthCache = new Map<string, number>()
+
 function measureTrackChipWidth(track: Track) {
+  const cached = trackChipWidthCache.get(track.title)
+  if (cached !== undefined) return cached
+
   const artworkWidth = 36
   const contentGap = 10
   const horizontalPadding = 22
-  const fallbackTextWidth = track.title.length * 18
+  const fixedWidth = artworkWidth + contentGap + horizontalPadding
+  const fallback = Math.max(170, fixedWidth + track.title.length * 18)
 
-  if (typeof document === 'undefined') return Math.max(170, artworkWidth + contentGap + horizontalPadding + fallbackTextWidth)
+  if (typeof document === 'undefined') return fallback
 
-  const canvas = document.createElement('canvas')
-  const context = canvas.getContext('2d')
-  if (!context) return Math.max(170, artworkWidth + contentGap + horizontalPadding + fallbackTextWidth)
+  if (trackChipMeasureContext === undefined) {
+    trackChipMeasureContext = document.createElement('canvas').getContext('2d')
+    if (trackChipMeasureContext) trackChipMeasureContext.font = TRACK_CHIP_FONT
+  }
+  if (!trackChipMeasureContext) return fallback
 
-  context.font = '900 16px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-  const textWidth = context.measureText(track.title).width
-  return Math.max(170, Math.ceil(artworkWidth + contentGap + horizontalPadding + textWidth))
+  const textWidth = trackChipMeasureContext.measureText(track.title).width
+  const width = Math.max(170, Math.ceil(fixedWidth + textWidth))
+  trackChipWidthCache.set(track.title, width) // 測ったら保持
+  return width
+}
+
+type TrackChipHandle = {
+  root: HTMLDivElement | null
+  artwork: HTMLImageElement | null
+  placeholder: HTMLSpanElement | null
+  title: HTMLSpanElement | null
 }
 
 function TrackLane({ tracks, laneIndex, direction }: {
@@ -732,15 +803,44 @@ function TrackLane({ tracks, laneIndex, direction }: {
   direction: 'left' | 'right'
 }) {
   const laneRef = useRef<HTMLDivElement>(null)
-  const viewportRef = useRef<HTMLDivElement>(null)
-  const startIndexRef = useRef(0)
+  const handlesRef = useRef<TrackChipHandle[]>([])
+  const assignedRef = useRef<(string | null)[]>([])
   const [laneWidth, setLaneWidth] = useState(0)
-  const [startIndex, setStartIndex] = useState(0)
   const chipGap = 12
   const speed = 34 + (laneIndex % 3) * 7
-  const chipWidth = useMemo(() => Math.max(...tracks.map(measureTrackChipWidth)), [tracks])
-  const slotWidth = chipWidth + chipGap
-  const cycleWidth = Math.max(1, tracks.length * slotWidth)
+
+  // 親(GameboardPage)は 120ms 毎に再レンダリングし、その度に tracks は中身が同じでも
+  // 新しい配列参照で渡ってくる。rAF からは「参照」ではなく「最新の中身」を ref 経由で読み、
+  // アニメの useEffect は参照変化では再実行させない(再実行=startTime リセット=ワープ)。
+  const tracksRef = useRef(tracks)
+  useEffect(() => { tracksRef.current = tracks })
+
+  // チップ幅はタイトルごとの実寸(伸縮)。均一じゃないので位置は累積和(prefix)で持つ。
+  // prefix[k] = 先頭から k 個分のスロット幅合計。cycleWidth = 1 周分の総幅。
+  const layout = useMemo(() => {
+    const widths = tracks.map(measureTrackChipWidth)
+    const slots = widths.map((width) => width + chipGap)
+    const prefix = [0]
+    for (const slot of slots) prefix.push(prefix[prefix.length - 1] + slot)
+    const cycleWidth = Math.max(1, prefix[prefix.length - 1])
+    const minSlot = slots.length > 0 ? Math.min(...slots) : 170 + chipGap
+    return { widths, slots, prefix, cycleWidth, minSlot }
+  }, [tracks])
+
+  // rAF は layout の配列を ref 経由で読む(参照変化でアニメを再実行=ワープさせないため)。
+  const layoutRef = useRef(layout)
+  useEffect(() => { layoutRef.current = layout })
+
+  // 仮想化は絶対。DOM ノード数は「レーンに見える分 + 前後バッファ」だけに固定し、曲数では増やさない。
+  // 可変幅なので最狭スロット基準でプール数を決める(どんなに細いチップが並んでも足りる上限)。
+  const poolSize = Math.max(2, Math.ceil(laneWidth / layout.minSlot) + 2)
+
+  // 各プールスロットの DOM 参照をまとめて掴むためのヘルパ。callback ref から呼ぶ。
+  const handleAt = (index: number) => {
+    const handles = handlesRef.current
+    handles[index] ??= { root: null, artwork: null, placeholder: null, title: null }
+    return handles[index]
+  }
 
   useEffect(() => {
     const lane = laneRef.current
@@ -752,52 +852,96 @@ function TrackLane({ tracks, laneIndex, direction }: {
     return () => observer.disconnect()
   }, [])
 
+  // ここが要点だ！1 つの rAF の中で「位置」「幅」「中身」を全部命令的に書く。
+  // 位置は prefix を辿って累積、担当トラックが変わった時だけ幅と中身を貼り替える。
+  // 同フレームで原子的に更新するから、可変幅で使い回し(recycle)してもズレ・隙間が出ない。
   useEffect(() => {
+    assignedRef.current = [] // プール構成が変わったら割り当てキャッシュを捨てて中身を貼り直す
     let frameId = 0
     let startTime: number | null = null
     const tick = (time: number) => {
       startTime ??= time
-      const offset = ((time - startTime) / 1000 * speed) % cycleWidth
-      const logicalOffset = direction === 'left' ? offset : (cycleWidth - offset) % cycleWidth
-      const nextStartIndex = Math.floor(logicalOffset / slotWidth)
-      if (startIndexRef.current !== nextStartIndex) {
-        startIndexRef.current = nextStartIndex
-        setStartIndex(nextStartIndex)
-      }
+      const { widths, slots, prefix, cycleWidth } = layoutRef.current
+      const tracks = tracksRef.current // 参照は ref から。エフェクト再実行に依存しない
+      const total = tracks.length
+      if (total > 0) {
+        const distance = (time - startTime) / 1000 * speed
+        const wrapped = ((distance % cycleWidth) + cycleWidth) % cycleWidth
+        const offset = direction === 'left' ? wrapped : (cycleWidth - wrapped) % cycleWidth
 
-      const viewport = viewportRef.current
-      if (viewport) {
-        const localOffset = logicalOffset - nextStartIndex * slotWidth
-        viewport.style.transform = `translate3d(${-localOffset}px, 0, 0)`
+        // 左端に半分隠れたチップ = prefix[start] <= offset < prefix[start+1] を二分探索で求める。
+        let lo = 0
+        let hi = total - 1
+        let start = 0
+        while (lo <= hi) {
+          const mid = (lo + hi) >> 1
+          if (prefix[mid] <= offset) { start = mid; lo = mid + 1 } else { hi = mid - 1 }
+        }
+
+        const handles = handlesRef.current
+        const assigned = assignedRef.current
+        let x = prefix[start] - offset // 左端チップの座標(0 以下から始まる)
+        for (let i = 0; i < poolSize; i += 1) {
+          const trackIndex = (start + i) % total
+          const handle = handles[i]
+          if (handle?.root) {
+            // 位置は毎フレーム。幅・中身は担当トラックが変わった時だけ(毎フレーム img を触らない)。
+            handle.root.style.transform = `translate3d(${x}px, 0, 0)`
+            const track = tracks[trackIndex]
+            if (assigned[i] !== track.id) {
+              assigned[i] = track.id
+              handle.root.style.width = `${widths[trackIndex]}px` // タイトル実寸に伸縮
+              if (handle.title) handle.title.textContent = track.title
+              if (track.artworkUrl) {
+                if (handle.artwork) {
+                  handle.artwork.src = track.artworkUrl
+                  handle.artwork.style.display = ''
+                }
+                if (handle.placeholder) handle.placeholder.style.display = 'none'
+              } else {
+                if (handle.artwork) {
+                  handle.artwork.removeAttribute('src')
+                  handle.artwork.style.display = 'none'
+                }
+                if (handle.placeholder) handle.placeholder.style.display = ''
+              }
+            }
+          }
+          x += slots[trackIndex] // 次のチップは自分の幅 + gap ぶん右へ
+        }
       }
       frameId = window.requestAnimationFrame(tick)
     }
     frameId = window.requestAnimationFrame(tick)
     return () => window.cancelAnimationFrame(frameId)
-  }, [cycleWidth, direction, slotWidth, speed])
-
-  const visibleItems: { track: Track; x: number; virtualIndex: number; width: number }[] = []
-  let cursor = 0
-  let index = startIndex
-  while (visibleItems.length < tracks.length + 1 && cursor < laneWidth + chipGap) {
-    const trackIndex = index % tracks.length
-    visibleItems.push({ track: tracks[trackIndex], x: cursor, virtualIndex: index, width: chipWidth })
-    cursor += slotWidth
-    index += 1
-  }
+  }, [layout.cycleWidth, direction, speed, poolSize])
 
   return (
     <div className={`track-lane ${direction}`} ref={laneRef}>
-      <div className="track-lane-viewport" ref={viewportRef}>
-        {visibleItems.map(({ track, x, virtualIndex, width }) => (
+      <div className="track-lane-viewport">
+        {Array.from({ length: poolSize }).map((_, i) => (
+          // プールスロット。key は物理位置に固定し、中身は rAF が差し替える(remount させない)。
           <div
             className="gameboard-track-chip"
-            data-index={virtualIndex}
-            style={{ transform: `translate3d(${x}px, 0, 0)`, width: `${width}px` }}
-            key={`${virtualIndex}-${track.id}`}
+            key={i}
+            ref={(el) => { handleAt(i).root = el }}
           >
-            <TrackArtwork track={track} />
-            <span className="gameboard-track-title">{track.title}</span>
+            <img
+              className="gameboard-track-artwork"
+              alt=""
+              loading="lazy"
+              style={{ display: 'none' }}
+              ref={(el) => { handleAt(i).artwork = el }}
+            />
+            <span
+              className="gameboard-track-artwork placeholder"
+              aria-hidden="true"
+              ref={(el) => { handleAt(i).placeholder = el }}
+            >♪</span>
+            <span
+              className="gameboard-track-title"
+              ref={(el) => { handleAt(i).title = el }}
+            />
           </div>
         ))}
       </div>
@@ -834,6 +978,7 @@ function ReadyTrackLanes({ tracks }: { tracks: Track[] }) {
 
 function GameboardPage() {
   const state = useGameState()
+  const connected = useConnected()
   const [now, setNow] = useState(() => Date.now())
   const joinedPlayers = state.players.filter((player) => player.joined)
   const previousStepRef = useRef<GameStep>(state.step)
@@ -860,7 +1005,7 @@ function GameboardPage() {
   let cardClassName = 'board-card gameboard-card'
 
   if (state.phase === 'initialization') {
-    content = <h1 className="gameboard-title">ボタンを押してご参加ください</h1>
+    content = <h1 className="gameboard-title ready-title">ボタンを押してご参加ください</h1>
   } else if (state.phase === 'ready') {
     cardClassName = showReadyTracks ? 'board-card gameboard-card ready-board' : 'board-card gameboard-card'
     content = (
@@ -947,6 +1092,7 @@ function GameboardPage() {
 
   return (
     <main className={`gameboard ${state.step}`}>
+      {!connected && <div className="connection-indicator" role="status">再接続中…</div>}
       <section className={cardClassName}>
         {content}
       </section>
@@ -1065,8 +1211,22 @@ function ActionPage() {
   )
 }
 
+// ここが要点だ！ルートごとに表示するタイトルを 1 か所にまとめておく。
+const routeTitles: Record<string, string> = {
+  '/console': 'ホストコンソール | 早押しイントロクイズ',
+  '/gameboard': 'ゲームボード | 早押しイントロクイズ',
+  '/action': '早押しボタン | 早押しイントロクイズ',
+}
+const defaultTitle = '早押しイントロクイズ'
+
 export default function App() {
   const path = window.location.pathname
+
+  // ルートに対応する document.title をセットする。SPA だから手で切り替えないと変わらないんだ。
+  useEffect(() => {
+    document.title = routeTitles[path] ?? defaultTitle
+  }, [path])
+
   if (path === '/console') return <ConsolePage />
   if (path === '/gameboard') return <GameboardPage />
   if (path === '/action') return <ActionPage />
