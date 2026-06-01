@@ -780,10 +780,21 @@ function ConsolePage() {
         <div className={`${GLASS} rounded-2xl p-6 min-w-0`}>
           <h2 className="m-0 mb-2.5 text-2xl font-bold">曲情報</h2>
           {state.currentTrack ? (
-            <div className="rounded-2xl p-5 bg-linear-to-br from-pink/20 to-sky/20 border border-white/10">
-              <p className="m-0 mb-2 text-amber">{state.currentTrack.playlist}</p>
-              <strong className="block text-2xl font-bold leading-tight">{state.currentTrack.title}</strong>
-              <span className="block mt-2.5 text-subtle">{state.currentTrack.artist}</span>
+            <div className="flex items-center gap-4 rounded-2xl p-5 bg-linear-to-br from-pink/20 to-sky/20 border border-white/10">
+              {(state.currentTrack.artworkThumbUrl ?? state.currentTrack.artworkUrl) ? (
+                <img
+                  className="size-24 rounded-xl shrink-0 object-cover bg-linear-to-br from-pink to-amber"
+                  src={state.currentTrack.artworkThumbUrl ?? state.currentTrack.artworkUrl}
+                  alt=""
+                  loading="lazy"
+                />
+              ) : (
+                <span className="size-24 rounded-xl shrink-0 grid place-items-center bg-linear-to-br from-pink to-amber text-cocoa text-4xl font-black" aria-hidden="true">♪</span>
+              )}
+              <div className="min-w-0">
+                <strong className="block text-2xl font-bold leading-tight">{state.currentTrack.title}</strong>
+                <span className="block mt-2.5 text-subtle">{state.currentTrack.artist}</span>
+              </div>
             </div>
           ) : <p className="mt-0 text-subtle leading-relaxed">まだ曲はロードされていません。</p>}
         </div>
