@@ -48,6 +48,8 @@ type GameState = {
   updatedAt: number
 }
 
+type ActionVisualState = 'idle' | 'pressed' | 'muted' | 'error'
+
 const initialState: GameState = {
   phase: 'initialization',
   step: 'idle',
@@ -109,6 +111,22 @@ function loadSessionValue<T>(key: string, fallback: T): T {
 function saveSessionValue(key: string, value: unknown) {
   try {
     sessionStorage.setItem(key, JSON.stringify(value))
+  } catch {
+    // sessionStorage can be unavailable in strict privacy modes.
+  }
+}
+
+function loadSessionString(key: string) {
+  try {
+    return sessionStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+function saveSessionString(key: string, value: string) {
+  try {
+    sessionStorage.setItem(key, value)
   } catch {
     // sessionStorage can be unavailable in strict privacy modes.
   }
@@ -739,9 +757,128 @@ function HomePage() {
   )
 }
 
+function getActionActorId() {
+  const storageKey = 'intro-buzz-action-actor-id'
+  const stored = loadSessionString(storageKey)
+  if (stored) return stored
+  const id = crypto.randomUUID()
+  saveSessionString(storageKey, id)
+  return id
+}
+
+function ActionPage() {
+  const [actorId] = useState(getActionActorId)
+  const [busy, setBusy] = useState(false)
+  const [visualState, setVisualState] = useState<ActionVisualState>('idle')
+  const [title, setTitle] = useState('押す')
+  const [status, setStatus] = useState('スマホ全体が早押しボタンです')
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const color = playerColor(actorId)
+
+  const resetSoon = () => {
+    window.setTimeout(() => {
+      setVisualState('idle')
+      setTitle('押す')
+      setStatus('スマホ全体が早押しボタンです')
+    }, 760)
+  }
+
+  const playPingPong = async () => {
+    const AudioContextCtor = window.AudioContext ?? (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+    if (!AudioContextCtor) return
+    audioContextRef.current ??= new AudioContextCtor()
+    const audioContext = audioContextRef.current
+    if (audioContext.state === 'suspended') await audioContext.resume()
+
+    const now = audioContext.currentTime
+    const master = audioContext.createGain()
+    master.gain.setValueAtTime(1, now)
+    master.connect(audioContext.destination)
+
+    const playTone = (frequency: number, start: number, duration: number) => {
+      const oscillator = audioContext.createOscillator()
+      const gain = audioContext.createGain()
+      oscillator.type = 'sine'
+      oscillator.frequency.setValueAtTime(frequency, start)
+      gain.gain.setValueAtTime(0, start)
+      gain.gain.linearRampToValueAtTime(1, start + 0.012)
+      gain.gain.exponentialRampToValueAtTime(0.001, start + duration)
+      oscillator.connect(gain)
+      gain.connect(master)
+      oscillator.start(start)
+      oscillator.stop(start + duration + 0.02)
+    }
+
+    playTone(880, now, 0.18)
+    playTone(1174.66, now + 0.16, 0.24)
+  }
+
+  const act = async () => {
+    if (busy) return
+    setBusy(true)
+    try {
+      const res = await fetch('/api/act/' + encodeURIComponent(actorId), { method: 'POST' })
+      if (res.status === 200) {
+        await playPingPong()
+        setVisualState('pressed')
+        setTitle('ピンポーン！')
+        setStatus('反応しました')
+        resetSoon()
+      } else if (res.status === 204) {
+        setVisualState('muted')
+        setTitle('反応なし')
+        setStatus('押せましたが、反応はありません')
+        resetSoon()
+      } else if (res.status === 409) {
+        setVisualState('muted')
+        setTitle('待って')
+        setStatus('今は押せません')
+        resetSoon()
+      } else if (res.status === 429) {
+        setVisualState('muted')
+        setTitle('少し待って')
+        setStatus('連打はクールダウン中です')
+        resetSoon()
+      } else {
+        setVisualState('error')
+        setTitle('エラー')
+        setStatus(`送信に失敗しました: ${res.status}`)
+      }
+    } catch {
+      setVisualState('error')
+      setTitle('エラー')
+      setStatus('接続できませんでした')
+    } finally {
+      window.setTimeout(() => setBusy(false), 180)
+    }
+  }
+
+  return (
+    <main
+      className="action-page"
+      style={{
+        '--player-color': color.background,
+        '--player-color-text': color.text,
+        '--player-color-soft': color.softBackground,
+        '--player-color-glow': `hsl(${color.hue} 76% 52% / 0.46)`,
+      } as CSSProperties}
+    >
+      <button className={`action-button ${visualState}`} type="button" disabled={busy} onClick={act} aria-label="早押しボタン">
+        <span className="action-content">
+          <span className="eyebrow">Intro Buzz Button</span>
+          <span className="action-circle" aria-hidden="true">!</span>
+          <h1>{title}</h1>
+          <p>{status}</p>
+        </span>
+      </button>
+    </main>
+  )
+}
+
 export default function App() {
   const path = window.location.pathname
   if (path === '/console') return <ConsolePage />
   if (path === '/gameboard') return <GameboardPage />
+  if (path === '/action') return <ActionPage />
   return <HomePage />
 }

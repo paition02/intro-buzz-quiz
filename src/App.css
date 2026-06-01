@@ -85,6 +85,98 @@ button.danger {
   padding-bottom: clamp(28px, 5vw, 56px);
 }
 
+.action-page {
+  min-height: 100vh;
+  min-height: 100svh;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 20% 10%, rgba(255, 78, 119, 0.28), transparent 28rem),
+    radial-gradient(circle at 80% 20%, rgba(255, 177, 78, 0.2), transparent 26rem),
+    #16131d;
+}
+
+.action-button {
+  width: 100vw;
+  min-height: 100vh;
+  min-height: 100svh;
+  border: 0;
+  border-radius: 0;
+  padding: max(18px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  display: grid;
+  place-items: center;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  box-shadow: none;
+  transition: transform 0.08s ease, filter 0.16s ease, background 0.16s ease;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+.action-button:disabled {
+  cursor: wait;
+  opacity: 1;
+}
+
+.action-content {
+  display: grid;
+  justify-items: center;
+  gap: clamp(10px, 2.6svh, 18px);
+  text-align: center;
+  max-width: min(92vw, 560px);
+}
+
+.action-circle {
+  width: min(68vw, 42svh, 320px);
+  aspect-ratio: 1;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(circle at 35% 25%, rgba(255,255,255,0.42), transparent 28%), var(--player-color, #ff4e77);
+  color: var(--player-color-text, #f7f2ea);
+  box-shadow: 0 24px 80px var(--player-color-glow, rgba(255, 78, 119, 0.36)), inset 0 0 0 12px rgba(255,255,255,0.22);
+  font-size: clamp(4rem, 24vw, 8rem);
+  font-weight: 1000;
+}
+
+.action-content h1 {
+  margin: 0;
+  font-size: clamp(2.2rem, 12vw, 5.8rem);
+  line-height: 0.95;
+  letter-spacing: -0.07em;
+}
+
+.action-content p {
+  margin: 0;
+  color: #d4c8ce;
+  font-weight: 800;
+  line-height: 1.5;
+}
+
+.action-button.pressed {
+  background: var(--player-color-soft, rgba(255, 177, 78, 0.18));
+}
+
+.action-button.pressed .action-circle {
+  animation: action-pop 0.62s ease-out both;
+}
+
+.action-button.muted .action-circle {
+  filter: saturate(0.72) brightness(0.82);
+}
+
+.action-button.error .action-circle {
+  background: linear-gradient(135deg, #ff8aa3, #7c2438);
+  color: #fff;
+}
+
+@keyframes action-pop {
+  0% { transform: scale(1); box-shadow: 0 24px 80px var(--player-color-glow, rgba(255, 78, 119, 0.36)), inset 0 0 0 12px rgba(255,255,255,0.22); }
+  22% { transform: scale(1.12); box-shadow: 0 0 0 36px var(--player-color-soft, rgba(255, 177, 78, 0.18)), 0 30px 90px var(--player-color-glow, rgba(255, 177, 78, 0.52)), inset 0 0 0 12px rgba(255,255,255,0.28); }
+  100% { transform: scale(1); box-shadow: 0 24px 80px var(--player-color-glow, rgba(255, 78, 119, 0.36)), inset 0 0 0 12px rgba(255,255,255,0.22); }
+}
+
 .topbar, .status-card, .panel, .board-card {
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.12);
