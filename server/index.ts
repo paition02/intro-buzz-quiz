@@ -46,6 +46,8 @@ type GameState = {
   hostLoggedIn: boolean
   playlists: string[]
   selectedPlaylistId: string | null
+  playlistSearch: string
+  expandedPlaylistIds: string[]
   players: Record<string, Player>
   tracks: Track[]
   gameTrackOrder: number[]
@@ -66,6 +68,8 @@ let state: GameState = {
   hostLoggedIn: false,
   playlists: [],
   selectedPlaylistId: null,
+  playlistSearch: '',
+  expandedPlaylistIds: [],
   players: {},
   tracks: [],
   gameTrackOrder: [],
@@ -170,6 +174,11 @@ type ConsolePlaylistPayload = {
   tracks?: Partial<Track>[]
 }
 
+function normalizePlaybackSeconds(seconds: unknown) {
+  const value = Number(seconds)
+  return Number.isFinite(value) && value > 0 ? Math.min(30, Math.max(0.1, value)) : null
+}
+
 function consoleLogin() {
   update(() => {
     state.hostLoggedIn = true
@@ -197,6 +206,7 @@ function consoleSetPlaylists(payload: ConsolePlaylistPayload = {}) {
   update(() => {
     state.playlists = playlists
     state.selectedPlaylistId = selectedPlaylistId
+    state.expandedPlaylistIds = state.expandedPlaylistIds.filter((playlistId) => playlistId === selectedPlaylistId)
     state.tracks = tracks.length > 0
       ? tracks
       : []
@@ -206,6 +216,28 @@ function consoleSetPlaylists(payload: ConsolePlaylistPayload = {}) {
     state.currentTrack = null
     state.hasPlayedCurrentTrack = false
     state.message = state.tracks.length > 0 ? `${state.tracks.length}曲を選択中。開始できます` : '曲がありません'
+  })
+  return publicState()
+}
+
+function consoleSetPlaylistSearch(payload: { search?: unknown } = {}) {
+  update(() => {
+    state.playlistSearch = typeof payload.search === 'string' ? payload.search : ''
+  })
+  return publicState()
+}
+
+function consoleSetExpandedPlaylists(payload: { playlistIds?: unknown } = {}) {
+  update(() => {
+    state.expandedPlaylistIds = Array.isArray(payload.playlistIds) ? payload.playlistIds.map(String).filter(Boolean) : []
+  })
+  return publicState()
+}
+
+function consoleSetPlaybackSeconds(payload: { seconds?: unknown } = {}) {
+  update(() => {
+    const seconds = normalizePlaybackSeconds(payload.seconds)
+    if (seconds != null) state.playbackSeconds = seconds
   })
   return publicState()
 }
@@ -228,11 +260,11 @@ function consoleStart() {
 }
 
 function consolePlay(payload: { seconds?: unknown } = {}) {
-  const seconds = Number(payload.seconds)
   let playbackToken: number | null = null
   let playbackDurationMs = 0
   update(() => {
-    if (Number.isFinite(seconds) && seconds > 0) state.playbackSeconds = Math.min(30, Math.max(0.1, seconds))
+    const seconds = normalizePlaybackSeconds(payload.seconds)
+    if (seconds != null) state.playbackSeconds = seconds
     if (state.phase === 'game' && state.step === 'beforePlayback') {
       playbackToken = ++playbackSequence
       playbackDurationMs = Math.ceil(state.playbackSeconds * 1000)
@@ -348,6 +380,8 @@ function consoleReset() {
       hostLoggedIn: false,
       playlists: [],
       selectedPlaylistId: null,
+      playlistSearch: '',
+      expandedPlaylistIds: [],
       players: {},
       tracks: [],
       gameTrackOrder: [],
@@ -384,6 +418,9 @@ io.on('connection', (socket) => {
   socket.emit('state', publicState())
   socket.on('console:login', (callback) => acknowledge(callback, consoleLogin))
   socket.on('console:playlists', (payload, callback) => acknowledge(callback, () => consoleSetPlaylists(payload)))
+  socket.on('console:playlist-search', (payload, callback) => acknowledge(callback, () => consoleSetPlaylistSearch(payload)))
+  socket.on('console:expanded-playlists', (payload, callback) => acknowledge(callback, () => consoleSetExpandedPlaylists(payload)))
+  socket.on('console:playback-seconds', (payload, callback) => acknowledge(callback, () => consoleSetPlaybackSeconds(payload)))
   socket.on('console:start', (callback) => acknowledge(callback, consoleStart))
   socket.on('console:play', (payload, callback) => acknowledge(callback, () => consolePlay(payload)))
   socket.on('console:judge', (payload, callback) => acknowledge(callback, () => consoleJudge(payload)))

@@ -38,6 +38,8 @@ type GameState = {
   hostLoggedIn: boolean
   playlists: string[]
   selectedPlaylistId: string | null
+  playlistSearch: string
+  expandedPlaylistIds: string[]
   players: Player[]
   tracks: Track[]
   gameTrackOrder: number[]
@@ -60,6 +62,8 @@ const initialState: GameState = {
   hostLoggedIn: false,
   playlists: [],
   selectedPlaylistId: null,
+  playlistSearch: '',
+  expandedPlaylistIds: [],
   players: [],
   tracks: [],
   gameTrackOrder: [],
@@ -105,23 +109,6 @@ function consoleAction<T = GameState>(event: string, body?: unknown): Promise<T>
 }
 
 
-
-function loadSessionValue<T>(key: string, fallback: T): T {
-  try {
-    const stored = sessionStorage.getItem(key)
-    return stored == null ? fallback : JSON.parse(stored) as T
-  } catch {
-    return fallback
-  }
-}
-
-function saveSessionValue(key: string, value: unknown) {
-  try {
-    sessionStorage.setItem(key, JSON.stringify(value))
-  } catch {
-    // sessionStorage can be unavailable in strict privacy modes.
-  }
-}
 
 function loadSessionString(key: string) {
   try {
@@ -271,12 +258,9 @@ function ConsolePage() {
   const state = useGameState()
   const musicKit = useMusicKitPlayback()
   const [libraryPlaylists, setLibraryPlaylists] = useState<{ id: string; name: string }[]>([])
-  const [playlistSearch, setPlaylistSearch] = useState(() => loadSessionValue('intro-buzz-console-playlist-search', ''))
-  const [expandedPlaylistIds, setExpandedPlaylistIds] = useState<Set<string>>(() => new Set())
   const [playlistTracks, setPlaylistTracks] = useState<Record<string, Track[]>>({})
   const [loadingPlaylistIds, setLoadingPlaylistIds] = useState<Set<string>>(() => new Set())
   const [playlistErrors, setPlaylistErrors] = useState<Record<string, string>>({})
-  const [seconds, setSeconds] = useState(() => loadSessionValue('intro-buzz-console-seconds', 0.5))
   const [busy, setBusy] = useState(false)
   const [loadingLibraryPlaylists, setLoadingLibraryPlaylists] = useState(false)
   const [consoleMessage, setConsoleMessage] = useState<string | null>(null)
@@ -290,9 +274,9 @@ function ConsolePage() {
 
   const joinedPlayers = useMemo(() => state.players.filter((player) => player.joined), [state.players])
   const selectedPlaylistId = state.selectedPlaylistId ?? ''
-
-  useEffect(() => saveSessionValue('intro-buzz-console-playlist-search', playlistSearch), [playlistSearch])
-  useEffect(() => saveSessionValue('intro-buzz-console-seconds', seconds), [seconds])
+  const playlistSearch = state.playlistSearch
+  const expandedPlaylistIds = useMemo(() => new Set(state.expandedPlaylistIds), [state.expandedPlaylistIds])
+  const seconds = state.playbackSeconds
 
   useEffect(() => {
     if (!musicKit.ready || !musicKit.authorized || state.hostLoggedIn) return
@@ -348,12 +332,15 @@ function ConsolePage() {
       const playlists = await getLibraryPlaylists() as { id: string; name: string }[]
       const playlistIds = new Set(playlists.map((playlist) => playlist.id))
       setLibraryPlaylists(playlists)
-      setExpandedPlaylistIds((current) => new Set([...current].filter((playlistId) => playlistIds.has(playlistId))))
+      const expandedPlaylistIds = state.expandedPlaylistIds.filter((playlistId) => playlistIds.has(playlistId))
+      if (expandedPlaylistIds.length !== state.expandedPlaylistIds.length) {
+        await consoleAction('console:expanded-playlists', { playlistIds: expandedPlaylistIds })
+      }
       return playlists
     } finally {
       setLoadingLibraryPlaylists(false)
     }
-  }, [getLibraryPlaylists])
+  }, [getLibraryPlaylists, state.expandedPlaylistIds])
 
   useEffect(() => {
     if (!musicKit.authorized) autoLoadLibraryPlaylistsRequestedRef.current = false
@@ -421,13 +408,11 @@ function ConsolePage() {
   })
 
   const togglePlaylistExpanded = (playlist: { id: string; name: string }) => run(async () => {
-    const willExpand = !expandedPlaylistIds.has(playlist.id)
-    setExpandedPlaylistIds((current) => {
-      const next = new Set(current)
-      if (next.has(playlist.id)) next.delete(playlist.id)
-      else next.add(playlist.id)
-      return next
-    })
+    const next = new Set(expandedPlaylistIds)
+    const willExpand = !next.has(playlist.id)
+    if (willExpand) next.add(playlist.id)
+    else next.delete(playlist.id)
+    await consoleAction('console:expanded-playlists', { playlistIds: [...next] })
     if (willExpand) await fetchPlaylistTracks(playlist)
   })
 
@@ -529,7 +514,11 @@ function ConsolePage() {
             type="search"
             placeholder="プレイリスト名で検索"
             value={playlistSearch}
-            onChange={(event) => setPlaylistSearch(event.target.value)}
+            onChange={(event) => {
+              void consoleAction('console:playlist-search', { search: event.target.value }).catch((error) => {
+                setConsoleMessage(error instanceof Error ? error.message : String(error))
+              })
+            }}
             disabled={busy || !musicKit.authorized || libraryPlaylists.length === 0}
           />
           <ul className="playlist-list">
@@ -606,7 +595,14 @@ function ConsolePage() {
           <h2>3. 進行</h2>
           <div className="seconds-control">
             <span className="seconds-label">再生秒数</span>
-            <CircularSecondsSlider value={seconds} onChange={setSeconds} />
+            <CircularSecondsSlider
+              value={seconds}
+              onChange={(value) => {
+                void consoleAction('console:playback-seconds', { seconds: value }).catch((error) => {
+                  setConsoleMessage(error instanceof Error ? error.message : String(error))
+                })
+              }}
+            />
           </div>
           <div className="console-action-stack">
             <div className="console-action-grid two-columns">
