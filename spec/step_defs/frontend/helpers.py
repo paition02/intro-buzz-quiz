@@ -23,8 +23,10 @@ def sample_tracks(count: int = 3, playlist: str = "Spec Playlist A") -> list[dic
 
 
 def musickit_mock_script() -> str:
-    return """
+    return r"""
 (() => {
+  const calls = [];
+  const record = (name, payload = {}) => calls.push({ name, payload, at: Date.now() });
   const playlists = [
     { id: 'playlist-a', attributes: { name: 'Spec Playlist A' } },
     { id: 'playlist-b', attributes: { name: 'Spec Playlist B' } },
@@ -51,34 +53,41 @@ def musickit_mock_script() -> str:
       relationships: { catalog: { data: [{ id: `track-${index}`, attributes: { name: `Track ${index}`, artistName: `Artist ${index}` } }] } },
     })),
   };
-  let authorized = false;
+  let authorized = Boolean(window.__musicKitMockOptions?.authorized);
   const listeners = new Set();
+  const notifyAuthorization = () => listeners.forEach((handler) => handler());
   const mk = {
     get isAuthorized() { return authorized; },
     isPlaying: false,
     nowPlayingItemIndex: 0,
     repeatMode: 0,
     shuffleMode: 0,
-    addEventListener: (_name, handler) => listeners.add(handler),
-    removeEventListener: (_name, handler) => listeners.delete(handler),
-    authorize: async () => { authorized = true; listeners.forEach((handler) => handler()); },
-    unauthorize: async () => { authorized = false; listeners.forEach((handler) => handler()); },
-    setQueue: async () => {},
-    changeToMediaAtIndex: async (index) => { mk.nowPlayingItemIndex = index; },
-    seekToTime: async () => {},
-    play: async () => { mk.isPlaying = true; },
-    pause: () => { mk.isPlaying = false; },
-    api: { music: async (url) => {
+    addEventListener: (name, handler) => { record('addEventListener', { name }); listeners.add(handler); },
+    removeEventListener: (name, handler) => { record('removeEventListener', { name }); listeners.delete(handler); },
+    authorize: async () => { record('authorize'); authorized = true; notifyAuthorization(); },
+    unauthorize: async () => { record('unauthorize'); authorized = false; notifyAuthorization(); },
+    setQueue: async (payload) => { record('setQueue', payload); },
+    changeToMediaAtIndex: async (index) => { record('changeToMediaAtIndex', { index }); mk.nowPlayingItemIndex = index; },
+    seekToTime: async (time) => { record('seekToTime', { time }); },
+    play: async () => { record('play'); mk.isPlaying = true; },
+    pause: () => { record('pause'); mk.isPlaying = false; },
+    api: { music: async (url, params) => {
+      record('api.music', { url, params });
       if (url === '/v1/me/library/playlists') return { data: { data: playlists } };
       const match = url.match(/\/v1\/me\/library\/playlists\/([^/]+)\/tracks/);
       if (match) return { data: { data: tracksByPlaylist[match[1]] ?? [] } };
       return { data: { data: [] } };
     } },
   };
+  window.__musicKitMock = {
+    calls,
+    instance: mk,
+    setAuthorized(value) { authorized = value; notifyAuthorization(); },
+  };
   window.MusicKit = {
     PlayerShuffleMode: { off: 0 },
     PlayerRepeatMode: { one: 1 },
-    configure: () => mk,
+    configure: (config) => { record('configure', config); return mk; },
   };
   window.dispatchEvent(new Event('musickitloaded'));
   document.dispatchEvent(new Event('musickitloaded'));

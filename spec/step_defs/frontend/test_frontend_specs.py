@@ -34,6 +34,35 @@ def _wait_for_joined_count(socket_client, count: int):
     raise AssertionError(f"joined player count {count} not observed; latest={socket_client.state}")
 
 
+def _music_calls(frontend_page: Page):
+    return frontend_page.evaluate("window.__musicKitMock?.calls ?? []")
+
+
+def _wait_for_music_call(frontend_page: Page, name: str, predicate: str = "() => true", timeout: int = 5000):
+    frontend_page.wait_for_function(
+        """
+        ({ name, predicateSource }) => {
+          const predicate = eval(predicateSource);
+          return (window.__musicKitMock?.calls ?? []).some((call) => call.name === name && predicate(call));
+        }
+        """,
+        arg={"name": name, "predicateSource": predicate},
+        timeout=timeout,
+    )
+    call = frontend_page.evaluate(
+        """
+        ({ name, predicateSource }) => {
+          const predicate = eval(predicateSource);
+          return (window.__musicKitMock?.calls ?? []).find((call) => call.name === name && predicate(call));
+        }
+        """,
+        arg={"name": name, "predicateSource": predicate},
+    )
+    if call is None:
+        raise AssertionError(f"MusicKit call {name} was not recorded")
+    return call
+
+
 def _prepare_game(socket_client, actor: str = "player-front"):
     _set_ready_tracks(socket_client, 3)
     response = httpx.post(f"{socket_client.server_url}/api/act/{actor}")
@@ -60,6 +89,11 @@ def given_open_frontend(frontend_page: Page, path: str):
 @when(parsers.parse('the frontend opens "{path}" with mocked MusicKit'))
 def open_frontend_with_musickit(frontend_page: Page, path: str):
     frontend_page.goto(path)
+
+
+@given("MusicKit is already authorized")
+def musickit_already_authorized(frontend_page: Page):
+    frontend_page.add_init_script("window.__musicKitMockOptions = { authorized: true };")
 
 
 @given(parsers.parse('the frontend opens "{path}" as actor "{actor}"'))
@@ -207,3 +241,100 @@ def backend_phase_step(socket_client, phase: str, step: str):
     state = _state(socket_client)
     assert state["phase"] == phase
     assert state["step"] == step
+
+
+@then("MusicKit is configured with the developer token from the server")
+def musickit_configured_with_token(frontend_page: Page):
+    call = _wait_for_music_call(frontend_page, "configure")
+    assert call["payload"]["developerToken"] == "spec-token"
+    assert call["payload"]["app"]["name"] == "Intro Buzz Quiz"
+
+
+@then("MusicKit authorization changes are monitored")
+def musickit_authorization_changes_monitored(frontend_page: Page):
+    _wait_for_music_call(
+        frontend_page,
+        "addEventListener",
+        "(call) => call.payload.name === 'authorizationStatusDidChange'",
+    )
+
+
+@then("MusicKit authorization is requested")
+def musickit_authorization_requested(frontend_page: Page):
+    _wait_for_music_call(frontend_page, "authorize")
+
+
+@then("MusicKit library playlists are requested")
+def musickit_library_playlists_requested(frontend_page: Page):
+    _wait_for_music_call(
+        frontend_page,
+        "api.music",
+        "(call) => call.payload.url === '/v1/me/library/playlists' && call.payload.params.limit === 100",
+    )
+
+
+@then(parsers.parse('MusicKit tracks for library playlist "{playlist_id}" are requested'))
+def musickit_library_tracks_requested(frontend_page: Page, playlist_id: str):
+    _wait_for_music_call(
+        frontend_page,
+        "api.music",
+        f"(call) => call.payload.url === '/v1/me/library/playlists/{playlist_id}/tracks' && call.payload.params.include === 'catalog'",
+    )
+
+
+@then(parsers.parse('MusicKit queue is prepared with songs "{song_ids}"'))
+def musickit_queue_prepared(frontend_page: Page, song_ids: str):
+    expected = [song_id for song_id in song_ids.split(",") if song_id]
+    _wait_for_music_call(
+        frontend_page,
+        "setQueue",
+        f"(call) => JSON.stringify(call.payload.songs) === JSON.stringify({expected!r}) && call.payload.startPlaying === false",
+    )
+
+
+@then("MusicKit changes to the backend current track")
+def musickit_changes_to_current_track(frontend_page: Page, socket_client):
+    socket_client.wait_for_state(phase="game", step="beforePlayback")
+    current_index = socket_client.state["currentTrackIndex"]
+    if current_index == 0:
+        return
+    _wait_for_music_call(
+        frontend_page,
+        "changeToMediaAtIndex",
+        f"(call) => call.payload.index === {current_index}",
+    )
+
+
+@then("MusicKit seeks to 0")
+def musickit_seeks_to_zero(frontend_page: Page):
+    _wait_for_music_call(frontend_page, "seekToTime", "(call) => call.payload.time === 0")
+
+
+@then("MusicKit starts playback")
+def musickit_starts_playback(frontend_page: Page):
+    _wait_for_music_call(frontend_page, "play")
+
+
+@then("MusicKit pauses playback after the intro duration")
+def musickit_pauses_after_intro(frontend_page: Page):
+    _wait_for_music_call(frontend_page, "pause", timeout=3000)
+
+
+@then("MusicKit seeks to 0 after playback")
+def musickit_rewinds_after_playback(frontend_page: Page):
+    frontend_page.wait_for_function(
+        """
+        () => {
+          const calls = window.__musicKitMock?.calls ?? [];
+          const playIndex = calls.findIndex((call) => call.name === 'play');
+          if (playIndex < 0) return false;
+          return calls.slice(playIndex + 1).some((call) => call.name === 'seekToTime' && call.payload.time === 0);
+        }
+        """,
+        timeout=3000,
+    )
+
+
+@then("MusicKit repeat mode is one")
+def musickit_repeat_mode_one(frontend_page: Page):
+    frontend_page.wait_for_function("window.__musicKitMock?.instance?.repeatMode === window.MusicKit.PlayerRepeatMode.one")
