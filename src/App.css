@@ -226,6 +226,31 @@ textarea { min-height: 110px; resize: vertical; }
   margin-top: 14px;
 }
 
+.console-action-stack {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.console-action-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.console-action-grid.two-columns {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.console-action-grid.flow-actions {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.console-action-grid button {
+  min-height: 58px;
+}
+
 .hint { color: #a99ca4; }
 
 .track-card {
@@ -430,6 +455,8 @@ textarea { min-height: 110px; resize: vertical; }
 @media (max-width: 760px) {
   .topbar, .status-card { align-items: stretch; flex-direction: column; }
   .grid { grid-template-columns: 1fr; }
+  .console-action-grid.two-columns,
+  .console-action-grid.flow-actions { grid-template-columns: 1fr; }
   .actions > button, .actions > .button { flex: 1 1 160px; }
   .gameboard { padding: 12px; }
   .board-card { padding: 22px 16px; }
@@ -872,7 +899,7 @@ input[type="range"]::-moz-range-thumb {
 
 .gameboard .player {
   width: 54px;
-  height: 72px;
+  height: 88px;
   background: transparent;
   border: none;
   overflow: visible;
@@ -921,7 +948,7 @@ input[type="range"]::-moz-range-thumb {
 
 .gameboard .player-score {
   position: absolute;
-  top: 58px;
+  top: 70px;
   left: 50%;
   transform: translateX(-50%);
   color: #ffb14e;

@@ -611,16 +611,18 @@ function ConsolePage() {
             <span className="seconds-label">再生秒数</span>
             <CircularSecondsSlider value={seconds} onChange={setSeconds} />
           </div>
-          <div className="actions">
-            <button disabled={busy || state.step !== 'beforePlayback'} onClick={handlePlay}>{musicKit.playing ? '再生中' : '再生'}</button>
-            <button disabled={busy || state.step !== 'answering'} onClick={() => handleJudge('correct')}>正解</button>
-            <button disabled={busy || state.step !== 'answering'} onClick={() => handleJudge('wrong')}>不正解</button>
-            <button disabled={busy || state.phase !== 'game' || !['beforePlayback', 'playing', 'answering', 'wrong'].includes(state.step)} onClick={handleGiveUp}>ギブアップ</button>
-          </div>
-          <div className="actions">
-            <button disabled={busy || state.step !== 'reveal'} onClick={handleNextRound}>次のラウンドへ</button>
-            <button disabled={busy || state.step !== 'reveal'} onClick={handleShowResults}>結果発表へ</button>
-            <button disabled={busy || state.step !== 'results'} onClick={handleNextGame}>次のゲームへ</button>
+          <div className="console-action-stack">
+            <div className="console-action-grid two-columns">
+              <button disabled={busy || state.step !== 'beforePlayback'} onClick={handlePlay}>{musicKit.playing ? '再生中' : '再生'}</button>
+              <button className="ghost" disabled={busy || state.phase !== 'game' || !['beforePlayback', 'playing', 'answering', 'wrong'].includes(state.step)} onClick={handleGiveUp}>ギブアップ</button>
+              <button disabled={busy || state.step !== 'answering'} onClick={() => handleJudge('correct')}>正解</button>
+              <button disabled={busy || state.step !== 'answering'} onClick={() => handleJudge('wrong')}>不正解</button>
+            </div>
+            <div className="console-action-grid flow-actions">
+              <button disabled={busy || state.step !== 'reveal'} onClick={handleNextRound}>次のラウンドへ</button>
+              <button disabled={busy || state.step !== 'reveal'} onClick={handleShowResults}>結果発表へ</button>
+              <button disabled={busy || state.step !== 'results'} onClick={handleNextGame}>次のゲームへ</button>
+            </div>
           </div>
         </div>
 
