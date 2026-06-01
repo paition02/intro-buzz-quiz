@@ -272,7 +272,7 @@ function ConsolePage() {
   const musicKit = useMusicKitPlayback()
   const [libraryPlaylists, setLibraryPlaylists] = useState<{ id: string; name: string }[]>([])
   const [playlistSearch, setPlaylistSearch] = useState(() => loadSessionValue('intro-buzz-console-playlist-search', ''))
-  const [expandedPlaylistIds, setExpandedPlaylistIds] = useState<Set<string>>(() => new Set(loadSessionValue<string[]>('intro-buzz-console-expanded-playlist-ids', [])))
+  const [expandedPlaylistIds, setExpandedPlaylistIds] = useState<Set<string>>(() => new Set())
   const [playlistTracks, setPlaylistTracks] = useState<Record<string, Track[]>>({})
   const [loadingPlaylistIds, setLoadingPlaylistIds] = useState<Set<string>>(() => new Set())
   const [playlistErrors, setPlaylistErrors] = useState<Record<string, string>>({})
@@ -285,12 +285,13 @@ function ConsolePage() {
   const wasRevealStepRef = useRef(false)
   const getLibraryPlaylists = musicKit.getLibraryPlaylists
   const prepareQueue = musicKit.prepareQueue
+  const stopPlayback = musicKit.stop
+  const playFullLoopTrack = musicKit.playFullLoopTrack
 
   const joinedPlayers = useMemo(() => state.players.filter((player) => player.joined), [state.players])
   const selectedPlaylistId = state.selectedPlaylistId ?? ''
 
   useEffect(() => saveSessionValue('intro-buzz-console-playlist-search', playlistSearch), [playlistSearch])
-  useEffect(() => saveSessionValue('intro-buzz-console-expanded-playlist-ids', [...expandedPlaylistIds]), [expandedPlaylistIds])
   useEffect(() => saveSessionValue('intro-buzz-console-seconds', seconds), [seconds])
 
   useEffect(() => {
@@ -301,27 +302,27 @@ function ConsolePage() {
   }, [musicKit.ready, musicKit.authorized, state.hostLoggedIn])
 
   useEffect(() => {
-    if (state.step !== 'answering' || !musicKit.playing) return
-    void musicKit.stop().catch((error) => {
+    if (state.step === 'playing' || state.step === 'reveal') return
+    void stopPlayback().catch((error) => {
       setConsoleMessage(error instanceof Error ? error.message : String(error))
     })
-  }, [state.step, musicKit])
+  }, [state.step, stopPlayback])
 
   useEffect(() => {
     if (state.step !== 'reveal' || state.currentTrackIndex < 0) {
       if (!wasRevealStepRef.current) return
       wasRevealStepRef.current = false
-      void musicKit.stop().catch((error) => {
+      void stopPlayback().catch((error) => {
         setConsoleMessage(error instanceof Error ? error.message : String(error))
       })
       return
     }
 
     wasRevealStepRef.current = true
-    void musicKit.playFullLoopTrack(state.currentTrackIndex).catch((error) => {
+    void playFullLoopTrack(state.currentTrackIndex).catch((error) => {
       setConsoleMessage(error instanceof Error ? error.message : String(error))
     })
-  }, [musicKit, state.currentTrackIndex, state.step])
+  }, [playFullLoopTrack, state.currentTrackIndex, state.step, stopPlayback])
 
   const visiblePlaylists = useMemo(() => {
     const query = playlistSearch.trim().toLowerCase()
@@ -345,7 +346,9 @@ function ConsolePage() {
     setLoadingLibraryPlaylists(true)
     try {
       const playlists = await getLibraryPlaylists() as { id: string; name: string }[]
+      const playlistIds = new Set(playlists.map((playlist) => playlist.id))
       setLibraryPlaylists(playlists)
+      setExpandedPlaylistIds((current) => new Set([...current].filter((playlistId) => playlistIds.has(playlistId))))
       return playlists
     } finally {
       setLoadingLibraryPlaylists(false)
@@ -753,8 +756,10 @@ function TrackLane({ tracks, laneIndex, direction }: {
   direction: 'left' | 'right'
 }) {
   const laneRef = useRef<HTMLDivElement>(null)
+  const viewportRef = useRef<HTMLDivElement>(null)
+  const startIndexRef = useRef(0)
   const [laneWidth, setLaneWidth] = useState(0)
-  const [offset, setOffset] = useState(0)
+  const [startIndex, setStartIndex] = useState(0)
   const chipGap = 12
   const speed = 34 + (laneIndex % 3) * 7
   const chipWidths = useMemo(() => tracks.map(measureTrackChipWidth), [tracks])
@@ -780,17 +785,27 @@ function TrackLane({ tracks, laneIndex, direction }: {
     let startTime: number | null = null
     const tick = (time: number) => {
       startTime ??= time
-      setOffset(((time - startTime) / 1000 * speed) % cycleWidth)
+      const offset = ((time - startTime) / 1000 * speed) % cycleWidth
+      const logicalOffset = direction === 'left' ? offset : (cycleWidth - offset) % cycleWidth
+      const nextStartIndex = findTrackIndexAtOffset(prefixWidths, logicalOffset)
+      if (startIndexRef.current !== nextStartIndex) {
+        startIndexRef.current = nextStartIndex
+        setStartIndex(nextStartIndex)
+      }
+
+      const viewport = viewportRef.current
+      if (viewport) {
+        const localOffset = logicalOffset - prefixWidths[nextStartIndex]
+        viewport.style.transform = `translate3d(${-localOffset}px, 0, 0)`
+      }
       frameId = window.requestAnimationFrame(tick)
     }
     frameId = window.requestAnimationFrame(tick)
     return () => window.cancelAnimationFrame(frameId)
-  }, [cycleWidth, speed])
+  }, [cycleWidth, direction, prefixWidths, speed])
 
-  const logicalOffset = direction === 'left' ? offset : (cycleWidth - offset) % cycleWidth
-  const startIndex = findTrackIndexAtOffset(prefixWidths, logicalOffset)
   const visibleItems: { track: Track; x: number; virtualIndex: number; width: number }[] = []
-  let cursor = prefixWidths[startIndex] - logicalOffset
+  let cursor = 0
   let index = startIndex
   while (visibleItems.length < tracks.length + 1 && cursor < laneWidth + chipGap) {
     const trackIndex = index % tracks.length
@@ -802,7 +817,7 @@ function TrackLane({ tracks, laneIndex, direction }: {
 
   return (
     <div className={`track-lane ${direction}`} ref={laneRef}>
-      <div className="track-lane-viewport">
+      <div className="track-lane-viewport" ref={viewportRef}>
         {visibleItems.map(({ track, x, virtualIndex, width }) => (
           <div
             className="gameboard-track-chip"
@@ -887,22 +902,26 @@ function GameboardPage() {
   } else if (state.step === 'loading') {
     content = <h1 className="gameboard-title">曲を準備中</h1>
   } else if (state.step === 'beforePlayback') {
+    cardClassName = 'board-card gameboard-card with-players'
     content = (
       <>
-        <div className="gameboard-symbol waiting-symbol">♪</div>
+        <div className="gameboard-stage"><div className="gameboard-symbol waiting-symbol">♪</div></div>
         {players}
       </>
     )
   } else if (state.step === 'playing') {
+    cardClassName = 'board-card gameboard-card with-players'
     content = (
       <>
-        <div className="gameboard-symbol playing-symbol">♪</div>
+        <div className="gameboard-stage"><div className="gameboard-symbol playing-symbol">♪</div></div>
         {players}
       </>
     )
   } else if (state.step === 'answering') {
+    cardClassName = 'board-card gameboard-card with-players'
     content = (
       <>
+        <div className="gameboard-stage answering-stage">
         <h1 className="gameboard-title">解答をどうぞ！</h1>
         {state.answererId && (
           <div
@@ -912,20 +931,23 @@ function GameboardPage() {
             aria-label={state.answererId}
           />
         )}
+        </div>
         {players}
       </>
     )
   } else if (state.step === 'correct') {
+    cardClassName = 'board-card gameboard-card with-players'
     content = (
       <>
-        <div className="effect success">○</div>
+        <div className="gameboard-stage"><div className="effect success">○</div></div>
         {players}
       </>
     )
   } else if (state.step === 'wrong') {
+    cardClassName = 'board-card gameboard-card with-players'
     content = (
       <>
-        <div className="effect miss">×</div>
+        <div className="gameboard-stage"><div className="effect miss">×</div></div>
         {players}
       </>
     )

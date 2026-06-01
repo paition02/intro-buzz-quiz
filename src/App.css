@@ -303,6 +303,24 @@ textarea { min-height: 110px; resize: vertical; }
   gap: clamp(14px, 2.4vh, 30px);
 }
 
+.gameboard-card.with-players {
+  grid-template-rows: minmax(0, 1fr) auto;
+  align-items: stretch;
+  justify-items: center;
+}
+
+.gameboard-stage {
+  width: 100%;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+}
+
+.answering-stage {
+  align-content: center;
+  gap: clamp(18px, 3vh, 34px);
+}
+
 .gameboard-title,
 .board-card h1 {
   font-size: clamp(2.2rem, 7vw, 6.8rem);
@@ -383,6 +401,7 @@ textarea { min-height: 110px; resize: vertical; }
 .track-lane-viewport {
   position: relative;
   height: 100%;
+  will-change: transform;
 }
 
 .track-lane.right {
