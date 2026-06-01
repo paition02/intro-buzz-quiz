@@ -884,7 +884,7 @@ function GameboardPage() {
     cardClassName = 'board-card gameboard-card with-players'
     content = (
       <>
-        <div className="gameboard-stage glow-stage playing-glow"><div className="gameboard-symbol playing-symbol">♪</div></div>
+        <div className="gameboard-stage"><div className="gameboard-symbol playing-symbol glow-icon playing-glow">♪</div></div>
         {players}
       </>
     )
@@ -910,7 +910,7 @@ function GameboardPage() {
     cardClassName = 'board-card gameboard-card with-players'
     content = (
       <>
-        <div className="gameboard-stage glow-stage success-glow"><div className="effect success">○</div></div>
+        <div className="gameboard-stage"><div className="effect success glow-icon success-glow">○</div></div>
         {players}
       </>
     )
@@ -918,7 +918,7 @@ function GameboardPage() {
     cardClassName = 'board-card gameboard-card with-players'
     content = (
       <>
-        <div className="gameboard-stage glow-stage miss-glow"><div className="effect miss">×</div></div>
+        <div className="gameboard-stage"><div className="effect miss glow-icon miss-glow">×</div></div>
         {players}
       </>
     )

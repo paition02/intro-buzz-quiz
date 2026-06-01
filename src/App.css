@@ -310,18 +310,23 @@ textarea { min-height: 110px; resize: vertical; }
 }
 
 .gameboard-stage {
-  position: relative;
-  isolation: isolate;
   width: 100%;
   min-height: 0;
   display: grid;
   place-items: center;
 }
 
-.glow-stage::before {
+.glow-icon {
+  position: relative;
+  isolation: isolate;
+}
+
+.glow-icon::before {
   content: '';
   position: absolute;
   z-index: -1;
+  inset: 50% auto auto 50%;
+  transform: translate(-50%, -50%);
   width: min(62vw, 560px);
   aspect-ratio: 1;
   border-radius: 999px;
