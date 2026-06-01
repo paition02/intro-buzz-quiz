@@ -215,17 +215,26 @@ function ChevronGlyph({ color, className }: { color?: string; className?: string
   )
 }
 
-function PlayerBadge({ id, active = false, reacting = false, label = true, score, variant = 'console' }: { id: string; active?: boolean; reacting?: boolean; label?: boolean; score?: number; variant?: 'console' | 'gameboard' }) {
+function CheckGlyph({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth={3.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M5 12.5 L9.3 16.5 L19 7.5" />
+    </svg>
+  )
+}
+
+function PlayerBadge({ id, active = false, reacting = false, label = true, score, variant = 'console', size = 'normal' }: { id: string; active?: boolean; reacting?: boolean; label?: boolean; score?: number; variant?: 'console' | 'gameboard'; size?: 'normal' | 'large' }) {
   const color = playerColor(id)
 
   if (!label && variant === 'gameboard') {
+    const large = size === 'large'
     // ゲームボード上はプレイヤーを人型シルエットで表示。正解者は拡大 + 白縁グロー。
     return (
-      <span className={['relative flex w-14 flex-col items-center transition-transform', active && 'scale-125'].filter(Boolean).join(' ')} aria-label="参加者">
+      <span className={['relative flex flex-col items-center transition-transform', large ? 'w-28' : 'w-14', active && (large ? 'scale-110' : 'scale-125')].filter(Boolean).join(' ')} aria-label="参加者">
         <PersonGlyph
           color={color.background}
-          className={['block w-9 h-12', reacting && 'animate-react-pop'].filter(Boolean).join(' ')}
-          style={{ filter: active ? `drop-shadow(0 0 28px ${color.background}) drop-shadow(0 0 10px white)` : `drop-shadow(0 0 18px ${color.background})` }}
+          className={['block', large ? 'w-20 h-28' : 'w-9 h-12', reacting && 'animate-react-pop'].filter(Boolean).join(' ')}
+          style={{ filter: active ? `drop-shadow(0 0 36px ${color.background}) drop-shadow(0 0 10px white)` : `drop-shadow(0 0 18px ${color.background})` }}
         />
         {score != null && <span className="mt-2 text-amber text-2xl leading-none font-black">{score}</span>}
       </span>
@@ -644,7 +653,9 @@ function ConsolePage() {
                       onClick={() => selectPlaylist(playlist)}
                       aria-pressed={selected}
                     >
-                      <span className={`size-5 rounded-full border-2 inline-grid place-items-center shrink-0 text-cocoa ${selected ? 'bg-amber border-amber' : 'bg-white/10 border-white/40'}`}>{selected ? '✓' : ''}</span>
+                      <span className={`size-5 rounded-full border-2 inline-grid place-items-center shrink-0 ${selected ? 'bg-amber border-amber text-cocoa' : 'bg-white/10 border-white/40'}`}>
+                        {selected && <CheckGlyph className="size-3.5" />}
+                      </span>
                       <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{playlist.name}</span>
                     </button>
                     <button
@@ -786,7 +797,7 @@ function GameboardPlayers({ players, answererId, isReacting }: {
 }) {
   if (players.length === 0) return null
   return (
-    <div className="w-full mt-6 pt-5 border-t border-white/10">
+    <div className="w-full pt-5 border-t border-white/10">
       <div className="flex justify-center gap-2.5 flex-wrap">
         {players.map((player) => (
           <PlayerBadge
@@ -1036,7 +1047,7 @@ function ReadyTrackLanes({ tracks }: { tracks: Track[] }) {
   }).filter((lane) => lane.length > 0)
 
   return (
-    <div className="w-full flex-1 min-h-0 grid grid-rows-1" aria-label="選択中の曲">
+    <div className="w-full shrink-0" aria-label="選択中の曲">
       <div
         className="w-full min-h-0 grid grid-rows-[repeat(var(--lane-count),64px)] gap-2 overflow-hidden"
         style={{ '--lane-count': lanes.length } as CSSProperties}
@@ -1083,11 +1094,11 @@ function GameboardPage() {
   const TITLE = 'text-5xl sm:text-7xl font-black leading-none tracking-tighter mx-auto'
   const READY_TITLE = 'text-4xl sm:text-6xl font-black leading-none tracking-tighter mx-auto text-center'
   const CARD = `${GLASS} w-full max-w-5xl rounded-3xl text-center p-6 sm:p-12`
-  // flex 縦並び。STAGE 側を flex-1 で伸ばし、players は下に自然に積む(grid テンプレ不要)。
-  const CARD_GB = `${CARD} min-h-96 flex flex-col items-center justify-center gap-6`
+  // gameboard のカードは常に親 main の高さへ広げる。STAGE 側を flex-1 で伸ばし、players は下に自然に積む(grid テンプレ不要)。
+  const CARD_GB = `${CARD} flex-1 min-h-0 flex flex-col items-center justify-center gap-6`
   const CARD_PLAYERS = CARD_GB
   // ready 盤は親 main の flex-col 内で flex-1 して縦いっぱいに伸びる(明示高さ不要)。
-  const CARD_READY = `${GLASS} text-center w-full max-w-7xl rounded-3xl flex flex-col items-center gap-6 overflow-hidden p-4 sm:p-8 flex-1 min-h-0`
+  const CARD_READY = `${GLASS} text-center w-full max-w-7xl rounded-3xl flex flex-col items-center justify-center gap-6 overflow-hidden p-4 sm:p-8 flex-1 min-h-0`
   const STAGE = 'w-full min-h-0 flex-1 grid place-items-center'
   const SYMBOL = 'text-9xl font-black leading-none'
   // glow-icon::before を before: ユーティリティで再現。色は使用箇所で before:bg-... を足す。
@@ -1174,8 +1185,8 @@ function GameboardPage() {
       <div className="flex justify-center items-end gap-8 sm:gap-16 flex-wrap">
         {sortedPlayers.map((player) => (
           <div className="grid justify-items-center gap-4" key={player.id}>
-            <div className="scale-150 m-8">
-              <PlayerBadge id={player.id} label={false} variant="gameboard" />
+            <div className="m-8">
+              <PlayerBadge id={player.id} label={false} variant="gameboard" size="large" />
             </div>
             <strong className="text-6xl sm:text-7xl font-black text-amber leading-none">{player.score}</strong>
           </div>
