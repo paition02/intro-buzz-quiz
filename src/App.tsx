@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { io } from 'socket.io-client'
 import type { Socket } from 'socket.io-client'
@@ -36,6 +36,7 @@ type GameState = {
   step: GameStep
   hostLoggedIn: boolean
   playlists: string[]
+  selectedPlaylistId: string | null
   players: Player[]
   tracks: Track[]
   gameTrackOrder: number[]
@@ -57,6 +58,7 @@ const initialState: GameState = {
   step: 'idle',
   hostLoggedIn: false,
   playlists: [],
+  selectedPlaylistId: null,
   players: [],
   tracks: [],
   gameTrackOrder: [],
@@ -267,19 +269,23 @@ function ConsolePage() {
   const musicKit = useMusicKitPlayback()
   const [libraryPlaylists, setLibraryPlaylists] = useState<{ id: string; name: string }[]>([])
   const [playlistSearch, setPlaylistSearch] = useState(() => loadSessionValue('intro-buzz-console-playlist-search', ''))
-  const [selectedPlaylistId, setSelectedPlaylistId] = useState(() => loadSessionValue('intro-buzz-console-selected-playlist-id', ''))
   const [expandedPlaylistIds, setExpandedPlaylistIds] = useState<Set<string>>(() => new Set(loadSessionValue<string[]>('intro-buzz-console-expanded-playlist-ids', [])))
   const [playlistTracks, setPlaylistTracks] = useState<Record<string, Track[]>>({})
   const [loadingPlaylistIds, setLoadingPlaylistIds] = useState<Set<string>>(() => new Set())
   const [playlistErrors, setPlaylistErrors] = useState<Record<string, string>>({})
   const [seconds, setSeconds] = useState(() => loadSessionValue('intro-buzz-console-seconds', 0.5))
   const [busy, setBusy] = useState(false)
+  const [loadingLibraryPlaylists, setLoadingLibraryPlaylists] = useState(false)
   const [consoleMessage, setConsoleMessage] = useState<string | null>(null)
+  const preparedQueueKeyRef = useRef<string | null>(null)
+  const autoLoadLibraryPlaylistsRequestedRef = useRef(false)
+  const getLibraryPlaylists = musicKit.getLibraryPlaylists
+  const prepareQueue = musicKit.prepareQueue
 
   const joinedPlayers = useMemo(() => state.players.filter((player) => player.joined), [state.players])
+  const selectedPlaylistId = state.selectedPlaylistId ?? ''
 
   useEffect(() => saveSessionValue('intro-buzz-console-playlist-search', playlistSearch), [playlistSearch])
-  useEffect(() => saveSessionValue('intro-buzz-console-selected-playlist-id', selectedPlaylistId), [selectedPlaylistId])
   useEffect(() => saveSessionValue('intro-buzz-console-expanded-playlist-ids', [...expandedPlaylistIds]), [expandedPlaylistIds])
   useEffect(() => saveSessionValue('intro-buzz-console-seconds', seconds), [seconds])
 
@@ -315,12 +321,42 @@ function ConsolePage() {
     }
   }
 
-  const loadLibraryPlaylists = async (): Promise<{ id: string; name: string }[]> => {
-    const playlists = await musicKit.getLibraryPlaylists() as { id: string; name: string }[]
-    setLibraryPlaylists(playlists)
-    setSelectedPlaylistId((current) => playlists.some((playlist) => playlist.id === current) ? current : '')
-    return playlists
-  }
+  const loadLibraryPlaylists = useCallback(async (): Promise<{ id: string; name: string }[]> => {
+    setLoadingLibraryPlaylists(true)
+    try {
+      const playlists = await getLibraryPlaylists() as { id: string; name: string }[]
+      setLibraryPlaylists(playlists)
+      return playlists
+    } finally {
+      setLoadingLibraryPlaylists(false)
+    }
+  }, [getLibraryPlaylists])
+
+  useEffect(() => {
+    if (!musicKit.authorized) autoLoadLibraryPlaylistsRequestedRef.current = false
+    if (
+      !musicKit.ready ||
+      !musicKit.authorized ||
+      loadingLibraryPlaylists ||
+      libraryPlaylists.length > 0 ||
+      autoLoadLibraryPlaylistsRequestedRef.current
+    ) return
+    autoLoadLibraryPlaylistsRequestedRef.current = true
+    void loadLibraryPlaylists().catch((error) => {
+      setConsoleMessage(error instanceof Error ? error.message : String(error))
+    })
+  }, [libraryPlaylists.length, loadLibraryPlaylists, loadingLibraryPlaylists, musicKit.authorized, musicKit.ready])
+
+  useEffect(() => {
+    if (!musicKit.ready || !musicKit.authorized || !state.selectedPlaylistId || state.tracks.length === 0) return
+    const queueKey = `${state.selectedPlaylistId}:${state.tracks.map((track) => track.id).join('|')}`
+    if (preparedQueueKeyRef.current === queueKey) return
+    preparedQueueKeyRef.current = queueKey
+    void prepareQueue(state.tracks).catch((error) => {
+      preparedQueueKeyRef.current = null
+      setConsoleMessage(error instanceof Error ? error.message : String(error))
+    })
+  }, [musicKit.authorized, musicKit.ready, prepareQueue, state.selectedPlaylistId, state.tracks])
 
   const handleLogin = () => run(async () => {
     await musicKit.authorize()
@@ -354,10 +390,10 @@ function ConsolePage() {
   }
 
   const selectPlaylist = (playlist: { id: string; name: string }) => run(async () => {
-    setSelectedPlaylistId(playlist.id)
     const tracks = await fetchPlaylistTracks(playlist)
-    await musicKit.prepareQueue(tracks)
-    await consoleAction('console:playlists', { playlists: [playlist.name], tracks })
+    await prepareQueue(tracks)
+    preparedQueueKeyRef.current = `${playlist.id}:${tracks.map((track) => track.id).join('|')}`
+    await consoleAction('console:playlists', { selectedPlaylistId: playlist.id, playlists: [playlist.name], tracks })
     setConsoleMessage(`${playlist.name}: ${tracks.length}曲をMusicKitキューへ読み込みました`)
   })
 
@@ -447,7 +483,7 @@ function ConsolePage() {
           <h2>2. 準備</h2>
           <div className="field-head">
             <span>ライブラリプレイリスト</span>
-            <button className="ghost small" disabled={busy || !musicKit.authorized} onClick={() => run(async () => { await loadLibraryPlaylists() })}>再読み込み</button>
+            <button className="ghost small" disabled={busy || loadingLibraryPlaylists || !musicKit.authorized} onClick={() => run(async () => { await loadLibraryPlaylists() })}>{loadingLibraryPlaylists ? '読み込み中' : '再読み込み'}</button>
           </div>
           <input
             type="search"
@@ -509,7 +545,7 @@ function ConsolePage() {
                   )}
                 </li>
               )
-            }) : <li className="hint">{libraryPlaylists.length ? '一致するプレイリストがありません' : 'ログイン後にライブラリのプレイリストを取得します'}</li>}
+            }) : <li className="hint">{loadingLibraryPlaylists ? 'ライブラリのプレイリストを読み込み中...' : libraryPlaylists.length ? '一致するプレイリストがありません' : 'ログイン後にライブラリのプレイリストを取得します'}</li>}
           </ul>
           <div className="actions">
             <button disabled={busy || state.phase !== 'ready' || !selectedPlaylistId || musicKit.preparing} onClick={handleStart}>ゲーム開始</button>

@@ -43,6 +43,7 @@ type GameState = {
   step: GameStep
   hostLoggedIn: boolean
   playlists: string[]
+  selectedPlaylistId: string | null
   players: Record<string, Player>
   tracks: Track[]
   gameTrackOrder: number[]
@@ -68,6 +69,7 @@ let state: GameState = {
   step: 'idle',
   hostLoggedIn: false,
   playlists: [],
+  selectedPlaylistId: null,
   players: {},
   tracks: [],
   gameTrackOrder: [],
@@ -166,6 +168,7 @@ function loadCurrentTrack() {
 
 type ConsolePlaylistPayload = {
   playlists?: unknown
+  selectedPlaylistId?: unknown
   tracks?: Partial<Track>[]
 }
 
@@ -181,6 +184,9 @@ function consoleLogin() {
 
 function consoleSetPlaylists(payload: ConsolePlaylistPayload = {}) {
   const playlists = Array.isArray(payload.playlists) ? payload.playlists.map(String).filter(Boolean) : []
+  const selectedPlaylistId = typeof payload.selectedPlaylistId === 'string' && payload.selectedPlaylistId.trim()
+    ? payload.selectedPlaylistId.trim()
+    : null
   const tracks = Array.isArray(payload.tracks)
     ? payload.tracks.map((track: Partial<Track>) => ({
       id: String(track.id ?? ''),
@@ -192,6 +198,7 @@ function consoleSetPlaylists(payload: ConsolePlaylistPayload = {}) {
     : []
   update(() => {
     state.playlists = playlists
+    state.selectedPlaylistId = selectedPlaylistId
     state.tracks = tracks.length > 0
       ? tracks
       : playlists.length > 0
@@ -311,6 +318,7 @@ function consoleReset() {
       step: 'idle',
       hostLoggedIn: false,
       playlists: [],
+      selectedPlaylistId: null,
       players: {},
       tracks: [],
       gameTrackOrder: [],
