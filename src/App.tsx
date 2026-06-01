@@ -38,6 +38,8 @@ type GameState = {
   playlists: string[]
   players: Player[]
   tracks: Track[]
+  gameTrackOrder: number[]
+  currentGameTrackOrderIndex: number
   currentTrackIndex: number
   currentTrack: Track | null
   hasPlayedCurrentTrack: boolean
@@ -57,6 +59,8 @@ const initialState: GameState = {
   playlists: [],
   players: [],
   tracks: [],
+  gameTrackOrder: [],
+  currentGameTrackOrderIndex: -1,
   currentTrackIndex: -1,
   currentTrack: null,
   hasPlayedCurrentTrack: false,

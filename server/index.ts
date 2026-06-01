@@ -45,6 +45,8 @@ type GameState = {
   playlists: string[]
   players: Record<string, Player>
   tracks: Track[]
+  gameTrackOrder: number[]
+  currentGameTrackOrderIndex: number
   currentTrackIndex: number
   currentTrack: Track | null
   hasPlayedCurrentTrack: boolean
@@ -68,6 +70,8 @@ let state: GameState = {
   playlists: [],
   players: {},
   tracks: [],
+  gameTrackOrder: [],
+  currentGameTrackOrderIndex: -1,
   currentTrackIndex: -1,
   currentTrack: null,
   hasPlayedCurrentTrack: false,
@@ -125,11 +129,33 @@ function ensurePlayer(actorId: string) {
   return state.players[id]
 }
 
-function loadCurrentTrack() {
+function ensureTracks() {
   if (state.tracks.length === 0) state.tracks = sampleTracks
-  const nextIndex = state.currentTrackIndex + 1 >= state.tracks.length ? 0 : state.currentTrackIndex + 1
-  state.currentTrackIndex = nextIndex
-  state.currentTrack = state.tracks[nextIndex]
+}
+
+function shuffledIndices(length: number) {
+  const indices = Array.from({ length }, (_, index) => index)
+  for (let i = indices.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[indices[i], indices[j]] = [indices[j], indices[i]]
+  }
+  return indices
+}
+
+function resetGameTrackOrder() {
+  ensureTracks()
+  state.gameTrackOrder = shuffledIndices(state.tracks.length)
+  state.currentGameTrackOrderIndex = -1
+}
+
+function loadCurrentTrack() {
+  ensureTracks()
+  if (state.gameTrackOrder.length !== state.tracks.length) resetGameTrackOrder()
+  const nextOrderIndex = state.currentGameTrackOrderIndex + 1 >= state.gameTrackOrder.length ? 0 : state.currentGameTrackOrderIndex + 1
+  const nextTrackIndex = state.gameTrackOrder[nextOrderIndex] ?? 0
+  state.currentGameTrackOrderIndex = nextOrderIndex
+  state.currentTrackIndex = nextTrackIndex
+  state.currentTrack = state.tracks[nextTrackIndex]
   state.hasPlayedCurrentTrack = false
   state.step = 'beforePlayback'
   state.answererId = null
@@ -171,6 +197,11 @@ function consoleSetPlaylists(payload: ConsolePlaylistPayload = {}) {
       : playlists.length > 0
         ? playlists.flatMap((playlist, i) => sampleTracks.map((track) => ({ ...track, id: `${i}-${track.id}`, playlist })))
         : sampleTracks
+    state.gameTrackOrder = []
+    state.currentGameTrackOrderIndex = -1
+    state.currentTrackIndex = -1
+    state.currentTrack = null
+    state.hasPlayedCurrentTrack = false
     state.message = `${state.tracks.length}曲を選択中。開始できます`
   })
   return publicState()
@@ -181,6 +212,7 @@ function consoleStart() {
     state.phase = 'game'
     state.step = 'loading'
     state.currentTrackIndex = -1
+    resetGameTrackOrder()
     state.message = '曲をロードしています'
     loadCurrentTrack()
   })
@@ -262,6 +294,8 @@ function consoleNextGame() {
     state.step = 'idle'
     state.currentTrack = null
     state.currentTrackIndex = -1
+    state.gameTrackOrder = []
+    state.currentGameTrackOrderIndex = -1
     state.hasPlayedCurrentTrack = false
     state.answererId = null
     state.lastResult = null
@@ -279,6 +313,8 @@ function consoleReset() {
       playlists: [],
       players: {},
       tracks: [],
+      gameTrackOrder: [],
+      currentGameTrackOrderIndex: -1,
       currentTrackIndex: -1,
       currentTrack: null,
       hasPlayedCurrentTrack: false,
