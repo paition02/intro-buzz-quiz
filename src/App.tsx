@@ -254,6 +254,11 @@ function ConsolePage() {
   const state = useGameState()
   const musicKit = useMusicKitPlayback()
   const [libraryPlaylists, setLibraryPlaylists] = useState<{ id: string; name: string }[]>([])
+  const [playlistSearch, setPlaylistSearch] = useState('')
+  const [expandedPlaylistIds, setExpandedPlaylistIds] = useState<Set<string>>(() => new Set())
+  const [playlistTracks, setPlaylistTracks] = useState<Record<string, Track[]>>({})
+  const [loadingPlaylistIds, setLoadingPlaylistIds] = useState<Set<string>>(() => new Set())
+  const [playlistErrors, setPlaylistErrors] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
   const [loadingLibraryPlaylists, setLoadingLibraryPlaylists] = useState(false)
   const [consoleMessage, setConsoleMessage] = useState<string | null>(null)
@@ -268,6 +273,12 @@ function ConsolePage() {
   const joinedPlayers = useMemo(() => state.players.filter((player) => player.joined), [state.players])
   const selectedPlaylistId = state.selectedPlaylistId ?? ''
   const seconds = state.playbackSeconds
+
+  const visiblePlaylists = useMemo(() => {
+    const query = playlistSearch.trim().toLowerCase()
+    if (!query) return libraryPlaylists
+    return libraryPlaylists.filter((playlist) => playlist.name.toLowerCase().includes(query))
+  }, [libraryPlaylists, playlistSearch])
 
   useEffect(() => {
     if (!musicKit.ready || !musicKit.authorized || state.hostLoggedIn) return
@@ -315,7 +326,9 @@ function ConsolePage() {
     setLoadingLibraryPlaylists(true)
     try {
       const playlists = await getLibraryPlaylists() as { id: string; name: string }[]
+      const playlistIds = new Set(playlists.map((playlist) => playlist.id))
       setLibraryPlaylists(playlists)
+      setExpandedPlaylistIds((current) => new Set([...current].filter((playlistId) => playlistIds.has(playlistId))))
       return playlists
     } finally {
       setLoadingLibraryPlaylists(false)
@@ -356,7 +369,27 @@ function ConsolePage() {
   })
 
   const fetchPlaylistTracks = async (playlist: { id: string; name: string }) => {
-    return await musicKit.getPlaylistTracks(playlist.id, playlist.name, 'library') as Track[]
+    if (playlistTracks[playlist.id]) return playlistTracks[playlist.id]
+    setLoadingPlaylistIds((current) => new Set(current).add(playlist.id))
+    setPlaylistErrors((current) => {
+      const next = { ...current }
+      delete next[playlist.id]
+      return next
+    })
+    try {
+      const tracks = await musicKit.getPlaylistTracks(playlist.id, playlist.name, 'library') as Track[]
+      setPlaylistTracks((current) => ({ ...current, [playlist.id]: tracks }))
+      return tracks
+    } catch (error) {
+      setPlaylistErrors((current) => ({ ...current, [playlist.id]: error instanceof Error ? error.message : String(error) }))
+      throw error
+    } finally {
+      setLoadingPlaylistIds((current) => {
+        const next = new Set(current)
+        next.delete(playlist.id)
+        return next
+      })
+    }
   }
 
   const selectPlaylist = (playlist: { id: string; name: string }) => run(async () => {
@@ -365,6 +398,17 @@ function ConsolePage() {
     preparedQueueKeyRef.current = `${playlist.id}:${tracks.map((track) => track.id).join('|')}`
     await consoleAction('console:playlists', { selectedPlaylistId: playlist.id, playlists: [playlist.name], tracks })
     setConsoleMessage(`${playlist.name}: ${tracks.length}曲をMusicKitキューへ読み込みました`)
+  })
+
+  const togglePlaylistExpanded = (playlist: { id: string; name: string }) => run(async () => {
+    const willExpand = !expandedPlaylistIds.has(playlist.id)
+    setExpandedPlaylistIds((current) => {
+      const next = new Set(current)
+      if (next.has(playlist.id)) next.delete(playlist.id)
+      else next.add(playlist.id)
+      return next
+    })
+    if (willExpand) await fetchPlaylistTracks(playlist)
   })
 
   const handleStart = () => run(async () => {
@@ -461,9 +505,20 @@ function ConsolePage() {
             <span>ライブラリプレイリスト</span>
             <button className="ghost small" disabled={busy || loadingLibraryPlaylists || !musicKit.authorized} onClick={() => run(async () => { await loadLibraryPlaylists() })}>{loadingLibraryPlaylists ? '読み込み中' : '再読み込み'}</button>
           </div>
+          <input
+            type="search"
+            placeholder="プレイリスト名で検索"
+            value={playlistSearch}
+            onChange={(event) => setPlaylistSearch(event.target.value)}
+            disabled={busy || !musicKit.authorized || libraryPlaylists.length === 0}
+          />
           <ul className="playlist-list">
-            {libraryPlaylists.length ? libraryPlaylists.map((playlist) => {
+            {visiblePlaylists.length ? visiblePlaylists.map((playlist) => {
               const selected = playlist.id === selectedPlaylistId
+              const expanded = expandedPlaylistIds.has(playlist.id)
+              const loading = loadingPlaylistIds.has(playlist.id)
+              const error = playlistErrors[playlist.id]
+              const tracks = playlistTracks[playlist.id]
               return (
                 <li className="playlist-item" key={playlist.id}>
                   <div className={selected ? 'playlist-row selected' : 'playlist-row'}>
@@ -477,10 +532,40 @@ function ConsolePage() {
                       <span className="playlist-check">{selected ? '✓' : ''}</span>
                       <span className="playlist-name">{playlist.name}</span>
                     </button>
+                    <button
+                      type="button"
+                      className={expanded ? 'playlist-expand expanded' : 'playlist-expand'}
+                      disabled={busy || !musicKit.authorized}
+                      onClick={() => togglePlaylistExpanded(playlist)}
+                      aria-label={expanded ? 'プレイリストを閉じる' : 'プレイリストを開く'}
+                    >
+                      <span className="expand-icon" />
+                    </button>
                   </div>
+                  {expanded && (
+                    <div className="playlist-songs">
+                      {loading && <p className="hint">曲を読み込み中...</p>}
+                      {!loading && error && <p className="error">{error}</p>}
+                      {!loading && !error && tracks?.length === 0 && <p className="hint">曲がありません</p>}
+                      {!loading && !error && tracks && tracks.length > 0 && (
+                        <ul className="song-list">
+                          {tracks.map((track, index) => (
+                            <li className="song-row" key={`${track.id}-${index}`}>
+                              <span className="song-index">{index + 1}</span>
+                              {track.artworkUrl && <img className="song-artwork" src={track.artworkUrl} alt="" />}
+                              <span className="song-meta">
+                                <span className="song-title">{track.title}</span>
+                                <span className="song-artist">{track.artist}</span>
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
                 </li>
               )
-            }) : <li className="hint">{loadingLibraryPlaylists ? 'ライブラリのプレイリストを読み込み中...' : 'ログイン後にライブラリのプレイリストを取得します'}</li>}
+            }) : <li className="hint">{loadingLibraryPlaylists ? 'ライブラリのプレイリストを読み込み中...' : libraryPlaylists.length ? '一致するプレイリストがありません' : 'ログイン後にライブラリのプレイリストを取得します'}</li>}
           </ul>
           <div className="actions">
             <button disabled={busy || state.phase !== 'ready' || !selectedPlaylistId || musicKit.preparing} onClick={handleStart}>ゲーム開始</button>

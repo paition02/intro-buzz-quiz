@@ -611,6 +611,47 @@ button.small {
   background: rgba(255, 255, 255, 0.04);
 }
 
+.playlist-expand {
+  width: 48px;
+  min-width: 48px;
+  border-radius: 0;
+  background: transparent;
+  color: #f7f2ea;
+  box-shadow: none;
+  border: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+  display: grid;
+  place-items: center;
+}
+
+.expand-icon {
+  width: 12px;
+  height: 12px;
+  border-right: 4px solid currentColor;
+  border-bottom: 4px solid currentColor;
+  transform: rotate(-45deg);
+  transform-origin: center;
+}
+
+.playlist-expand.expanded {
+  background: rgba(255, 255, 255, 0.06);
+  color: #ffb14e;
+}
+
+.playlist-expand.expanded .expand-icon {
+  transform: rotate(45deg);
+}
+
+.playlist-songs {
+  margin-top: 8px;
+  padding: 10px;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  max-height: 300px;
+  overflow-y: auto;
+}
+
 .song-list {
   list-style: none;
   margin: 0;
