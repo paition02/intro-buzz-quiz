@@ -26,18 +26,20 @@ Feature: Host console state transitions
     When the host sends tracks with missing id or title
     Then the track count is 1
 
-  Scenario Outline: Playback seconds are normalized
+  Scenario Outline: Playback seconds accepts only the allowed range
     Given a fresh server state
     When the host sets playback seconds to <input>
     Then playback seconds is <expected>
 
     Examples:
       | input | expected |
+      | 0.1   | 0.1      |
       | 2.5   | 2.5      |
+      | 30    | 30       |
       | 0     | 0.5      |
       | -1    | 0.5      |
-      | 0.01  | 0.1      |
-      | 99    | 30       |
+      | 0.01  | 0.5      |
+      | 99    | 0.5      |
 
   Scenario: Starting without tracks does not enter game
     Given the host is logged in

@@ -167,7 +167,7 @@ type ConsolePlaylistPayload = {
 
 function normalizePlaybackSeconds(seconds: unknown) {
   const value = Number(seconds)
-  return Number.isFinite(value) && value > 0 ? Math.min(30, Math.max(0.1, value)) : null
+  return Number.isFinite(value) && value >= 0.1 && value <= 30 ? value : null
 }
 
 function consoleLogin() {
@@ -272,7 +272,8 @@ function consolePlay(payload: { seconds?: unknown } = {}) {
 }
 
 function consoleJudge(payload: { result?: unknown } = {}) {
-  const result = payload.result === 'correct' ? 'correct' : 'wrong'
+  if (payload.result !== 'correct' && payload.result !== 'wrong') return publicState()
+  const result = payload.result
   update(() => {
     if (state.phase !== 'game' || state.step !== 'answering') return
     state.lastResult = result

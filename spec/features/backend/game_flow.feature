@@ -30,11 +30,12 @@ Feature: Game flow
     Then the step is "beforePlayback"
     And there is no answerer
 
-  Scenario: Unknown judge result is treated as wrong
+  Scenario: Unknown judge result is ignored
     Given player "player-1" has answer rights
     When the host judges the answer as "unexpected"
-    Then the step is "wrong"
-    And last result is "wrong"
+    Then the step is "answering"
+    And there is no last result
+    And player "player-1" score is 0
 
   Scenario: Give up reveals from beforePlayback
     Given a game is before playback with joined players "player-1"
