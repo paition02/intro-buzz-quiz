@@ -442,7 +442,6 @@ app.get('/action', (_req, res) => {
     }
     h1 { margin: 0; font-size: clamp(2.2rem, 12vw, 5.8rem); line-height: 0.95; letter-spacing: -0.07em; }
     p { margin: 0; color: #d4c8ce; font-weight: 800; line-height: 1.5; }
-    .actor { max-width: 100%; color: #a99ca4; font-size: 0.78rem; overflow-wrap: anywhere; }
     .pressed .circle { animation: pop 0.62s ease-out both; }
     .pressed { background: rgba(255, 177, 78, 0.12); }
     .idle .circle { filter: saturate(1); }
@@ -462,7 +461,6 @@ app.get('/action', (_req, res) => {
       <span class="circle" aria-hidden="true">!</span>
       <h1 id="title">押す</h1>
       <p id="status">スマホ全体が早押しボタンです</p>
-      <span class="actor" id="actor"></span>
     </span>
   </button>
   <script>
@@ -470,7 +468,6 @@ app.get('/action', (_req, res) => {
     const action = document.querySelector('#action')
     const title = document.querySelector('#title')
     const status = document.querySelector('#status')
-    const actor = document.querySelector('#actor')
     const createActorId = () => crypto.randomUUID()
     const getActorId = () => {
       const stored = sessionStorage.getItem(storageKey)
@@ -481,7 +478,6 @@ app.get('/action', (_req, res) => {
     }
 
     const actorId = getActorId()
-    actor.textContent = actorId
     let audioContext = null
 
     const setState = (className, titleText, statusText) => {
