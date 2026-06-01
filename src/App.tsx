@@ -283,7 +283,6 @@ function ConsolePage() {
   const preparedQueueKeyRef = useRef<string | null>(null)
   const autoLoadLibraryPlaylistsRequestedRef = useRef(false)
   const wasRevealStepRef = useRef(false)
-  const revealPlaybackTokenRef = useRef(0)
   const getLibraryPlaylists = musicKit.getLibraryPlaylists
   const prepareQueue = musicKit.prepareQueue
 
@@ -310,7 +309,6 @@ function ConsolePage() {
 
   useEffect(() => {
     if (state.step !== 'reveal' || state.currentTrackIndex < 0) {
-      revealPlaybackTokenRef.current += 1
       if (!wasRevealStepRef.current) return
       wasRevealStepRef.current = false
       void musicKit.stop().catch((error) => {
@@ -320,13 +318,8 @@ function ConsolePage() {
     }
 
     wasRevealStepRef.current = true
-    const token = ++revealPlaybackTokenRef.current
-    void (async () => {
-      await musicKit.loadTrack(state.currentTrackIndex)
-      if (token !== revealPlaybackTokenRef.current) return
-      await musicKit.playFullLoop()
-    })().catch((error) => {
-      if (token === revealPlaybackTokenRef.current) setConsoleMessage(error instanceof Error ? error.message : String(error))
+    void musicKit.playFullLoopTrack(state.currentTrackIndex).catch((error) => {
+      setConsoleMessage(error instanceof Error ? error.message : String(error))
     })
   }, [musicKit, state.currentTrackIndex, state.step])
 
@@ -470,20 +463,17 @@ function ConsolePage() {
   })
 
   const handleNextRound = () => run(async () => {
-    revealPlaybackTokenRef.current += 1
     await musicKit.stop()
     const nextState = await consoleAction('console:next-round')
     if (nextState.currentTrackIndex >= 0) await musicKit.loadTrack(nextState.currentTrackIndex)
   })
 
   const handleShowResults = () => run(async () => {
-    revealPlaybackTokenRef.current += 1
     await musicKit.stop()
     await consoleAction('console:show-results')
   })
 
   const handleNextGame = () => run(async () => {
-    revealPlaybackTokenRef.current += 1
     await musicKit.stop()
     await consoleAction('console:next-game')
   })
@@ -898,7 +888,7 @@ function GameboardPage() {
   } else if (state.step === 'playing') {
     content = (
       <>
-        <div className="gameboard-symbol waiting-symbol">♪</div>
+        <div className="pulse">♪</div>
         {players}
       </>
     )

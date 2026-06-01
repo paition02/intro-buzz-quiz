@@ -82,6 +82,7 @@ export function useMusicKitPlayback() {
   const stopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const tracksRef = useRef<MusicTrack[]>([])
   const loadPromiseRef = useRef<Promise<void>>(Promise.resolve())
+  const playbackGenerationRef = useRef(0)
 
   useEffect(() => {
     let cleanup: (() => void) | undefined
@@ -180,6 +181,7 @@ export function useMusicKitPlayback() {
   }, [])
 
   const loadTrack = useCallback((index: number) => {
+    playbackGenerationRef.current += 1
     const promise = (async () => {
       const mk = await getMusicKit()
       await mk.changeToMediaAtIndex(index)
@@ -191,33 +193,46 @@ export function useMusicKitPlayback() {
   }, [])
 
   const playIntro = useCallback(async (seconds: number) => {
+    const generation = ++playbackGenerationRef.current
     const mk = await getMusicKit()
     if (stopTimerRef.current) clearTimeout(stopTimerRef.current)
     await loadPromiseRef.current
+    if (generation !== playbackGenerationRef.current) return
     if (mk.isPlaying) mk.pause()
     await mk.seekToTime(0)
+    if (generation !== playbackGenerationRef.current) return
     await mk.play()
     setPlaying(true)
     stopTimerRef.current = setTimeout(() => {
+      if (generation !== playbackGenerationRef.current) return
       if (mk.isPlaying) mk.pause()
       void mk.seekToTime(0)
       setPlaying(false)
     }, seconds * 1000)
   }, [])
 
-  const playFullLoop = useCallback(async () => {
+  const playFullLoopTrack = useCallback(async (index: number) => {
+    const generation = ++playbackGenerationRef.current
     const mk = await getMusicKit()
     if (stopTimerRef.current) clearTimeout(stopTimerRef.current)
-    await loadPromiseRef.current
+    await mk.changeToMediaAtIndex(index)
+    if (generation !== playbackGenerationRef.current) return
     if (mk.isPlaying) mk.pause()
     await mk.seekToTime(0)
+    if (generation !== playbackGenerationRef.current) return
     mk.repeatMode = MusicKit.PlayerRepeatMode.one
     await mk.play()
+    if (generation !== playbackGenerationRef.current) {
+      if (mk.isPlaying) mk.pause()
+      return
+    }
     setPlaying(true)
   }, [])
 
   const stop = useCallback(async () => {
+    playbackGenerationRef.current += 1
     if (stopTimerRef.current) clearTimeout(stopTimerRef.current)
+    stopTimerRef.current = null
     const mk = await getMusicKit()
     if (mk.isPlaying) mk.pause()
     await mk.seekToTime(0)
@@ -238,7 +253,7 @@ export function useMusicKitPlayback() {
     prepareQueue,
     loadTrack,
     playIntro,
-    playFullLoop,
+    playFullLoopTrack,
     stop,
   }
 }
