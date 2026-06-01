@@ -434,9 +434,9 @@ app.get('/action', (_req, res) => {
       border-radius: 999px;
       display: grid;
       place-items: center;
-      background: linear-gradient(135deg, #ff4e77, #ffb14e);
-      color: #21131a;
-      box-shadow: 0 24px 80px rgba(255, 78, 119, 0.36), inset 0 0 0 12px rgba(255,255,255,0.22);
+      background: radial-gradient(circle at 35% 25%, rgba(255,255,255,0.42), transparent 28%), var(--player-color, #ff4e77);
+      color: var(--player-color-text, #f7f2ea);
+      box-shadow: 0 24px 80px var(--player-color-glow, rgba(255, 78, 119, 0.36)), inset 0 0 0 12px rgba(255,255,255,0.22);
       font-size: clamp(4rem, 24vw, 8rem);
       font-weight: 1000;
     }
@@ -448,9 +448,9 @@ app.get('/action', (_req, res) => {
     .muted .circle { filter: saturate(0.72) brightness(0.82); }
     .error .circle { background: linear-gradient(135deg, #ff8aa3, #7c2438); color: #fff; }
     @keyframes pop {
-      0% { transform: scale(1); box-shadow: 0 24px 80px rgba(255, 78, 119, 0.36), inset 0 0 0 12px rgba(255,255,255,0.22); }
-      22% { transform: scale(1.12); box-shadow: 0 0 0 36px rgba(255, 177, 78, 0.18), 0 30px 90px rgba(255, 177, 78, 0.52), inset 0 0 0 12px rgba(255,255,255,0.28); }
-      100% { transform: scale(1); box-shadow: 0 24px 80px rgba(255, 78, 119, 0.36), inset 0 0 0 12px rgba(255,255,255,0.22); }
+      0% { transform: scale(1); box-shadow: 0 24px 80px var(--player-color-glow, rgba(255, 78, 119, 0.36)), inset 0 0 0 12px rgba(255,255,255,0.22); }
+      22% { transform: scale(1.12); box-shadow: 0 0 0 36px var(--player-color-soft, rgba(255, 177, 78, 0.18)), 0 30px 90px var(--player-color-glow, rgba(255, 177, 78, 0.52)), inset 0 0 0 12px rgba(255,255,255,0.28); }
+      100% { transform: scale(1); box-shadow: 0 24px 80px var(--player-color-glow, rgba(255, 78, 119, 0.36)), inset 0 0 0 12px rgba(255,255,255,0.22); }
     }
   </style>
 </head>
@@ -479,6 +479,20 @@ app.get('/action', (_req, res) => {
 
     const actorId = getActorId()
     let audioContext = null
+
+    const hashString = (value) => {
+      let hash = 0
+      for (let i = 0; i < value.length; i += 1) {
+        hash = Math.imul(31, hash) + value.charCodeAt(i) | 0
+      }
+      return hash >>> 0
+    }
+
+    const hue = hashString(actorId) % 360
+    document.documentElement.style.setProperty('--player-color', 'hsl(' + hue + ' 76% 42%)')
+    document.documentElement.style.setProperty('--player-color-text', 'hsl(' + hue + ' 90% 92%)')
+    document.documentElement.style.setProperty('--player-color-soft', 'hsl(' + hue + ' 76% 42% / 0.2)')
+    document.documentElement.style.setProperty('--player-color-glow', 'hsl(' + hue + ' 76% 52% / 0.46)')
 
     const setState = (className, titleText, statusText) => {
       action.className = className
