@@ -283,6 +283,7 @@ function ConsolePage() {
   const preparedQueueKeyRef = useRef<string | null>(null)
   const autoLoadLibraryPlaylistsRequestedRef = useRef(false)
   const wasRevealStepRef = useRef(false)
+  const revealPlaybackTokenRef = useRef(0)
   const getLibraryPlaylists = musicKit.getLibraryPlaylists
   const prepareQueue = musicKit.prepareQueue
 
@@ -308,26 +309,26 @@ function ConsolePage() {
   }, [state.step, musicKit])
 
   useEffect(() => {
-    if (state.step !== 'reveal' || state.currentTrackIndex < 0) return
-    void (async () => {
-      await musicKit.loadTrack(state.currentTrackIndex)
-      await musicKit.playFullLoop()
-    })().catch((error) => {
-      setConsoleMessage(error instanceof Error ? error.message : String(error))
-    })
-  }, [musicKit, state.currentTrackIndex, state.step])
-
-  useEffect(() => {
-    if (state.step === 'reveal') {
-      wasRevealStepRef.current = true
+    if (state.step !== 'reveal' || state.currentTrackIndex < 0) {
+      revealPlaybackTokenRef.current += 1
+      if (!wasRevealStepRef.current) return
+      wasRevealStepRef.current = false
+      void musicKit.stop().catch((error) => {
+        setConsoleMessage(error instanceof Error ? error.message : String(error))
+      })
       return
     }
-    if (!wasRevealStepRef.current) return
-    wasRevealStepRef.current = false
-    void musicKit.stop().catch((error) => {
-      setConsoleMessage(error instanceof Error ? error.message : String(error))
+
+    wasRevealStepRef.current = true
+    const token = ++revealPlaybackTokenRef.current
+    void (async () => {
+      await musicKit.loadTrack(state.currentTrackIndex)
+      if (token !== revealPlaybackTokenRef.current) return
+      await musicKit.playFullLoop()
+    })().catch((error) => {
+      if (token === revealPlaybackTokenRef.current) setConsoleMessage(error instanceof Error ? error.message : String(error))
     })
-  }, [musicKit, state.step])
+  }, [musicKit, state.currentTrackIndex, state.step])
 
   const visiblePlaylists = useMemo(() => {
     const query = playlistSearch.trim().toLowerCase()
@@ -469,17 +470,20 @@ function ConsolePage() {
   })
 
   const handleNextRound = () => run(async () => {
+    revealPlaybackTokenRef.current += 1
     await musicKit.stop()
     const nextState = await consoleAction('console:next-round')
     if (nextState.currentTrackIndex >= 0) await musicKit.loadTrack(nextState.currentTrackIndex)
   })
 
   const handleShowResults = () => run(async () => {
+    revealPlaybackTokenRef.current += 1
     await musicKit.stop()
     await consoleAction('console:show-results')
   })
 
   const handleNextGame = () => run(async () => {
+    revealPlaybackTokenRef.current += 1
     await musicKit.stop()
     await consoleAction('console:next-game')
   })
@@ -894,7 +898,7 @@ function GameboardPage() {
   } else if (state.step === 'playing') {
     content = (
       <>
-        <div className="pulse">♪</div>
+        <div className="gameboard-symbol waiting-symbol">♪</div>
         {players}
       </>
     )

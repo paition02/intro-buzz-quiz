@@ -332,10 +332,12 @@ textarea { min-height: 110px; resize: vertical; }
 
 .ready-board .ready-title {
   margin-bottom: 0;
-  font-size: clamp(2.4rem, 5.8vw, 5.6rem);
+  font-size: clamp(1.4rem, 6.2vw, 5.6rem);
+  white-space: nowrap;
 }
 
 .ready-track-lanes {
+  width: 100%;
   min-height: 0;
   display: grid;
   grid-template-rows: minmax(0, 1fr);
@@ -343,6 +345,7 @@ textarea { min-height: 110px; resize: vertical; }
 
 .track-lanes {
   --lane-count: 1;
+  width: 100%;
   min-height: 0;
   display: grid;
   grid-template-rows: repeat(var(--lane-count), minmax(0, 1fr));
@@ -453,6 +456,7 @@ textarea { min-height: 110px; resize: vertical; }
 }
 
 .players {
+  width: 100%;
   margin-top: clamp(18px, 3vw, 30px);
   padding-top: clamp(14px, 2vw, 22px);
   border-top: 1px solid rgba(255, 255, 255, 0.12);
