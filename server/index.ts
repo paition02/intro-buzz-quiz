@@ -334,6 +334,7 @@ function consoleNextGame() {
     state.hasPlayedCurrentTrack = false
     state.answererId = null
     state.lastResult = null
+    state.players = {}
     state.message = '次のゲームの準備中です'
   })
   return publicState()
