@@ -162,7 +162,6 @@ function loadCurrentTrack() {
 type ConsolePlaylistPayload = {
   playlists?: unknown
   selectedPlaylistIds?: unknown
-  selectedPlaylistId?: unknown
   tracks?: Partial<Track>[]
 }
 
@@ -185,9 +184,7 @@ function consoleSetPlaylists(payload: ConsolePlaylistPayload = {}) {
   const playlists = Array.isArray(payload.playlists) ? payload.playlists.map(String).filter(Boolean) : []
   const selectedPlaylistIds = Array.isArray(payload.selectedPlaylistIds)
     ? payload.selectedPlaylistIds.map(String).map((id) => id.trim()).filter(Boolean)
-    : typeof payload.selectedPlaylistId === 'string' && payload.selectedPlaylistId.trim()
-      ? [payload.selectedPlaylistId.trim()]
-      : []
+    : []
   const tracks = Array.isArray(payload.tracks)
     ? payload.tracks.map((track: Partial<Track>) => ({
       id: String(track.id ?? ''),

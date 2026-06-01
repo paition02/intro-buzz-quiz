@@ -21,12 +21,6 @@ Feature: Host console state transitions
     And the track count is 5
     And the current track is cleared
 
-  Scenario: Legacy single playlist id payload is accepted
-    Given the host is logged in
-    When the host selects legacy playlist "playlist-a" named "Playlist A" with 2 tracks
-    Then selected playlist ids are "playlist-a"
-    And the track count is 2
-
   Scenario: Invalid tracks are filtered
     Given the host is logged in
     When the host sends tracks with missing id or title

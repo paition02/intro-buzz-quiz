@@ -141,14 +141,6 @@ def when_host_selects_playlists(ctx, socket_client, datatable):
     )
 
 
-@when(parsers.parse('the host selects legacy playlist "{playlist_id}" named "{playlist_name}" with {count:d} tracks'))
-def when_host_selects_legacy_playlist(ctx, socket_client, playlist_id: str, playlist_name: str, count: int):
-    ctx.tracks = make_tracks(count, playlist=playlist_name)
-    ctx.state = socket_client.emit(
-        "console:playlists",
-        {"playlists": [playlist_name], "selectedPlaylistId": playlist_id, "tracks": ctx.tracks},
-    )
-
 
 @when("the host sends tracks with missing id or title")
 def when_host_sends_invalid_tracks(ctx, socket_client):
