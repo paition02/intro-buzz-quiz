@@ -735,17 +735,6 @@ function measureTrackChipWidth(track: Track) {
   return Math.max(170, Math.ceil(artworkWidth + contentGap + horizontalPadding + textWidth))
 }
 
-function findTrackIndexAtOffset(prefixWidths: number[], offset: number) {
-  let low = 0
-  let high = prefixWidths.length - 1
-  while (low < high) {
-    const middle = Math.floor((low + high + 1) / 2)
-    if (prefixWidths[middle] <= offset) low = middle
-    else high = middle - 1
-  }
-  return low
-}
-
 function TrackLane({ tracks, laneIndex, direction }: {
   tracks: Track[]
   laneIndex: number
@@ -758,13 +747,9 @@ function TrackLane({ tracks, laneIndex, direction }: {
   const [startIndex, setStartIndex] = useState(0)
   const chipGap = 12
   const speed = 34 + (laneIndex % 3) * 7
-  const chipWidths = useMemo(() => tracks.map(measureTrackChipWidth), [tracks])
-  const prefixWidths = useMemo(() => {
-    const widths = [0]
-    chipWidths.forEach((width) => widths.push(widths[widths.length - 1] + width + chipGap))
-    return widths
-  }, [chipWidths])
-  const cycleWidth = Math.max(1, prefixWidths[prefixWidths.length - 1] ?? 1)
+  const chipWidth = useMemo(() => Math.max(...tracks.map(measureTrackChipWidth)), [tracks])
+  const slotWidth = chipWidth + chipGap
+  const cycleWidth = Math.max(1, tracks.length * slotWidth)
 
   useEffect(() => {
     const lane = laneRef.current
@@ -783,7 +768,7 @@ function TrackLane({ tracks, laneIndex, direction }: {
       startTime ??= time
       const offset = ((time - startTime) / 1000 * speed) % cycleWidth
       const logicalOffset = direction === 'left' ? offset : (cycleWidth - offset) % cycleWidth
-      const nextStartIndex = findTrackIndexAtOffset(prefixWidths, logicalOffset)
+      const nextStartIndex = Math.floor(logicalOffset / slotWidth)
       if (startIndexRef.current !== nextStartIndex) {
         startIndexRef.current = nextStartIndex
         setStartIndex(nextStartIndex)
@@ -791,23 +776,22 @@ function TrackLane({ tracks, laneIndex, direction }: {
 
       const viewport = viewportRef.current
       if (viewport) {
-        const localOffset = logicalOffset - prefixWidths[nextStartIndex]
+        const localOffset = logicalOffset - nextStartIndex * slotWidth
         viewport.style.transform = `translate3d(${-localOffset}px, 0, 0)`
       }
       frameId = window.requestAnimationFrame(tick)
     }
     frameId = window.requestAnimationFrame(tick)
     return () => window.cancelAnimationFrame(frameId)
-  }, [cycleWidth, direction, prefixWidths, speed])
+  }, [cycleWidth, direction, slotWidth, speed])
 
   const visibleItems: { track: Track; x: number; virtualIndex: number; width: number }[] = []
   let cursor = 0
   let index = startIndex
   while (visibleItems.length < tracks.length + 1 && cursor < laneWidth + chipGap) {
     const trackIndex = index % tracks.length
-    const width = chipWidths[trackIndex]
-    visibleItems.push({ track: tracks[trackIndex], x: cursor, virtualIndex: index, width })
-    cursor += width + chipGap
+    visibleItems.push({ track: tracks[trackIndex], x: cursor, virtualIndex: index, width: chipWidth })
+    cursor += slotWidth
     index += 1
   }
 
