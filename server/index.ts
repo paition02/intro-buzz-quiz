@@ -405,6 +405,7 @@ app.get('/action', (_req, res) => {
     body {
       min-height: 100vh;
       min-height: 100svh;
+      overflow: hidden;
       background:
         radial-gradient(circle at 20% 10%, rgba(255, 78, 119, 0.28), transparent 28rem),
         radial-gradient(circle at 80% 20%, rgba(255, 177, 78, 0.2), transparent 26rem),
@@ -415,7 +416,7 @@ app.get('/action', (_req, res) => {
       min-height: 100vh;
       min-height: 100svh;
       border: 0;
-      padding: max(28px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(28px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
+      padding: max(18px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
       display: grid;
       place-items: center;
       background: transparent;
@@ -425,10 +426,10 @@ app.get('/action', (_req, res) => {
       transition: transform 0.08s ease, filter 0.16s ease, background 0.16s ease;
     }
     button:disabled { cursor: wait; }
-    .content { display: grid; justify-items: center; gap: 18px; text-align: center; }
+    .content { display: grid; justify-items: center; gap: clamp(10px, 2.6svh, 18px); text-align: center; max-width: min(92vw, 560px); }
     .eyebrow { color: #ffb14e; text-transform: uppercase; letter-spacing: 0.16em; font-size: 0.78rem; font-weight: 1000; }
     .circle {
-      width: min(72vw, 320px);
+      width: min(68vw, 42svh, 320px);
       aspect-ratio: 1;
       border-radius: 999px;
       display: grid;
@@ -441,7 +442,7 @@ app.get('/action', (_req, res) => {
     }
     h1 { margin: 0; font-size: clamp(2.2rem, 12vw, 5.8rem); line-height: 0.95; letter-spacing: -0.07em; }
     p { margin: 0; color: #d4c8ce; font-weight: 800; line-height: 1.5; }
-    .actor { color: #a99ca4; font-size: 0.82rem; overflow-wrap: anywhere; }
+    .actor { max-width: 100%; color: #a99ca4; font-size: 0.78rem; overflow-wrap: anywhere; }
     .pressed .circle { animation: pop 0.62s ease-out both; }
     .pressed { background: rgba(255, 177, 78, 0.12); }
     .idle .circle { filter: saturate(1); }
