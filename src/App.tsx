@@ -40,6 +40,7 @@ type GameState = {
   tracks: Track[]
   currentTrackIndex: number
   currentTrack: Track | null
+  hasPlayedCurrentTrack: boolean
   playbackSeconds: number
   answererId: string | null
   lastResult: 'correct' | 'wrong' | null
@@ -56,6 +57,7 @@ const initialState: GameState = {
   tracks: [],
   currentTrackIndex: -1,
   currentTrack: null,
+  hasPlayedCurrentTrack: false,
   playbackSeconds: 3,
   answererId: null,
   lastResult: null,

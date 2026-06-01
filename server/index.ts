@@ -47,6 +47,7 @@ type GameState = {
   tracks: Track[]
   currentTrackIndex: number
   currentTrack: Track | null
+  hasPlayedCurrentTrack: boolean
   playbackSeconds: number
   answererId: string | null
   lastResult: 'correct' | 'wrong' | null
@@ -69,6 +70,7 @@ let state: GameState = {
   tracks: [],
   currentTrackIndex: -1,
   currentTrack: null,
+  hasPlayedCurrentTrack: false,
   playbackSeconds: 3,
   answererId: null,
   lastResult: null,
@@ -128,6 +130,7 @@ function loadCurrentTrack() {
   const nextIndex = state.currentTrackIndex + 1 >= state.tracks.length ? 0 : state.currentTrackIndex + 1
   state.currentTrackIndex = nextIndex
   state.currentTrack = state.tracks[nextIndex]
+  state.hasPlayedCurrentTrack = false
   state.step = 'beforePlayback'
   state.answererId = null
   state.lastResult = null
@@ -195,6 +198,7 @@ function consolePlay(payload: { seconds?: unknown } = {}) {
       playbackDurationMs = Math.ceil(state.playbackSeconds * 1000)
       state.step = 'playing'
       state.answererId = null
+      state.hasPlayedCurrentTrack = true
       state.message = `${state.playbackSeconds}秒再生中。早押し待ちです`
     }
   })
@@ -258,6 +262,7 @@ function consoleNextGame() {
     state.step = 'idle'
     state.currentTrack = null
     state.currentTrackIndex = -1
+    state.hasPlayedCurrentTrack = false
     state.answererId = null
     state.lastResult = null
     state.message = '次のゲームの準備中です'
@@ -276,6 +281,7 @@ function consoleReset() {
       tracks: [],
       currentTrackIndex: -1,
       currentTrack: null,
+      hasPlayedCurrentTrack: false,
       playbackSeconds: 3,
       answererId: null,
       lastResult: null,
@@ -358,7 +364,9 @@ app.post('/api/act/:actorId', (req, res) => {
       return
     }
 
-    if (state.phase === 'game' && state.step === 'playing') {
+    const canAnswer = state.step === 'playing' || (state.step === 'beforePlayback' && state.hasPlayedCurrentTrack)
+
+    if (state.phase === 'game' && canAnswer) {
       if (!player.joined) {
         status = 409
         return
