@@ -285,9 +285,9 @@ textarea { min-height: 110px; resize: vertical; }
   transition: background 0.3s ease;
 }
 
-.gameboard.playing { background: radial-gradient(circle, rgba(255, 177, 78, 0.24), transparent 42%), #16131d; }
-.gameboard.correct { background: radial-gradient(circle, rgba(89, 255, 180, 0.24), transparent 42%), #101b17; }
-.gameboard.wrong { background: radial-gradient(circle, rgba(255, 78, 119, 0.24), transparent 42%), #1d1118; }
+.gameboard.playing { background: #16131d; }
+.gameboard.correct { background: #101b17; }
+.gameboard.wrong { background: #1d1118; }
 
 .board-card {
   width: min(1080px, 100%);
@@ -310,11 +310,28 @@ textarea { min-height: 110px; resize: vertical; }
 }
 
 .gameboard-stage {
+  position: relative;
+  isolation: isolate;
   width: 100%;
   min-height: 0;
   display: grid;
   place-items: center;
 }
+
+.glow-stage::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  width: min(62vw, 560px);
+  aspect-ratio: 1;
+  border-radius: 999px;
+  background: radial-gradient(circle, var(--stage-glow-color), transparent 64%);
+  pointer-events: none;
+}
+
+.playing-glow { --stage-glow-color: rgba(255, 177, 78, 0.24); }
+.success-glow { --stage-glow-color: rgba(89, 255, 180, 0.24); }
+.miss-glow { --stage-glow-color: rgba(255, 78, 119, 0.24); }
 
 .answering-stage {
   align-content: center;
