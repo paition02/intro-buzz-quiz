@@ -4,7 +4,7 @@ import { Server as Engine } from '@socket.io/bun-engine'
 import index from '../index.html'
 
 // Bun は cwd の .env を自動で読むので dotenv は不要。
-const isProduction = process.env.NODE_ENV === 'production'
+const isDevelopment = process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'test'
 
 type Phase = 'initialization' | 'ready' | 'game'
 type GameStep =
@@ -479,7 +479,7 @@ const port = Number(process.env.PORT ?? 5173)
 const server = Bun.serve({
   port,
   hostname: '0.0.0.0',
-  development: !isProduction,
+  development: isDevelopment,
   idleTimeout,
   maxRequestBodySize,
   routes: {

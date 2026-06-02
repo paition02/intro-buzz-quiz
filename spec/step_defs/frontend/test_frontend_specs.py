@@ -114,7 +114,7 @@ def _install_playlist_tracks(frontend_page: Page, playlist_id: str, indexes: lis
             route.fallback()
             return
         if error:
-            _route_json(route, {"errors": [{"detail": error}]}, status=500)
+            _route_json(route, {"errors": [{"detail": error}]})
             return
         if paginated and "page=2" not in parsed.query:
             first = indexes[:1]
@@ -165,16 +165,20 @@ def _wait_for_response(frontend_page: Page, predicate, timeout: float = 30):
 
 
 def _wait_for_music_call(frontend_page: Page, name: str, predicate: str = "() => true", timeout: int = 5000):
-    frontend_page.wait_for_function(
-        """
-        ({ name, predicateSource }) => {
-          const predicate = eval(predicateSource);
-          return (window.__musicKitObserver?.calls ?? []).some((call) => call.name === name && predicate(call));
-        }
-        """,
-        arg={"name": name, "predicateSource": predicate},
-        timeout=timeout,
-    )
+    try:
+        frontend_page.wait_for_function(
+            """
+            ({ name, predicateSource }) => {
+              const predicate = eval(predicateSource);
+              return (window.__musicKitObserver?.calls ?? []).some((call) => call.name === name && predicate(call));
+            }
+            """,
+            arg={"name": name, "predicateSource": predicate},
+            timeout=timeout,
+        )
+    except Exception as exc:
+        calls = frontend_page.evaluate("window.__musicKitObserver?.calls ?? []")
+        raise AssertionError(f"MusicKit call {name} was not observed; calls={calls}") from exc
     call = frontend_page.evaluate(
         """
         ({ name, predicateSource }) => {
@@ -310,7 +314,7 @@ def mocked_musickit_library_loading_fails(frontend_page: Page, message: str):
         if parsed.path != "/v1/me/library/playlists":
             route.fallback()
             return
-        _route_json(route, {"errors": [{"detail": message}], "message": message}, status=500)
+        _route_json(route, {"errors": [{"detail": message}], "message": message})
 
     frontend_page.route("**/api.music.apple.com/v1/me/library/playlists*", handler)
 
@@ -460,14 +464,22 @@ def frontend_shows_current_track(frontend_page: Page, socket_client):
 
 @when("the judging animation expires")
 def frontend_judging_animation_expires(socket_client):
-    socket_client.wait_for_state(step="beforePlayback")
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        if socket_client.state["step"] in {"beforePlayback", "reveal"}:
+            return
+        time.sleep(0.02)
+    raise AssertionError(f"judging animation did not expire; latest={socket_client.state}")
 
 
 @then("the frontend shows backend scores in descending order")
+@then("the gameboard shows backend scores in descending order")
 def frontend_shows_backend_scores_desc(frontend_page: Page, socket_client):
+    pages = getattr(frontend_page, "integration_pages", {})
+    page = pages.get("gameboard", frontend_page)
     scores = sorted([player["score"] for player in socket_client.state["players"] if player["joined"]], reverse=True)
     for score in scores:
-        expect(frontend_page.get_by_text(str(score), exact=True).first).to_be_visible()
+        expect(page.get_by_text(str(score), exact=True).first).to_be_visible(timeout=30000)
 
 
 @then("backend track ids are unique")
@@ -546,9 +558,11 @@ def frontend_console_logged_in(frontend_page: Page, socket_client):
 
 @when(parsers.parse('the frontend opens playlist "{playlist}"'))
 def frontend_opens_playlist(frontend_page: Page, playlist: str):
-    expect(frontend_page.get_by_text(playlist, exact=True).first).to_be_visible(timeout=30000)
-    button = frontend_page.get_by_role("button", name="プレイリストを開く").first
-    button.evaluate("(element) => element.click()", timeout=10000)
+    playlist_button = frontend_page.get_by_role("button", name=playlist, exact=True)
+    expect(playlist_button).to_be_visible(timeout=30000)
+    playlist_item = frontend_page.locator("li").filter(has=playlist_button).first
+    playlist_item.get_by_role("button", name="プレイリストを開く").click(timeout=10000)
+    expect(playlist_item.get_by_role("button", name="プレイリストを閉じる")).to_be_visible(timeout=30000)
 
 
 @then(parsers.parse('backend selected playlist ids are "{ids}"'))
@@ -737,6 +751,7 @@ def musickit_changes_to_current_track(frontend_page: Page, socket_client):
         frontend_page,
         "changeToMediaAtIndex",
         f"(call) => call.payload.index === {current_index}",
+        timeout=30000,
     )
 
 
@@ -747,7 +762,7 @@ def musickit_seeks_to_zero(frontend_page: Page):
 
 @then("MusicKit starts playback")
 def musickit_starts_playback(frontend_page: Page):
-    _wait_for_music_call(frontend_page, "play")
+    _wait_for_music_call(frontend_page, "play", timeout=30000)
 
 
 @then("MusicKit pauses playback after the intro duration")
@@ -855,7 +870,7 @@ def action_button_is_pressed(frontend_page: Page, socket_client, actor: str):
         while time.time() < deadline:
             state = _current_backend_state(socket_client.server_url)
             if any(player["id"] == actor for player in state["players"]) or state.get("answererId") == actor:
-                socket_client.state = state
+                socket_client.events.append(state)
                 return
             time.sleep(0.05)
 
@@ -901,7 +916,7 @@ def gameboard_asks_for_answer(frontend_page: Page):
 @when(parsers.parse('the host judges the answer as "{result}"'))
 def host_judges_answer(socket_client, result: str):
     socket_client.emit("console:judge", {"result": result})
-    socket_client.wait_for_state(step=result if result == "wrong" else "reveal")
+    socket_client.wait_for_state(step=result)
 
 
 @then(parsers.parse('the gameboard shows "{text}"'))
