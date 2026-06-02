@@ -53,8 +53,15 @@ Feature: Game flow
 
   Scenario: Next round advances through shuffled order
     Given a started game with 3 tracks
+    And the game is revealing the answer
     When the host advances to the next round
     Then the current game order index is 1
+    And the current track follows game track order
+
+  Scenario: Next round wraps to the beginning of the shuffled order
+    Given the game is revealing the final track of a 3 track game
+    When the host advances to the next round
+    Then the current game order index is 0
     And the current track follows game track order
 
   Scenario: Next game clears players but keeps selected tracks
@@ -62,6 +69,12 @@ Feature: Game flow
     When the host starts the next game
     Then the phase is "ready"
     And the step is "idle"
+    And host login is true
+    And playback seconds is 0.5
+    And has played current track is false
+    And there is no current track
+    And there is no answerer
+    And there is no last result
     And there are no players
     And the track count is 3
     And selected playlist ids are "playlist-a"

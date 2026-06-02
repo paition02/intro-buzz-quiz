@@ -22,6 +22,19 @@ Feature: Initial state and routes
     When the client requests the MusicKit token
     Then the MusicKit token status is supported
 
+  Scenario: Configured MusicKit token endpoint returns a developer token
+    Given Apple Music credentials are configured
+    When the client requests the MusicKit token
+    Then the HTTP status is 200
+    And the MusicKit token response contains a JWT token
+    And the MusicKit token response contains an ISO expiration time
+
+  Scenario: MusicKit token endpoint rejects missing credentials
+    Given Apple Music credentials are not configured
+    When the client requests the MusicKit token
+    Then the HTTP status is 401
+    And the MusicKit token response contains error "Apple Music credentials are not configured"
+
   Scenario Outline: SPA routes return the app shell
     When the client requests route "<route>"
     Then the HTTP status is 200

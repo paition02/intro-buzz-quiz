@@ -18,6 +18,20 @@ Feature: Host console page
     Then the frontend shows "1件のプレイリスト、3曲を選択中"
     And backend selected playlist ids are "playlist-a"
 
+  Scenario: Console can select multiple playlists
+    Given the frontend console is logged into mocked MusicKit
+    When the frontend clicks "Spec Playlist A"
+    And the frontend clicks "Spec Playlist B"
+    Then the frontend shows "2件のプレイリスト、5曲を選択中"
+    And backend selected playlist ids are "playlist-a,playlist-b"
+
+  Scenario: Console sends de-duplicated tracks for selected playlists
+    Given the frontend console is logged into mocked MusicKit with overlapping playlists
+    When the frontend clicks "Spec Playlist A"
+    And the frontend clicks "Spec Playlist B"
+    Then backend selected playlist ids are "playlist-a,playlist-b"
+    And backend track ids are unique
+
   Scenario: Console can start and play a selected game
     Given the frontend console selected playlist "Spec Playlist A"
     When the frontend clicks "ゲーム開始"

@@ -60,6 +60,34 @@ Feature: Host console state transitions
     And all player scores are 0
     And game track order contains all selected track indexes
 
+  Scenario: Play is ignored until a round is ready
+    Given the host is logged in
+    And the host has selected 3 tracks
+    When the host plays the intro for 1 seconds without starting the game
+    Then the phase is "ready"
+    And the step is "idle"
+    And has played current track is false
+
+  Scenario: Judge is ignored unless a player has answer rights
+    Given a game is before playback with joined players "player-1"
+    When the host judges the answer as "correct"
+    Then the step is "beforePlayback"
+    And there is no last result
+    And player "player-1" score is 0
+
+  Scenario: Showing results is ignored before reveal
+    Given a game is before playback with joined players "player-1"
+    When the host shows results
+    Then the phase is "game"
+    And the step is "beforePlayback"
+    And the current track is one of the selected tracks
+
+  Scenario: Next round is ignored before reveal
+    Given a started game with 3 tracks
+    When the host advances to the next round before reveal
+    Then the current game order index is 0
+    And the current track follows game track order
+
   Scenario: Reset restores initial state
     Given the host is logged in
     And players "player-1" are joined
