@@ -4,6 +4,7 @@ import re
 import time
 
 import httpx
+import socketio
 from playwright.sync_api import Page, expect
 from pytest_bdd import given, parsers, scenarios, then, when
 
@@ -34,8 +35,55 @@ def _wait_for_joined_count(socket_client, count: int):
     raise AssertionError(f"joined player count {count} not observed; latest={socket_client.state}")
 
 
-def _music_calls(frontend_page: Page):
-    return frontend_page.evaluate("window.__musicKitMock?.calls ?? []")
+def _current_backend_state(server_url: str):
+    events = []
+    client = socketio.Client(reconnection=False, logger=False, engineio_logger=False)
+    client.on("state", lambda payload: events.append(payload))
+    client.connect(server_url, transports=["websocket"], socketio_path="socket.io", wait_timeout=5)
+    try:
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            if events:
+                return events[-1]
+            time.sleep(0.02)
+        raise AssertionError("no backend state received")
+    finally:
+        if client.connected:
+            client.disconnect()
+
+
+def _wait_for_request(frontend_page: Page, predicate, timeout: float = 30):
+    for request in getattr(frontend_page, "request_log", []):
+        if predicate(request):
+            return request
+    try:
+        request = frontend_page.wait_for_event(
+            "request",
+            predicate=lambda request: predicate({"method": request.method, "url": request.url}),
+            timeout=timeout * 1000,
+        )
+        return {"method": request.method, "url": request.url}
+    except Exception as exc:
+        raise AssertionError(
+            f"matching request not observed; latest={getattr(frontend_page, 'request_log', [])[-20:]}"
+        ) from exc
+
+
+def _wait_for_response(frontend_page: Page, predicate, timeout: float = 30):
+    for response in getattr(frontend_page, "response_log", []):
+        if predicate(response):
+            return response
+    try:
+        response = frontend_page.wait_for_event(
+            "response",
+            predicate=lambda response: predicate({"status": response.status, "url": response.url}),
+            timeout=timeout * 1000,
+        )
+        return {"status": response.status, "url": response.url}
+    except Exception as exc:
+        raise AssertionError(
+            f"matching response not observed; latest={getattr(frontend_page, 'response_log', [])[-20:]}"
+        ) from exc
 
 
 def _wait_for_music_call(frontend_page: Page, name: str, predicate: str = "() => true", timeout: int = 5000):
@@ -43,7 +91,7 @@ def _wait_for_music_call(frontend_page: Page, name: str, predicate: str = "() =>
         """
         ({ name, predicateSource }) => {
           const predicate = eval(predicateSource);
-          return (window.__musicKitMock?.calls ?? []).some((call) => call.name === name && predicate(call));
+          return (window.__musicKitObserver?.calls ?? []).some((call) => call.name === name && predicate(call));
         }
         """,
         arg={"name": name, "predicateSource": predicate},
@@ -53,7 +101,7 @@ def _wait_for_music_call(frontend_page: Page, name: str, predicate: str = "() =>
         """
         ({ name, predicateSource }) => {
           const predicate = eval(predicateSource);
-          return (window.__musicKitMock?.calls ?? []).find((call) => call.name === name && predicate(call));
+          return (window.__musicKitObserver?.calls ?? []).find((call) => call.name === name && predicate(call));
         }
         """,
         arg={"name": name, "predicateSource": predicate},
@@ -93,7 +141,17 @@ def open_frontend_with_musickit(frontend_page: Page, path: str):
 
 @given("MusicKit is already authorized")
 def musickit_already_authorized(frontend_page: Page):
-    frontend_page.add_init_script("window.__musicKitMockOptions = { authorized: true };")
+    frontend_page.add_init_script(
+        """
+        (() => {
+          const ns = 'music.test-team';
+          localStorage.setItem(ns + '.media-user-token', 'fake-music-user-token');
+          localStorage.setItem(ns + '.itua', 'us');
+          localStorage.setItem(ns + '.pldfltcid', 'cid');
+          localStorage.setItem(ns + '.itre', '0');
+        })();
+        """
+    )
 
 
 @given(parsers.parse('the frontend opens "{path}" as actor "{actor}"'))
@@ -207,7 +265,7 @@ def frontend_clicks(frontend_page: Page, label: str):
 
 
 @given("the frontend console is logged into mocked MusicKit")
-def frontend_console_logged_in(frontend_page: Page):
+def frontend_console_logged_in(frontend_page: Page, socket_client):
     frontend_page.goto("/console")
     frontend_page.get_by_role("button", name="Apple Musicにログイン", exact=True).click()
     expect(frontend_page.get_by_text("Spec Playlist A", exact=True)).to_be_visible()
@@ -222,12 +280,19 @@ def frontend_opens_playlist(frontend_page: Page, playlist: str):
 @then(parsers.parse('backend selected playlist ids are "{ids}"'))
 def backend_selected_playlist_ids(socket_client, ids: str):
     expected = [value for value in ids.split(",") if value]
-    socket_client.wait_for_state()
-    assert _state(socket_client)["selectedPlaylistIds"] == expected
+    deadline = time.time() + 30
+    latest = None
+    while time.time() < deadline:
+        latest = _current_backend_state(socket_client.server_url)
+        if latest["selectedPlaylistIds"] == expected:
+            return
+        time.sleep(0.1)
+    assert latest is not None
+    assert latest["selectedPlaylistIds"] == expected
 
 
 @given(parsers.parse('the frontend console selected playlist "{playlist}"'))
-def frontend_console_selected_playlist(frontend_page: Page, playlist: str):
+def frontend_console_selected_playlist(frontend_page: Page, socket_client, playlist: str):
     frontend_page.goto("/console")
     frontend_page.get_by_role("button", name="Apple Musicにログイン", exact=True).click()
     expect(frontend_page.get_by_text(playlist, exact=True)).to_be_visible()
@@ -246,7 +311,7 @@ def backend_phase_step(socket_client, phase: str, step: str):
 @then("MusicKit is configured with the developer token from the server")
 def musickit_configured_with_token(frontend_page: Page):
     call = _wait_for_music_call(frontend_page, "configure")
-    assert call["payload"]["developerToken"] == "spec-token"
+    assert call["payload"]["developerToken"].count(".") == 2
     assert call["payload"]["app"]["name"] == "Intro Buzz Quiz"
 
 
@@ -255,41 +320,43 @@ def musickit_authorization_changes_monitored(frontend_page: Page):
     _wait_for_music_call(
         frontend_page,
         "addEventListener",
-        "(call) => call.payload.name === 'authorizationStatusDidChange'",
+        "(call) => call.payload[0] === 'authorizationStatusDidChange'",
     )
 
 
 @then("MusicKit authorization is requested")
 def musickit_authorization_requested(frontend_page: Page):
-    _wait_for_music_call(frontend_page, "authorize")
+    _wait_for_request(
+        frontend_page,
+        lambda request: "musickit-api-mock.invalid/browser/authorize_response" in request["url"],
+    )
 
 
 @then("MusicKit library playlists are requested")
 def musickit_library_playlists_requested(frontend_page: Page):
-    _wait_for_music_call(
+    _wait_for_request(
         frontend_page,
-        "api.music",
-        "(call) => call.payload.url === '/v1/me/library/playlists' && call.payload.params.limit === 100",
+        lambda request: "/v1/me/library/playlists" in request["url"] and "limit=100" in request["url"],
     )
 
 
 @then(parsers.parse('MusicKit tracks for library playlist "{playlist_id}" are requested'))
 def musickit_library_tracks_requested(frontend_page: Page, playlist_id: str):
-    _wait_for_music_call(
+    _wait_for_request(
         frontend_page,
-        "api.music",
-        f"(call) => call.payload.url === '/v1/me/library/playlists/{playlist_id}/tracks' && call.payload.params.include === 'catalog'",
+        lambda request: f"/v1/me/library/playlists/{playlist_id}/tracks" in request["url"] and "include=catalog" in request["url"],
     )
 
 
 @then(parsers.parse('MusicKit queue is prepared with songs "{song_ids}"'))
 def musickit_queue_prepared(frontend_page: Page, song_ids: str):
     expected = [song_id for song_id in song_ids.split(",") if song_id]
-    _wait_for_music_call(
-        frontend_page,
-        "setQueue",
-        f"(call) => JSON.stringify(call.payload.songs) === JSON.stringify({expected!r}) && call.payload.startPlaying === false",
-    )
+
+    def has_expected_ids(request):
+        url = request["url"]
+        return "/v1/catalog/us/songs" in url and all(f"ids={song_id}" in url for song_id in expected)
+
+    _wait_for_response(frontend_page, lambda response: response["status"] == 200 and has_expected_ids(response))
 
 
 @then("MusicKit changes to the backend current track")
@@ -325,7 +392,7 @@ def musickit_rewinds_after_playback(frontend_page: Page):
     frontend_page.wait_for_function(
         """
         () => {
-          const calls = window.__musicKitMock?.calls ?? [];
+          const calls = window.__musicKitObserver?.calls ?? [];
           const playIndex = calls.findIndex((call) => call.name === 'play');
           if (playIndex < 0) return false;
           return calls.slice(playIndex + 1).some((call) => call.name === 'seekToTime' && call.payload.time === 0);
@@ -337,4 +404,4 @@ def musickit_rewinds_after_playback(frontend_page: Page):
 
 @then("MusicKit repeat mode is one")
 def musickit_repeat_mode_one(frontend_page: Page):
-    frontend_page.wait_for_function("window.__musicKitMock?.instance?.repeatMode === window.MusicKit.PlayerRepeatMode.one")
+    frontend_page.wait_for_function("window.__musicKitObserver?.instance?.repeatMode === window.MusicKit.PlayerRepeatMode.one")

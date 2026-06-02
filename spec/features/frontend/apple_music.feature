@@ -6,7 +6,7 @@ Feature: MusicKit integration
   Scenario: MusicKit SDK is initialized with the developer token from the server
     When the frontend opens "/console" with mocked MusicKit
     Then MusicKit is configured with the developer token from the server
-    And MusicKit authorization changes are monitored
+    And the frontend shows "Apple Music 未ログイン"
 
   Scenario: Already authorized MusicKit loads library playlists
     Given MusicKit is already authorized

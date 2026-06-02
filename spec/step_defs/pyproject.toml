@@ -17,4 +17,5 @@ dev = [
   "pytest-bdd>=8.1.0",
   "python-socketio[client]>=5.15.0",
   "playwright>=1.57.0",
+  "musickit-api-mock-playwright>=0.1.1",
 ]
