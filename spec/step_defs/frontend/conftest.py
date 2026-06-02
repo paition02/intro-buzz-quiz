@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 from typing import Iterator
 
 import pytest
@@ -21,7 +22,7 @@ def browser(playwright_instance: Playwright) -> Iterator[Browser]:
         "headless": True,
         "args": ["--no-sandbox", "--disable-dev-shm-usage"],
     }
-    executable_path = os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE")
+    executable_path = os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE") or shutil.which("chromium-browser") or shutil.which("chromium")
     if executable_path:
         launch_options["executable_path"] = executable_path
 
