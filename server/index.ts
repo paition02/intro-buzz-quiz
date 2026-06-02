@@ -324,7 +324,7 @@ function consoleShowResults() {
 
 function consoleNextRound() {
   update(() => {
-    if (state.phase === 'game') {
+    if (state.phase === 'game' && state.step === 'reveal') {
       state.step = 'loading'
       state.message = '次の曲をロードしています'
       loadCurrentTrack()
@@ -446,16 +446,16 @@ function handleAct(req: Bun.BunRequest<'/api/act/:actorId'>) {
       return
     }
 
+    if (state.phase === 'game' && state.answererId !== null) {
+      status = 204
+      return
+    }
+
     const canAnswer = state.step === 'playing' || (state.step === 'beforePlayback' && state.hasPlayedCurrentTrack)
 
     if (state.phase === 'game' && canAnswer) {
       if (!player.joined) {
         status = 409
-        return
-      }
-
-      if (state.answererId !== null) {
-        status = 204
         return
       }
 

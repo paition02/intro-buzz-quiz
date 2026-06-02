@@ -245,7 +245,7 @@ function PlayerBadge({ id, active = false, reacting = false, label = true, score
     const large = size === 'large'
     // ゲームボード上はプレイヤーを人型シルエットで表示。正解者は拡大 + 白縁グロー。
     return (
-      <span className={['relative flex flex-col items-center transition-transform', large ? 'w-28' : 'w-14', active && (large ? 'scale-110' : 'scale-125')].filter(Boolean).join(' ')} aria-label="参加者">
+      <span className={['relative flex flex-col items-center transition-transform', large ? 'w-28' : 'w-14', active && (large ? 'scale-110' : 'scale-125')].filter(Boolean).join(' ')} aria-label={id}>
         <PersonGlyph
           color={color.background}
           className={['block', large ? 'w-20 h-28' : 'w-9 h-12', reacting && 'animate-react-pop'].filter(Boolean).join(' ')}
@@ -262,7 +262,7 @@ function PlayerBadge({ id, active = false, reacting = false, label = true, score
       <span
         className="inline-flex items-center gap-2 rounded-full px-4 py-2.5 border"
         style={{ backgroundColor: color.softBackground, borderColor: color.border, color: color.text }}
-        aria-label="参加者"
+        aria-label={id}
       >
         <PersonGlyph color={color.background} className="block w-6 h-9" style={{ filter: `drop-shadow(0 0 10px ${color.background})` }} />
         {score != null && <span>{score}</span>}
@@ -559,18 +559,21 @@ function ConsolePage() {
     const trackGroups = await Promise.all(selectedPlaylists.map((selectedPlaylist) => fetchPlaylistTracks(selectedPlaylist)))
     const tracks = uniqueTracksById(trackGroups.flat())
 
-    if (tracks.length > 0) {
-      await prepareQueue(tracks)
-      preparedQueueKeyRef.current = `${selectedPlaylists.map((selectedPlaylist) => selectedPlaylist.id).join('|')}:${tracks.map((track) => track.id).join('|')}`
-    } else {
-      preparedQueueKeyRef.current = null
-    }
-    loadedTrackIndexRef.current = -1
     await consoleAction('console:playlists', {
       selectedPlaylistIds: selectedPlaylists.map((selectedPlaylist) => selectedPlaylist.id),
       playlists: selectedPlaylists.map((selectedPlaylist) => selectedPlaylist.name),
       tracks,
     })
+
+    if (tracks.length > 0) {
+      void prepareQueue(tracks).catch((error) => {
+        setConsoleMessage(error instanceof Error ? error.message : String(error))
+      })
+      preparedQueueKeyRef.current = `${selectedPlaylists.map((selectedPlaylist) => selectedPlaylist.id).join('|')}:${tracks.map((track) => track.id).join('|')}`
+    } else {
+      preparedQueueKeyRef.current = null
+    }
+    loadedTrackIndexRef.current = -1
 
     if (selectedPlaylists.length === 0) {
       setConsoleMessage('プレイリストの選択を解除しました')
@@ -735,7 +738,7 @@ function ConsolePage() {
             </p>
           )}
           <div className="flex flex-wrap gap-2.5 mt-3.5 max-md:[&>button]:flex-1">
-            <button className={BTN_PRIMARY} disabled={busy || state.phase !== 'ready' || selectedPlaylistIds.length === 0 || state.tracks.length === 0 || musicKit.preparing} onClick={handleStart}>ゲーム開始</button>
+            <button className={BTN_PRIMARY} disabled={busy || state.phase !== 'ready' || selectedPlaylistIds.length === 0 || state.tracks.length === 0} onClick={handleStart}>ゲーム開始</button>
           </div>
           <div className="flex items-center gap-2 flex-wrap mt-3">
             <span className={HINT}>参加中:</span>
