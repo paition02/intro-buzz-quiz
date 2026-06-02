@@ -12,6 +12,14 @@ type MusicTrack = {
 type MusicApiPage<T> = {
   data?: T[]
   next?: string
+  errors?: MusicApiError[]
+  message?: string
+}
+
+type MusicApiError = {
+  detail?: string
+  title?: string
+  message?: string
 }
 
 type MusicApiArtwork = {
@@ -54,6 +62,20 @@ const QUEUE_CHUNK_SIZE = 50
 function artworkUrlForSize(template: string | undefined, size: string) {
   if (!template) return undefined
   return template.replace('{w}x{h}', size)
+}
+
+function musicApiErrorMessage(data: unknown) {
+  if (!data || typeof data !== 'object') return null
+  const envelope = data as { errors?: MusicApiError[]; message?: unknown }
+  const firstError = Array.isArray(envelope.errors) ? envelope.errors[0] : undefined
+  return firstError?.detail ?? firstError?.message ?? firstError?.title ?? (typeof envelope.message === 'string' ? envelope.message : null)
+}
+
+async function musicApi<T>(mk: MusicKit.MusicKitInstance, url: string, params?: MusicApiParams): Promise<T> {
+  const response: { data: T } = await mk.api.music(url, params)
+  const message = musicApiErrorMessage(response.data)
+  if (message) throw new Error(message)
+  return response.data
 }
 
 async function fetchToken(): Promise<{ token: string; expiresAt: Date }> {
@@ -126,8 +148,7 @@ export function useMusicKitPlayback() {
     let url: string | null = '/v1/me/library/playlists'
     let params: MusicApiParams | undefined = { limit: 100 }
     while (url) {
-      const response: { data: MusicApiPage<MusicApiPlaylist> } = await mk.api.music(url, params)
-      const data: MusicApiPage<MusicApiPlaylist> = response.data
+      const data: MusicApiPage<MusicApiPlaylist> = await musicApi<MusicApiPage<MusicApiPlaylist>>(mk, url, params)
       allPlaylists.push(...(data?.data ?? []))
       url = data?.next ?? null
       params = undefined
@@ -160,8 +181,7 @@ export function useMusicKitPlayback() {
       : `/v1/catalog/{{storefrontId}}/playlists/${playlistId}/tracks`
     let params: MusicApiParams | undefined = source === 'library' ? { limit: 100, include: 'catalog' } : { limit: 100 }
     while (url) {
-      const response: { data: MusicApiPage<MusicApiTrack> } = await mk.api.music(url, params)
-      const data: MusicApiPage<MusicApiTrack> = response.data
+      const data: MusicApiPage<MusicApiTrack> = await musicApi<MusicApiPage<MusicApiTrack>>(mk, url, params)
       allTracks.push(...(data?.data ?? []))
       url = data?.next ?? null
       params = undefined

@@ -11,6 +11,7 @@ import base64
 import json
 import tempfile
 import time
+import urllib.request
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -313,7 +314,8 @@ def _register_catalog_songs_override(page: Page) -> None:
 def _serve_musickit_js(page: Page) -> None:
     def handler(route: Route) -> None:
         if "body" not in _musickit_js_cache:
-            _musickit_js_cache["body"] = route.fetch().body()
+            with urllib.request.urlopen(route.request.url, timeout=20) as response:
+                _musickit_js_cache["body"] = response.read()
         route.fulfill(status=200, content_type="application/javascript", body=_musickit_js_cache["body"])
 
     page.route(_MUSICKIT_JS_GLOB, handler)

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
+import shutil
 from typing import Iterator
 
 import pytest
-from playwright.sync_api import Browser, Page, Playwright, sync_playwright
+from playwright.sync_api import Browser, Error as PlaywrightError, Page, Playwright, sync_playwright
 
 from frontend.musickit_mock import configure_musickit_api_mock, make_developer_token
 
@@ -16,11 +18,23 @@ def playwright_instance() -> Iterator[Playwright]:
 
 @pytest.fixture(scope="session")
 def browser(playwright_instance: Playwright) -> Iterator[Browser]:
-    browser = playwright_instance.chromium.launch(
-        executable_path="/usr/bin/chromium-browser",
-        headless=True,
-        args=["--no-sandbox", "--disable-dev-shm-usage"],
-    )
+    launch_options = {
+        "headless": True,
+        "args": ["--no-sandbox", "--disable-dev-shm-usage"],
+    }
+    executable_path = os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE") or shutil.which("chromium-browser") or shutil.which("chromium")
+    if executable_path:
+        launch_options["executable_path"] = executable_path
+
+    try:
+        browser = playwright_instance.chromium.launch(**launch_options)
+    except PlaywrightError:
+        if executable_path:
+            raise
+        browser = playwright_instance.chromium.launch(
+            **launch_options,
+            channel=os.environ.get("PLAYWRIGHT_BROWSER_CHANNEL", "chrome"),
+        )
     try:
         yield browser
     finally:
@@ -56,8 +70,9 @@ def frontend_page(browser: Browser, server_url: str, socket_client) -> Iterator[
           window.__musicKitObserver = { calls };
           let value;
           const patchInstance = (mk) => {
-            if (!mk || mk.__introBuzzInstanceObserved) return mk;
+            if (!mk) return mk;
             window.__musicKitObserver.instance = mk;
+            if (mk.__introBuzzInstanceObserved) return mk;
             const wrap = (method) => {
               if (typeof mk[method] !== 'function' || mk[method].__introBuzzObserved) return;
               const original = mk[method].bind(mk);

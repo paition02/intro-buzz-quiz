@@ -4,7 +4,7 @@ import { Server as Engine } from '@socket.io/bun-engine'
 import index from '../index.html'
 
 // Bun は cwd の .env を自動で読むので dotenv は不要。
-const isProduction = process.env.NODE_ENV === 'production'
+const isDevelopment = process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'test'
 
 type Phase = 'initialization' | 'ready' | 'game'
 type GameStep =
@@ -324,7 +324,7 @@ function consoleShowResults() {
 
 function consoleNextRound() {
   update(() => {
-    if (state.phase === 'game') {
+    if (state.phase === 'game' && state.step === 'reveal') {
       state.step = 'loading'
       state.message = '次の曲をロードしています'
       loadCurrentTrack()
@@ -446,16 +446,16 @@ function handleAct(req: Bun.BunRequest<'/api/act/:actorId'>) {
       return
     }
 
+    if (state.phase === 'game' && state.answererId !== null) {
+      status = 204
+      return
+    }
+
     const canAnswer = state.step === 'playing' || (state.step === 'beforePlayback' && state.hasPlayedCurrentTrack)
 
     if (state.phase === 'game' && canAnswer) {
       if (!player.joined) {
         status = 409
-        return
-      }
-
-      if (state.answererId !== null) {
-        status = 204
         return
       }
 
@@ -479,7 +479,7 @@ const port = Number(process.env.PORT ?? 5173)
 const server = Bun.serve({
   port,
   hostname: '0.0.0.0',
-  development: !isProduction,
+  development: isDevelopment,
   idleTimeout,
   maxRequestBodySize,
   routes: {

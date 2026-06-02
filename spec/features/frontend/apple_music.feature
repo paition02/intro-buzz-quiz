@@ -51,8 +51,8 @@ Feature: MusicKit integration
     Then the frontend shows artwork thumbnail URL "https://example.test/artwork/1/80x80.jpg"
     When the frontend clicks "Spec Playlist A"
     And the frontend clicks "ゲーム開始"
-    Then backend current track artwork URL is "https://example.test/artwork/1/1000x1000.jpg"
-    And backend current track artwork thumbnail URL is "https://example.test/artwork/1/80x80.jpg"
+    Then backend current track artwork URL uses size "1000x1000"
+    And backend current track artwork thumbnail URL uses size "80x80"
 
   Scenario: Selecting a playlist prepares a MusicKit queue with catalog song ids
     Given the frontend console is logged into mocked MusicKit

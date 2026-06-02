@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import time
 from typing import Any
+from datetime import datetime
 
+import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
 from backend.helpers import assert_player, make_tracks
@@ -53,6 +55,12 @@ def _latest(socket_client, ctx):
     return ctx.state
 
 
+def _token_status(http) -> int:
+    # Bun loads .env in the server process, so Python's os.environ is not a
+    # reliable credential oracle. Use the actual server response instead.
+    return http.get("/api/token").status_code
+
+
 @given("a fresh server state")
 def fresh_server_state(ctx, socket_client):
     ctx.state = _reset(socket_client)
@@ -62,6 +70,18 @@ def fresh_server_state(ctx, socket_client):
 def host_logged_in(ctx, socket_client):
     _reset(socket_client)
     ctx.state = _login(socket_client)
+
+
+@given("Apple Music credentials are configured")
+def apple_music_credentials_configured(http):
+    if _token_status(http) != 200:
+        pytest.skip("Apple Music credentials are not configured for this test server")
+
+
+@given("Apple Music credentials are not configured")
+def apple_music_credentials_not_configured(http):
+    if _token_status(http) != 401:
+        pytest.skip("Apple Music credentials are configured for this test server")
 
 
 @given(parsers.parse('players "{actor_ids}" are joined'))
@@ -96,7 +116,20 @@ def player_has_answer_rights(ctx, socket_client, http, actor_id: str):
 
 @given("the game is revealing the answer")
 def game_revealing(ctx, socket_client, http):
-    ctx.state, ctx.tracks = _start_game(socket_client, http, joined=["player-1"], count=3)
+    if not (socket_client.state.get("phase") == "game" and socket_client.state.get("step") == "beforePlayback"):
+        ctx.state, ctx.tracks = _start_game(socket_client, http, joined=["player-1"], count=3)
+    ctx.state = socket_client.emit("console:give-up")
+    socket_client.wait_for_state(step="reveal")
+
+
+@given(parsers.parse("the game is revealing the final track of a {count:d} track game"))
+def game_revealing_final_track(ctx, socket_client, http, count: int):
+    ctx.state, ctx.tracks = _start_game(socket_client, http, joined=["player-1"], count=count)
+    for _ in range(count - 1):
+        socket_client.emit("console:give-up")
+        socket_client.wait_for_state(step="reveal")
+        socket_client.emit("console:next-round")
+        socket_client.wait_for_state(step="beforePlayback")
     ctx.state = socket_client.emit("console:give-up")
     socket_client.wait_for_state(step="reveal")
 
@@ -201,6 +234,11 @@ def host_plays_intro(ctx, socket_client, seconds: float):
     socket_client.wait_for_state(step="playing")
 
 
+@when(parsers.parse("the host plays the intro for {seconds:g} seconds without starting the game"))
+def host_plays_intro_without_starting(ctx, socket_client, seconds: float):
+    ctx.state = socket_client.emit("console:play", {"seconds": seconds})
+
+
 @when("the playback timeout expires")
 def playback_timeout_expires(ctx, socket_client):
     deadline = time.time() + 5
@@ -242,6 +280,12 @@ def host_shows_results(ctx, socket_client):
 
 @when("the host advances to the next round")
 def host_advances_next_round(ctx, socket_client):
+    ctx.extra["previous_order_index"] = socket_client.state["currentGameTrackOrderIndex"]
+    ctx.state = socket_client.emit("console:next-round")
+
+
+@when("the host advances to the next round before reveal")
+def host_advances_next_round_before_reveal(ctx, socket_client):
     ctx.extra["previous_order_index"] = socket_client.state["currentGameTrackOrderIndex"]
     ctx.state = socket_client.emit("console:next-round")
 
@@ -297,14 +341,40 @@ def then_players_ordered(socket_client):
 def then_http_status(ctx, status: int):
     assert ctx.response is not None
     assert ctx.response.status_code == status
-    if status in {400, 409, 429}:
-        assert ctx.response.content == b""
+
+
+@then("the response body is empty")
+def then_response_body_empty(ctx):
+    assert ctx.response is not None
+    assert ctx.response.content == b""
 
 
 @then("the MusicKit token status is supported")
 def then_token_status_supported(ctx):
     assert ctx.response is not None
     assert ctx.response.status_code in {200, 401, 500}
+
+
+@then("the MusicKit token response contains a JWT token")
+def then_token_response_contains_jwt(ctx):
+    assert ctx.response is not None
+    token = ctx.response.json()["token"]
+    assert isinstance(token, str)
+    assert token.count(".") == 2
+
+
+@then("the MusicKit token response contains an ISO expiration time")
+def then_token_response_contains_iso_expiration(ctx):
+    assert ctx.response is not None
+    expires_at = ctx.response.json()["expiresAt"]
+    assert isinstance(expires_at, str)
+    datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+
+
+@then(parsers.parse('the MusicKit token response contains error "{message}"'))
+def then_token_response_contains_error(ctx, message: str):
+    assert ctx.response is not None
+    assert ctx.response.json()["error"] == message
 
 
 @then(parsers.parse('the retry-after header is "{value}"'))
