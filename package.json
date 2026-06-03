@@ -5,10 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "bun --hot server/index.ts",
-    "build": "tsc -b",
+    "typecheck": "tsc -b",
     "start": "NODE_ENV=production bun server/index.ts",
     "lint": "eslint .",
-    "preview": "NODE_ENV=production bun server/index.ts",
     "test:spec": "cd spec/step_defs && uv run pytest",
     "test": "bun run test:spec"
   },
