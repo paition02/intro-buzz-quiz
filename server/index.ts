@@ -5,7 +5,7 @@ import { networkInterfaces } from 'node:os'
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
-import index from '../index.html'
+import index from '../client/index.html'
 
 // Bun は cwd の .env を自動で読むので dotenv は不要。
 const isDevelopment = process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'test'
