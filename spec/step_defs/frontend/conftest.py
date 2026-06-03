@@ -108,6 +108,7 @@ def frontend_page(browser: Browser, server_url: str, socket_client) -> Iterator[
         """
         (() => {
           const calls = [];
+          const initialMethodDelays = window.__introBuzzMusicKitDelayConfig ?? {};
           const summarize = (name, payload = {}) => {
             if (name === 'setQueue') return { songs: payload?.songs ?? [], startPlaying: payload?.startPlaying };
             if (name === 'changeToMediaAtIndex') return { index: payload };
@@ -116,7 +117,7 @@ def frontend_page(browser: Browser, server_url: str, socket_client) -> Iterator[
             return payload;
           };
           const record = (name, payload = {}) => calls.push({ name, payload: summarize(name, payload), at: Date.now() });
-          window.__musicKitObserver = { calls };
+          window.__musicKitObserver = { calls, methodDelays: initialMethodDelays };
           let value;
           const patchInstance = (mk) => {
             if (!mk) return mk;
@@ -127,7 +128,9 @@ def frontend_page(browser: Browser, server_url: str, socket_client) -> Iterator[
               const original = mk[method].bind(mk);
               const observed = (...args) => {
                 record(method, args.length === 1 ? args[0] : args);
-                return original(...args);
+                const delay = Number(window.__musicKitObserver?.methodDelays?.[method] ?? 0);
+                if (!Number.isFinite(delay) || delay <= 0) return original(...args);
+                return new Promise((resolve) => setTimeout(resolve, delay)).then(() => original(...args));
               };
               observed.__introBuzzObserved = true;
               Object.defineProperty(mk, method, {

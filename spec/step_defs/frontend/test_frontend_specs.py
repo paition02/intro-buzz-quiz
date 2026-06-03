@@ -210,6 +210,19 @@ def musickit_already_authorized(frontend_page: Page):
     )
 
 
+@given("MusicKit current track loading is delayed")
+def musickit_current_track_loading_delayed(frontend_page: Page):
+    frontend_page.add_init_script(
+        """
+        (() => {
+          const delays = { seekToTime: 1200 };
+          window.__introBuzzMusicKitDelayConfig = delays;
+          if (window.__musicKitObserver) window.__musicKitObserver.methodDelays = delays;
+        })();
+        """
+    )
+
+
 @given("mocked MusicKit has paginated library playlists")
 def mocked_musickit_paginated_library_playlists(frontend_page: Page):
     filler_playlists = {
@@ -729,6 +742,23 @@ def musickit_changes_to_current_track(frontend_page: Page, socket_client):
 @then("MusicKit seeks to 0")
 def musickit_seeks_to_zero(frontend_page: Page):
     _wait_for_music_call(frontend_page, "seekToTime", "(call) => call.payload.time === 0")
+
+
+@then(parsers.parse('the frontend play button shows "{label}" and is disabled'))
+def frontend_play_button_shows_label_and_is_disabled(frontend_page: Page, label: str):
+    expect(frontend_page.get_by_role("button", name=label, exact=True)).to_be_disabled(timeout=30000)
+
+
+@then("the frontend play button becomes enabled")
+def frontend_play_button_enabled(frontend_page: Page):
+    expect(frontend_page.get_by_role("button", name="再生", exact=True)).to_be_enabled(timeout=30000)
+
+
+@then("MusicKit has not started playback")
+def musickit_has_not_started_playback(frontend_page: Page):
+    frontend_page.wait_for_timeout(300)
+    calls = frontend_page.evaluate("window.__musicKitObserver?.calls ?? []")
+    assert not any(call["name"] == "play" for call in calls)
 
 
 @then("MusicKit starts playback")

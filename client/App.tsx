@@ -396,8 +396,8 @@ function ConsolePage() {
   const autoLoginRequestedRef = useRef(false)
   const autoLoadLibraryPlaylistsRequestedRef = useRef(false)
   // MusicKit の再生は state を唯一の駆動源にする(命令的ハンドラからは触らない)。
-  // 二重ロード防止用の「いま読んでいる曲 index」と、playing への遷移を 1 回だけ拾うための「直前 step」。
-  const loadedTrackIndexRef = useRef(-1)
+  // 二重ロード防止用の「ロード要求済み index」と、playing への遷移を 1 回だけ拾うための「直前 step」。
+  const requestedTrackLoadIndexRef = useRef(-1)
   const playbackModeRef = useRef<'idle' | 'intro' | 'reveal'>('idle')
   const revealTrackIndexRef = useRef(-1)
   const previousStepForPlaybackRef = useRef<GameStep>(state.step)
@@ -412,6 +412,10 @@ function ConsolePage() {
   const selectedPlaylistIds = state.selectedPlaylistIds
   const selectedPlaylistIdSet = useMemo(() => new Set(selectedPlaylistIds), [selectedPlaylistIds])
   const seconds = state.playbackSeconds
+  const currentTrackLoaded = state.currentTrackIndex >= 0 && musicKit.loadedTrackIndex === state.currentTrackIndex
+  const canPlayIntro = state.step === 'beforePlayback' && currentTrackLoaded && !musicKit.preparing
+  const currentTrackLoading = state.step === 'beforePlayback' && state.currentTrackIndex >= 0 && !canPlayIntro
+  const playButtonLabel = musicKit.playing ? '再生中' : currentTrackLoading ? 'ロード中' : '再生'
 
   const visiblePlaylists = useMemo(() => {
     const query = playlistSearch.trim().toLowerCase()
@@ -479,7 +483,7 @@ function ConsolePage() {
         const queueKey = `${state.selectedPlaylistIds.join('|')}:${state.tracks.map((track) => track.id).join('|')}`
         if (preparedQueueKeyRef.current !== queueKey) {
           preparedQueueKeyRef.current = queueKey
-          loadedTrackIndexRef.current = -1 // キューが入れ替わったらロード済み index も無効化
+          requestedTrackLoadIndexRef.current = -1 // キューが入れ替わったらロード要求済み index も無効化
           void prepareQueue(state.tracks).catch((error) => {
             preparedQueueKeyRef.current = null
             report(error)
@@ -490,13 +494,16 @@ function ConsolePage() {
       // 曲のロードは state.currentTrackIndex に追従する(旧 handleStart/handleNextRound の命令的ロードを置換)。
       // index が変わった時だけ読み直す。playing→beforePlayback の復帰みたいな step だけの変化では読み直さない。
       if (state.currentTrackIndex < 0) {
-        loadedTrackIndexRef.current = -1
-      } else if (loadedTrackIndexRef.current !== state.currentTrackIndex) {
-        loadedTrackIndexRef.current = state.currentTrackIndex
-        void loadTrack(state.currentTrackIndex).catch(report)
+        requestedTrackLoadIndexRef.current = -1
+      } else if (requestedTrackLoadIndexRef.current !== state.currentTrackIndex) {
+        requestedTrackLoadIndexRef.current = state.currentTrackIndex
+        void loadTrack(state.currentTrackIndex).catch((error) => {
+          requestedTrackLoadIndexRef.current = -1
+          report(error)
+        })
       }
     } else if (state.currentTrackIndex < 0) {
-      loadedTrackIndexRef.current = -1
+      requestedTrackLoadIndexRef.current = -1
     }
 
     // イントロ再生は step が playing に"入った"瞬間に 1 回だけ。
@@ -504,7 +511,7 @@ function ConsolePage() {
     if (state.step === 'playing' && previousStep !== 'playing') {
       playbackModeRef.current = 'intro'
       revealTrackIndexRef.current = -1
-      void playIntro(state.playbackSeconds).catch(report)
+      void playIntro(state.currentTrackIndex, state.playbackSeconds).catch(report)
     } else if (state.step === 'reveal' && state.currentTrackIndex >= 0) {
       if (playbackModeRef.current !== 'reveal' || revealTrackIndexRef.current !== state.currentTrackIndex) {
         playbackModeRef.current = 'reveal'
@@ -597,7 +604,7 @@ function ConsolePage() {
     } else {
       preparedQueueKeyRef.current = null
     }
-    loadedTrackIndexRef.current = -1
+    requestedTrackLoadIndexRef.current = -1
 
     if (selectedPlaylists.length === 0) {
       setConsoleMessage('プレイリストの選択を解除しました')
@@ -624,6 +631,10 @@ function ConsolePage() {
   })
 
   const handlePlay = () => run(async () => {
+    if (!canPlayIntro) {
+      setConsoleMessage('曲のロード完了を待っています')
+      return
+    }
     await consoleAction('console:play', { seconds })
   })
 
@@ -792,7 +803,7 @@ function ConsolePage() {
           </div>
           <div className="grid gap-3.5 mt-4">
             <div className="grid gap-2.5 grid-cols-1 md:grid-cols-2 [&>button]:min-h-14">
-              <button className={BTN_PRIMARY} disabled={busy || state.step !== 'beforePlayback'} onClick={handlePlay}>{musicKit.playing ? '再生中' : '再生'}</button>
+              <button className={BTN_PRIMARY} disabled={busy || !canPlayIntro} onClick={handlePlay}>{playButtonLabel}</button>
               <button className={BTN_GHOST} disabled={busy || state.phase !== 'game' || !['beforePlayback', 'playing', 'answering', 'wrong'].includes(state.step)} onClick={handleGiveUp}>ギブアップ</button>
               <button className={BTN_PRIMARY} disabled={busy || state.step !== 'answering'} onClick={() => handleJudge('correct')}>正解</button>
               <button className={BTN_PRIMARY} disabled={busy || state.step !== 'answering'} onClick={() => handleJudge('wrong')}>不正解</button>

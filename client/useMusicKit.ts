@@ -111,6 +111,8 @@ type MusicKitStatus = {
   error: string | null
   preparing: boolean
   playing: boolean
+  loadingTrackIndex: number | null
+  loadedTrackIndex: number | null
 }
 
 let musicKitStatus: MusicKitStatus = {
@@ -119,6 +121,8 @@ let musicKitStatus: MusicKitStatus = {
   error: null,
   preparing: false,
   playing: false,
+  loadingTrackIndex: null,
+  loadedTrackIndex: null,
 }
 
 const musicKitStatusListeners = new Set<() => void>()
@@ -131,7 +135,9 @@ function setMusicKitStatus(nextStatus: Partial<MusicKitStatus>) {
     next.ready === musicKitStatus.ready &&
     next.error === musicKitStatus.error &&
     next.preparing === musicKitStatus.preparing &&
-    next.playing === musicKitStatus.playing
+    next.playing === musicKitStatus.playing &&
+    next.loadingTrackIndex === musicKitStatus.loadingTrackIndex &&
+    next.loadedTrackIndex === musicKitStatus.loadedTrackIndex
   ) return
 
   musicKitStatus = next
@@ -165,10 +171,40 @@ export function useMusicKitPlayback() {
   const status = useSyncExternalStore(subscribeMusicKitStatus, getMusicKitStatusSnapshot)
   const stopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const tracksRef = useRef<MusicTrack[]>([])
-  const loadPromiseRef = useRef<Promise<void>>(Promise.resolve())
+  const loadPromiseRef = useRef<Promise<void> | null>(null)
   const preparePromiseRef = useRef<Promise<void>>(Promise.resolve())
   const queuedChunkStartRef = useRef<number | null>(null)
+  const prepareGenerationRef = useRef(0)
+  const loadGenerationRef = useRef(0)
+  const loadingTrackIndexRef = useRef<number | null>(null)
+  const loadedTrackIndexRef = useRef<number | null>(null)
   const playbackGenerationRef = useRef(0)
+
+  const cancelScheduledPlayback = useCallback(() => {
+    playbackGenerationRef.current += 1
+    if (stopTimerRef.current) clearTimeout(stopTimerRef.current)
+    stopTimerRef.current = null
+    setMusicKitStatus({ playing: false })
+  }, [])
+
+  const rewindTrackToStart = useCallback(async (
+    mk: MusicKit.MusicKitInstance,
+    index: number,
+    playbackGeneration?: number,
+  ) => {
+    const loadGeneration = ++loadGenerationRef.current
+    loadingTrackIndexRef.current = index
+    loadedTrackIndexRef.current = null
+    setMusicKitStatus({ playing: false, loadingTrackIndex: index, loadedTrackIndex: null })
+    if (mk.isPlaying) mk.pause()
+    await mk.seekToTime(0)
+    if (loadGeneration !== loadGenerationRef.current) return
+    if (playbackGeneration != null && playbackGeneration !== playbackGenerationRef.current) return
+    loadingTrackIndexRef.current = null
+    loadedTrackIndexRef.current = index
+    loadPromiseRef.current = null
+    setMusicKitStatus({ playing: false, loadingTrackIndex: null, loadedTrackIndex: index })
+  }, [])
 
   const authorize = useCallback(async () => {
     const mk = await getMusicKit()
@@ -243,19 +279,24 @@ export function useMusicKitPlayback() {
   const prepareQueue = useCallback(async (tracks: MusicTrack[]) => {
     if (tracks.length === 0) throw new Error('曲がありません')
     const mk = await getMusicKit()
+    const generation = ++prepareGenerationRef.current
+    loadGenerationRef.current += 1
     tracksRef.current = tracks
     queuedChunkStartRef.current = null
-    setMusicKitStatus({ preparing: true })
+    loadingTrackIndexRef.current = null
+    loadedTrackIndexRef.current = null
+    loadPromiseRef.current = null
+    setMusicKitStatus({ preparing: true, loadingTrackIndex: null, loadedTrackIndex: null })
     const promise = (async () => {
       try {
         const queueTracks = tracks.slice(0, QUEUE_CHUNK_SIZE)
         mk.shuffleMode = MusicKit.PlayerShuffleMode.off
         await mk.setQueue({ songs: queueTracks.map((track) => track.id), startPlaying: false })
+        if (generation !== prepareGenerationRef.current) return
         queuedChunkStartRef.current = 0
         mk.repeatMode = MusicKit.PlayerRepeatMode.one
-        loadPromiseRef.current = Promise.resolve()
       } finally {
-        setMusicKitStatus({ preparing: false })
+        if (generation === prepareGenerationRef.current) setMusicKitStatus({ preparing: false })
       }
     })()
     preparePromiseRef.current = promise
@@ -278,45 +319,79 @@ export function useMusicKitPlayback() {
     if (mk.nowPlayingItemIndex !== queueIndex) await mk.changeToMediaAtIndex(queueIndex)
   }, [])
 
-  const loadTrack = useCallback((index: number) => {
-    playbackGenerationRef.current += 1
+  const startLoadTrack = useCallback((index: number, { cancelPlayback = true }: { cancelPlayback?: boolean } = {}) => {
+    if (cancelPlayback) cancelScheduledPlayback()
+    if (loadedTrackIndexRef.current === index) return Promise.resolve()
+    if (loadingTrackIndexRef.current === index && loadPromiseRef.current) return loadPromiseRef.current
+
+    const generation = ++loadGenerationRef.current
+    loadingTrackIndexRef.current = index
+    loadedTrackIndexRef.current = null
+    setMusicKitStatus({ loadingTrackIndex: index, loadedTrackIndex: null })
+
     const promise = (async () => {
-      await preparePromiseRef.current
-      const mk = await getMusicKit()
-      await ensureTrackQueued(mk, index)
-      if (mk.isPlaying) mk.pause()
-      await mk.seekToTime(0)
+      try {
+        await preparePromiseRef.current
+        if (generation !== loadGenerationRef.current) return
+        const mk = await getMusicKit()
+        await ensureTrackQueued(mk, index)
+        if (generation !== loadGenerationRef.current) return
+        if (mk.isPlaying) mk.pause()
+        await mk.seekToTime(0)
+        if (generation !== loadGenerationRef.current) return
+        loadingTrackIndexRef.current = null
+        loadedTrackIndexRef.current = index
+        loadPromiseRef.current = null
+        setMusicKitStatus({ loadingTrackIndex: null, loadedTrackIndex: index })
+      } catch (error) {
+        if (generation === loadGenerationRef.current) {
+          loadingTrackIndexRef.current = null
+          loadedTrackIndexRef.current = null
+          loadPromiseRef.current = null
+          setMusicKitStatus({ loadingTrackIndex: null, loadedTrackIndex: null })
+        }
+        throw error
+      }
     })()
     loadPromiseRef.current = promise
     return promise
-  }, [ensureTrackQueued])
+  }, [cancelScheduledPlayback, ensureTrackQueued])
 
-  const playIntro = useCallback(async (seconds: number) => {
+  const loadTrack = useCallback((index: number) => startLoadTrack(index), [startLoadTrack])
+
+  const ensureLoadedTrack = useCallback((index: number) => {
+    if (loadedTrackIndexRef.current === index) return Promise.resolve()
+    if (loadingTrackIndexRef.current === index && loadPromiseRef.current) return loadPromiseRef.current
+    return startLoadTrack(index, { cancelPlayback: false })
+  }, [startLoadTrack])
+
+  const playIntro = useCallback(async (index: number, seconds: number) => {
     const generation = ++playbackGenerationRef.current
     const mk = await getMusicKit()
     if (stopTimerRef.current) clearTimeout(stopTimerRef.current)
-    await loadPromiseRef.current
-    if (generation !== playbackGenerationRef.current) return
-    if (mk.isPlaying) mk.pause()
-    await mk.seekToTime(0)
-    if (generation !== playbackGenerationRef.current) return
+    stopTimerRef.current = null
+    await ensureLoadedTrack(index)
+    if (generation !== playbackGenerationRef.current || loadedTrackIndexRef.current !== index) return
+    if (mk.isPlaying) {
+      await rewindTrackToStart(mk, index, generation)
+      if (generation !== playbackGenerationRef.current || loadedTrackIndexRef.current !== index) return
+    }
     await mk.play()
     setMusicKitStatus({ playing: true })
     stopTimerRef.current = setTimeout(() => {
       if (generation !== playbackGenerationRef.current) return
-      if (mk.isPlaying) mk.pause()
-      void mk.seekToTime(0)
-      setMusicKitStatus({ playing: false })
+      stopTimerRef.current = null
+      void rewindTrackToStart(mk, index, generation)
     }, seconds * 1000)
-  }, [])
+  }, [ensureLoadedTrack, rewindTrackToStart])
 
   const playFullLoopTrack = useCallback(async (index: number) => {
     const generation = ++playbackGenerationRef.current
     const mk = await getMusicKit()
     if (stopTimerRef.current) clearTimeout(stopTimerRef.current)
-    await preparePromiseRef.current
-    await ensureTrackQueued(mk, index)
-    if (generation !== playbackGenerationRef.current) return
+    stopTimerRef.current = null
+    await ensureLoadedTrack(index)
+    if (generation !== playbackGenerationRef.current || loadedTrackIndexRef.current !== index) return
     if (mk.isPlaying) mk.pause()
     await mk.seekToTime(0)
     if (generation !== playbackGenerationRef.current) return
@@ -327,17 +402,20 @@ export function useMusicKitPlayback() {
       return
     }
     setMusicKitStatus({ playing: true })
-  }, [ensureTrackQueued])
+  }, [ensureLoadedTrack])
 
   const stop = useCallback(async () => {
-    playbackGenerationRef.current += 1
-    if (stopTimerRef.current) clearTimeout(stopTimerRef.current)
-    stopTimerRef.current = null
+    cancelScheduledPlayback()
     const mk = await getMusicKit()
+    const loadedIndex = loadedTrackIndexRef.current
+    if (loadedIndex != null) {
+      await rewindTrackToStart(mk, loadedIndex)
+      return
+    }
     if (mk.isPlaying) mk.pause()
     await mk.seekToTime(0)
     setMusicKitStatus({ playing: false })
-  }, [])
+  }, [cancelScheduledPlayback, rewindTrackToStart])
 
   return {
     authorized: status.authorized,
@@ -345,6 +423,8 @@ export function useMusicKitPlayback() {
     error: status.error,
     preparing: status.preparing,
     playing: status.playing,
+    loadingTrackIndex: status.loadingTrackIndex,
+    loadedTrackIndex: status.loadedTrackIndex,
     authorize,
     unauthorize,
     getLibraryPlaylists,

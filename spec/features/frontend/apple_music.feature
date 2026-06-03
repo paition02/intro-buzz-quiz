@@ -80,6 +80,14 @@ Feature: MusicKit integration
     And MusicKit changes to the backend current track
     And MusicKit seeks to 0
 
+  Scenario: Play is locked until the current MusicKit track finishes loading
+    Given MusicKit current track loading is delayed
+    And the frontend console selected playlist "Spec Playlist A"
+    When the frontend clicks "ゲーム開始"
+    Then the frontend play button shows "ロード中" and is disabled
+    And MusicKit has not started playback
+    And the frontend play button becomes enabled
+
   Scenario: Playing the intro uses MusicKit playback and stops after the duration
     Given the frontend console selected playlist "Spec Playlist A"
     When the frontend clicks "ゲーム開始"
