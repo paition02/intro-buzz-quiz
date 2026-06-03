@@ -134,18 +134,6 @@ function useConnected() {
   return useSyncExternalStore(subscribeConnected, () => connected)
 }
 
-function useGameboardSoundCue(step: GameStep) {
-  const previousStepRef = useRef<GameStep | null>(null)
-
-  useEffect(() => {
-    const previousStep = previousStepRef.current
-    previousStepRef.current = step
-    if (previousStep === null || previousStep === step) return
-    if (step === 'correct') playGameboardSound('correct')
-    if (step === 'wrong') playGameboardSound('wrong')
-  }, [step])
-}
-
 function consoleAction<T = GameState>(event: string, body?: unknown): Promise<T> {
   return new Promise((resolve, reject) => {
     const callback = (error: Error | null, response?: { ok: boolean; state?: T; error?: string }) => {
@@ -640,7 +628,8 @@ function ConsolePage() {
   })
 
   const handleJudge = (result: 'correct' | 'wrong') => run(async () => {
-    await consoleAction('console:judge', { result })
+    const judgedState = await consoleAction('console:judge', { result })
+    if (judgedState.step === result) playResultSound(result)
   })
 
   const handleGiveUp = () => run(async () => {
@@ -844,7 +833,7 @@ function ConsolePage() {
 }
 
 
-function playGameboardSound(kind: 'correct' | 'wrong') {
+function playResultSound(kind: 'correct' | 'wrong') {
   const AudioContextCtor = window.AudioContext ?? (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
   if (!AudioContextCtor) return
   const audioContext = new AudioContextCtor()
@@ -1112,7 +1101,6 @@ function ReadyTrackLanes({ tracks }: { tracks: Track[] }) {
 function GameboardPage() {
   const state = useGameState()
   const connected = useConnected()
-  useGameboardSoundCue(state.step)
   const joinedPlayers = state.players.filter((player) => player.joined)
 
   const showReadyTracks = state.phase === 'ready' && state.tracks.length > 0

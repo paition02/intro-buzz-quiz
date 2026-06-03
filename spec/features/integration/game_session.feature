@@ -22,7 +22,7 @@ Feature: Full game session
     And the gameboard asks for an answer
     When the host judges the answer as "correct"
     Then the gameboard shows "正解"
-    And the gameboard plays the "correct" sound
+    And the console plays the "correct" sound
     And player "player-1" score is 1
     When the judging animation expires
     Then the gameboard shows the current track information
@@ -43,7 +43,7 @@ Feature: Full game session
     Then backend answerer is "player-1"
     When the host judges the answer as "wrong"
     Then the gameboard shows "不正解"
-    And the gameboard plays the "wrong" sound
+    And the console plays the "wrong" sound
     And player "player-1" score is 0
     When the judging animation expires
     Then the backend is waiting before playback for the same track

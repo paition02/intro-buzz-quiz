@@ -892,8 +892,9 @@ def gameboard_asks_for_answer(frontend_page: Page):
 
 
 @when(parsers.parse('the host judges the answer as "{result}"'))
-def host_judges_answer(socket_client, result: str):
-    socket_client.emit("console:judge", {"result": result})
+def host_judges_answer(frontend_page: Page, socket_client, result: str):
+    label = {"correct": "正解", "wrong": "不正解"}[result]
+    frontend_page.get_by_role("button", name=label, exact=True).click(timeout=10000)
     socket_client.wait_for_state(step=result)
 
 
@@ -906,10 +907,10 @@ def gameboard_shows_text(frontend_page: Page, text: str):
     expect(_gameboard_page(frontend_page).get_by_text(text, exact=True).first).to_be_visible(timeout=30000)
 
 
-@then(parsers.parse('the gameboard plays the "{kind}" sound'))
-def gameboard_plays_sound(frontend_page: Page, kind: str):
+@then(parsers.parse('the console plays the "{kind}" sound'))
+def console_plays_sound(frontend_page: Page, kind: str):
     expected = {"correct": [880, 1174.66], "wrong": [160, 110]}[kind]
-    _gameboard_page(frontend_page).wait_for_function(
+    frontend_page.wait_for_function(
         """
         (expected) => {
           const frequencies = (window.__introBuzzAudioEvents ?? [])
