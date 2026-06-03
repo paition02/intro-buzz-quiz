@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useRef, useSyncExternalStore } from 'react'
 
 type MusicTrack = {
   id: string
@@ -105,12 +105,64 @@ function getMusicKit() {
   return musicKitReady
 }
 
+type MusicKitStatus = {
+  authorized: boolean
+  ready: boolean
+  error: string | null
+  preparing: boolean
+  playing: boolean
+}
+
+let musicKitStatus: MusicKitStatus = {
+  authorized: false,
+  ready: false,
+  error: null,
+  preparing: false,
+  playing: false,
+}
+
+const musicKitStatusListeners = new Set<() => void>()
+let musicKitStatusTrackingStarted = false
+
+function setMusicKitStatus(nextStatus: Partial<MusicKitStatus>) {
+  const next = { ...musicKitStatus, ...nextStatus }
+  if (
+    next.authorized === musicKitStatus.authorized &&
+    next.ready === musicKitStatus.ready &&
+    next.error === musicKitStatus.error &&
+    next.preparing === musicKitStatus.preparing &&
+    next.playing === musicKitStatus.playing
+  ) return
+
+  musicKitStatus = next
+  musicKitStatusListeners.forEach((notify) => notify())
+}
+
+function startMusicKitStatusTracking() {
+  if (musicKitStatusTrackingStarted) return
+  musicKitStatusTrackingStarted = true
+
+  getMusicKit().then((mk) => {
+    setMusicKitStatus({ ready: true, authorized: mk.isAuthorized, error: null })
+    const handler = () => setMusicKitStatus({ authorized: mk.isAuthorized })
+    mk.addEventListener('authorizationStatusDidChange', handler)
+  }).catch((e) => {
+    setMusicKitStatus({ error: e instanceof Error ? e.message : 'MusicKit configuration failed' })
+  })
+}
+
+function subscribeMusicKitStatus(notify: () => void) {
+  musicKitStatusListeners.add(notify)
+  startMusicKitStatusTracking()
+  return () => { musicKitStatusListeners.delete(notify) }
+}
+
+function getMusicKitStatusSnapshot() {
+  return musicKitStatus
+}
+
 export function useMusicKitPlayback() {
-  const [authorized, setAuthorized] = useState(false)
-  const [ready, setReady] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [preparing, setPreparing] = useState(false)
-  const [playing, setPlaying] = useState(false)
+  const status = useSyncExternalStore(subscribeMusicKitStatus, getMusicKitStatusSnapshot)
   const stopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const tracksRef = useRef<MusicTrack[]>([])
   const loadPromiseRef = useRef<Promise<void>>(Promise.resolve())
@@ -118,28 +170,16 @@ export function useMusicKitPlayback() {
   const queuedChunkStartRef = useRef<number | null>(null)
   const playbackGenerationRef = useRef(0)
 
-  useEffect(() => {
-    let cleanup: (() => void) | undefined
-    getMusicKit().then((mk) => {
-      setReady(true)
-      setAuthorized(mk.isAuthorized)
-      const handler = () => setAuthorized(mk.isAuthorized)
-      mk.addEventListener('authorizationStatusDidChange', handler)
-      cleanup = () => mk.removeEventListener('authorizationStatusDidChange', handler)
-    }).catch((e) => setError(e instanceof Error ? e.message : 'MusicKit configuration failed'))
-    return () => cleanup?.()
-  }, [])
-
   const authorize = useCallback(async () => {
     const mk = await getMusicKit()
     await mk.authorize()
-    setAuthorized(mk.isAuthorized)
+    setMusicKitStatus({ authorized: mk.isAuthorized })
   }, [])
 
   const unauthorize = useCallback(async () => {
     const mk = await getMusicKit()
     await mk.unauthorize()
-    setAuthorized(false)
+    setMusicKitStatus({ authorized: false })
   }, [])
 
   const getLibraryPlaylists = useCallback(async () => {
@@ -205,7 +245,7 @@ export function useMusicKitPlayback() {
     const mk = await getMusicKit()
     tracksRef.current = tracks
     queuedChunkStartRef.current = null
-    setPreparing(true)
+    setMusicKitStatus({ preparing: true })
     const promise = (async () => {
       try {
         const queueTracks = tracks.slice(0, QUEUE_CHUNK_SIZE)
@@ -215,7 +255,7 @@ export function useMusicKitPlayback() {
         mk.repeatMode = MusicKit.PlayerRepeatMode.one
         loadPromiseRef.current = Promise.resolve()
       } finally {
-        setPreparing(false)
+        setMusicKitStatus({ preparing: false })
       }
     })()
     preparePromiseRef.current = promise
@@ -261,12 +301,12 @@ export function useMusicKitPlayback() {
     await mk.seekToTime(0)
     if (generation !== playbackGenerationRef.current) return
     await mk.play()
-    setPlaying(true)
+    setMusicKitStatus({ playing: true })
     stopTimerRef.current = setTimeout(() => {
       if (generation !== playbackGenerationRef.current) return
       if (mk.isPlaying) mk.pause()
       void mk.seekToTime(0)
-      setPlaying(false)
+      setMusicKitStatus({ playing: false })
     }, seconds * 1000)
   }, [])
 
@@ -286,7 +326,7 @@ export function useMusicKitPlayback() {
       if (mk.isPlaying) mk.pause()
       return
     }
-    setPlaying(true)
+    setMusicKitStatus({ playing: true })
   }, [ensureTrackQueued])
 
   const stop = useCallback(async () => {
@@ -296,15 +336,15 @@ export function useMusicKitPlayback() {
     const mk = await getMusicKit()
     if (mk.isPlaying) mk.pause()
     await mk.seekToTime(0)
-    setPlaying(false)
+    setMusicKitStatus({ playing: false })
   }, [])
 
   return {
-    authorized,
-    ready,
-    error,
-    preparing,
-    playing,
+    authorized: status.authorized,
+    ready: status.ready,
+    error: status.error,
+    preparing: status.preparing,
+    playing: status.playing,
     authorize,
     unauthorize,
     getLibraryPlaylists,

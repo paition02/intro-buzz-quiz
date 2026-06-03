@@ -82,7 +82,7 @@ const initialState: GameState = {
 // サーバが唯一の真実(single source of truth)。ここが肝心なんだ!
 // socket と 'state' リスナーはモジュール読込時に"同期で"張る。io() の直後に on('state') を
 // 張るから、接続ハンドシェイク完了(=最初の state 到着)より必ず先にリスナーが居る。
-// 旧実装は useEffect(初回レンダー後)で張っていたので、接続がレンダーを追い越すと
+// 旧実装は初回レンダー後に張っていたので、接続がレンダーを追い越すと
 // 初回 state を取りこぼし、gameboard が固まることがあった。それを構造ごと潰す。
 const socket: Socket = io()
 
@@ -125,6 +125,24 @@ function useGameState() {
 
 function useConnected() {
   return useSyncExternalStore(subscribeConnected, () => connected)
+}
+
+function subscribeGameboardSoundCue(notify: () => void) {
+  let previousStep = latestState.step
+  const onState = () => {
+    if (previousStep !== latestState.step) {
+      if (latestState.step === 'correct') playGameboardSound('correct')
+      if (latestState.step === 'wrong') playGameboardSound('wrong')
+      previousStep = latestState.step
+    }
+    notify()
+  }
+  stateListeners.add(onState)
+  return () => { stateListeners.delete(onState) }
+}
+
+function useGameboardSoundCue() {
+  useSyncExternalStore(subscribeGameboardSoundCue, () => latestState.step)
 }
 
 function consoleAction<T = GameState>(event: string, body?: unknown): Promise<T> {
@@ -386,11 +404,13 @@ function ConsolePage() {
   const [loadingLibraryPlaylists, setLoadingLibraryPlaylists] = useState(false)
   const [consoleMessage, setConsoleMessage] = useState<string | null>(null)
   const preparedQueueKeyRef = useRef<string | null>(null)
+  const autoLoginRequestedRef = useRef(false)
   const autoLoadLibraryPlaylistsRequestedRef = useRef(false)
-  const wasRevealStepRef = useRef(false)
   // MusicKit の再生は state を唯一の駆動源にする(命令的ハンドラからは触らない)。
   // 二重ロード防止用の「いま読んでいる曲 index」と、playing への遷移を 1 回だけ拾うための「直前 step」。
   const loadedTrackIndexRef = useRef(-1)
+  const playbackModeRef = useRef<'idle' | 'intro' | 'reveal'>('idle')
+  const revealTrackIndexRef = useRef(-1)
   const previousStepForPlaybackRef = useRef<GameStep>(state.step)
   const getLibraryPlaylists = musicKit.getLibraryPlaylists
   const prepareQueue = musicKit.prepareQueue
@@ -409,36 +429,6 @@ function ConsolePage() {
     if (!query) return libraryPlaylists
     return libraryPlaylists.filter((playlist) => playlist.name.toLowerCase().includes(query))
   }, [libraryPlaylists, playlistSearch])
-
-  useEffect(() => {
-    if (!musicKit.ready || !musicKit.authorized || state.hostLoggedIn) return
-    void consoleAction('console:login').catch((error) => {
-      setConsoleMessage(error instanceof Error ? error.message : String(error))
-    })
-  }, [musicKit.ready, musicKit.authorized, state.hostLoggedIn])
-
-  useEffect(() => {
-    if (state.step === 'playing' || state.step === 'reveal') return
-    void stopPlayback().catch((error) => {
-      setConsoleMessage(error instanceof Error ? error.message : String(error))
-    })
-  }, [state.step, stopPlayback])
-
-  useEffect(() => {
-    if (state.step !== 'reveal' || state.currentTrackIndex < 0) {
-      if (!wasRevealStepRef.current) return
-      wasRevealStepRef.current = false
-      void stopPlayback().catch((error) => {
-        setConsoleMessage(error instanceof Error ? error.message : String(error))
-      })
-      return
-    }
-
-    wasRevealStepRef.current = true
-    void playFullLoopTrack(state.currentTrackIndex).catch((error) => {
-      setConsoleMessage(error instanceof Error ? error.message : String(error))
-    })
-  }, [playFullLoopTrack, state.currentTrackIndex, state.step, stopPlayback])
 
   const run = async (action: () => Promise<void>) => {
     setBusy(true)
@@ -466,64 +456,109 @@ function ConsolePage() {
   }, [getLibraryPlaylists])
 
   useEffect(() => {
-    if (!musicKit.authorized) autoLoadLibraryPlaylistsRequestedRef.current = false
-    if (
-      !musicKit.ready ||
-      !musicKit.authorized ||
-      loadingLibraryPlaylists ||
-      libraryPlaylists.length > 0 ||
-      autoLoadLibraryPlaylistsRequestedRef.current
-    ) return
-    autoLoadLibraryPlaylistsRequestedRef.current = true
-    void loadLibraryPlaylists().catch((error) => {
+    const report = (error: unknown) => {
       setConsoleMessage(error instanceof Error ? error.message : String(error))
-    })
-  }, [libraryPlaylists.length, loadLibraryPlaylists, loadingLibraryPlaylists, musicKit.authorized, musicKit.ready])
-
-  useEffect(() => {
-    if (!musicKit.ready || !musicKit.authorized || state.selectedPlaylistIds.length === 0 || state.tracks.length === 0) return
-    const queueKey = `${state.selectedPlaylistIds.join('|')}:${state.tracks.map((track) => track.id).join('|')}`
-    if (preparedQueueKeyRef.current === queueKey) return
-    preparedQueueKeyRef.current = queueKey
-    loadedTrackIndexRef.current = -1 // キューが入れ替わったらロード済み index も無効化
-    void prepareQueue(state.tracks).catch((error) => {
-      preparedQueueKeyRef.current = null
-      setConsoleMessage(error instanceof Error ? error.message : String(error))
-    })
-  }, [musicKit.authorized, musicKit.ready, prepareQueue, state.selectedPlaylistIds, state.tracks])
-
-  // 曲のロードは state.currentTrackIndex に追従する(旧 handleStart/handleNextRound の命令的ロードを置換)。
-  // index が変わった時だけ読み直す。playing→beforePlayback の復帰みたいな step だけの変化では読み直さない。
-  useEffect(() => {
-    if (!musicKit.ready || !musicKit.authorized) return
-    if (state.currentTrackIndex < 0) {
-      loadedTrackIndexRef.current = -1
-      return
     }
-    if (loadedTrackIndexRef.current === state.currentTrackIndex) return
-    loadedTrackIndexRef.current = state.currentTrackIndex
-    void loadTrack(state.currentTrackIndex).catch((error) => {
-      setConsoleMessage(error instanceof Error ? error.message : String(error))
-    })
-  }, [loadTrack, musicKit.authorized, musicKit.ready, state.currentTrackIndex])
 
-  // イントロ再生は step が playing に"入った"瞬間に 1 回だけ。停止は下の step 監視 effect が担う。
-  // step 遷移(playing→beforePlayback への復帰)はサーバ所有のまま、クライアントはそれに追従する。
-  useEffect(() => {
-    const previousStep = previousStepForPlaybackRef.current
-    previousStepForPlaybackRef.current = state.step
-    if (state.step === 'playing' && previousStep !== 'playing') {
-      void playIntro(state.playbackSeconds).catch((error) => {
-        setConsoleMessage(error instanceof Error ? error.message : String(error))
+    if (!musicKit.authorized) autoLoadLibraryPlaylistsRequestedRef.current = false
+    if (state.hostLoggedIn) autoLoginRequestedRef.current = false
+
+    if (musicKit.ready && musicKit.authorized && !state.hostLoggedIn && !autoLoginRequestedRef.current) {
+      autoLoginRequestedRef.current = true
+      void consoleAction('console:login').catch((error) => {
+        autoLoginRequestedRef.current = false
+        report(error)
       })
     }
-  }, [playIntro, state.playbackSeconds, state.step])
+
+    if (
+      musicKit.ready &&
+      musicKit.authorized &&
+      !loadingLibraryPlaylists &&
+      libraryPlaylists.length === 0 &&
+      !autoLoadLibraryPlaylistsRequestedRef.current
+    ) {
+      autoLoadLibraryPlaylistsRequestedRef.current = true
+      void loadLibraryPlaylists().catch(report)
+    }
+
+    const previousStep = previousStepForPlaybackRef.current
+    previousStepForPlaybackRef.current = state.step
+
+    if (musicKit.ready && musicKit.authorized) {
+      if (state.selectedPlaylistIds.length > 0 && state.tracks.length > 0) {
+        const queueKey = `${state.selectedPlaylistIds.join('|')}:${state.tracks.map((track) => track.id).join('|')}`
+        if (preparedQueueKeyRef.current !== queueKey) {
+          preparedQueueKeyRef.current = queueKey
+          loadedTrackIndexRef.current = -1 // キューが入れ替わったらロード済み index も無効化
+          void prepareQueue(state.tracks).catch((error) => {
+            preparedQueueKeyRef.current = null
+            report(error)
+          })
+        }
+      }
+
+      // 曲のロードは state.currentTrackIndex に追従する(旧 handleStart/handleNextRound の命令的ロードを置換)。
+      // index が変わった時だけ読み直す。playing→beforePlayback の復帰みたいな step だけの変化では読み直さない。
+      if (state.currentTrackIndex < 0) {
+        loadedTrackIndexRef.current = -1
+      } else if (loadedTrackIndexRef.current !== state.currentTrackIndex) {
+        loadedTrackIndexRef.current = state.currentTrackIndex
+        void loadTrack(state.currentTrackIndex).catch(report)
+      }
+    } else if (state.currentTrackIndex < 0) {
+      loadedTrackIndexRef.current = -1
+    }
+
+    // イントロ再生は step が playing に"入った"瞬間に 1 回だけ。
+    // step 遷移(playing→beforePlayback の復帰)はサーバ所有のまま、クライアントはそれに追従する。
+    if (state.step === 'playing' && previousStep !== 'playing') {
+      playbackModeRef.current = 'intro'
+      revealTrackIndexRef.current = -1
+      void playIntro(state.playbackSeconds).catch(report)
+    } else if (state.step === 'reveal' && state.currentTrackIndex >= 0) {
+      if (playbackModeRef.current !== 'reveal' || revealTrackIndexRef.current !== state.currentTrackIndex) {
+        playbackModeRef.current = 'reveal'
+        revealTrackIndexRef.current = state.currentTrackIndex
+        void playFullLoopTrack(state.currentTrackIndex).catch(report)
+      }
+    } else if (playbackModeRef.current !== 'idle') {
+      playbackModeRef.current = 'idle'
+      revealTrackIndexRef.current = -1
+      void stopPlayback().catch(report)
+    }
+  }, [
+    libraryPlaylists.length,
+    loadLibraryPlaylists,
+    loadingLibraryPlaylists,
+    loadTrack,
+    musicKit.authorized,
+    musicKit.ready,
+    playFullLoopTrack,
+    playIntro,
+    prepareQueue,
+    state.currentTrackIndex,
+    state.hostLoggedIn,
+    state.playbackSeconds,
+    state.selectedPlaylistIds,
+    state.step,
+    state.tracks,
+    stopPlayback,
+  ])
 
   const handleLogin = () => run(async () => {
-    await musicKit.authorize()
-    await consoleAction('console:login')
-    const playlists = await loadLibraryPlaylists()
-    setConsoleMessage(`Apple Musicにログインしました。${playlists.length}件のライブラリプレイリストを取得しました`)
+    autoLoginRequestedRef.current = true
+    autoLoadLibraryPlaylistsRequestedRef.current = true
+    try {
+      await musicKit.authorize()
+      await consoleAction('console:login')
+      const playlists = await loadLibraryPlaylists()
+      setConsoleMessage(`Apple Musicにログインしました。${playlists.length}件のライブラリプレイリストを取得しました`)
+    } catch (error) {
+      autoLoginRequestedRef.current = false
+      autoLoadLibraryPlaylistsRequestedRef.current = false
+      throw error
+    }
   })
 
   const fetchPlaylistTracks = async (playlist: Playlist) => {
@@ -638,7 +673,7 @@ function ConsolePage() {
           <h2 className="m-0 mb-2.5 text-2xl font-bold">{phaseLabel(state.phase, state.step)}</h2>
           <p className="mt-0 text-subtle leading-relaxed">{state.message}</p>
           {consoleMessage && <p className={`mt-0 leading-relaxed ${HINT}`}>{consoleMessage}</p>}
-          {musicKit.error && <p className="mt-0 leading-relaxed text-rose font-bold">MusicKit: {musicKit.error}</p>}
+          {musicKit.error && <p className="mt-0 leading-relaxed text-rose font-bold">MusicKit: <span>{musicKit.error}</span></p>}
         </div>
         <button className={BTN_DANGER} onClick={() => consoleAction('console:reset')}>リセット</button>
       </section>
@@ -869,19 +904,30 @@ function GameboardPlayers({ players, answererId }: {
   )
 }
 
+let viewportSizeSnapshot = {
+  width: window.innerWidth,
+  height: window.innerHeight,
+}
+
+function getViewportSizeSnapshot() {
+  const width = window.innerWidth
+  const height = window.innerHeight
+  if (viewportSizeSnapshot.width === width && viewportSizeSnapshot.height === height) return viewportSizeSnapshot
+  viewportSizeSnapshot = { width, height }
+  return viewportSizeSnapshot
+}
+
+function subscribeViewportSize(notify: () => void) {
+  const update = () => {
+    const previous = viewportSizeSnapshot
+    if (getViewportSizeSnapshot() !== previous) notify()
+  }
+  window.addEventListener('resize', update)
+  return () => window.removeEventListener('resize', update)
+}
+
 function useViewportSize() {
-  const [viewportSize, setViewportSize] = useState(() => ({
-    width: window.innerWidth,
-    height: window.innerHeight,
-  }))
-
-  useEffect(() => {
-    const update = () => setViewportSize({ width: window.innerWidth, height: window.innerHeight })
-    window.addEventListener('resize', update)
-    return () => window.removeEventListener('resize', update)
-  }, [])
-
-  return viewportSize
+  return useSyncExternalStore(subscribeViewportSize, getViewportSizeSnapshot)
 }
 
 function TrackArtwork({ track }: { track: Track }) {
@@ -925,13 +971,25 @@ function measureTrackChipWidth(track: Track) {
   return width
 }
 
+function useElementClientWidth<T extends HTMLElement>() {
+  const [element, setElement] = useState<T | null>(null)
+  const subscribe = useCallback((notify: () => void) => {
+    if (!element) return () => {}
+    const observer = new ResizeObserver(notify)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [element])
+  const getSnapshot = useCallback(() => element?.clientWidth ?? 0, [element])
+  const width = useSyncExternalStore(subscribe, getSnapshot)
+  return [setElement, width] as const
+}
+
 function TrackLane({ tracks, laneIndex, direction }: {
   tracks: Track[]
   laneIndex: number
   direction: 'left' | 'right'
 }) {
-  const laneRef = useRef<HTMLDivElement>(null)
-  const [laneWidth, setLaneWidth] = useState(0)
+  const [setLaneElement, laneWidth] = useElementClientWidth<HTMLDivElement>()
   const [startIndex, setStartIndex] = useState(0)
   const [animationRun, setAnimationRun] = useState(0)
   const chipGap = 12
@@ -964,20 +1022,10 @@ function TrackLane({ tracks, laneIndex, direction }: {
     setAnimationRun((current) => current + 1)
   }
 
-  useEffect(() => {
-    const lane = laneRef.current
-    if (!lane) return undefined
-    const update = () => setLaneWidth(lane.clientWidth)
-    update()
-    const observer = new ResizeObserver(update)
-    observer.observe(lane)
-    return () => observer.disconnect()
-  }, [])
-
   return (
     <div
       className={`relative min-h-16 overflow-hidden rounded-2xl border border-white/10 ${direction === 'right' ? 'bg-linear-to-r from-sky/5 to-white/5' : 'bg-linear-to-r from-white/5 to-amber/5'}`}
-      ref={laneRef}
+      ref={setLaneElement}
     >
       <div
         className={`track-lane-strip track-lane-strip-${direction}-${animationRun % 2 === 0 ? 'a' : 'b'} flex h-full`}
@@ -1062,20 +1110,12 @@ function ReadyTrackLanes({ tracks }: { tracks: Track[] }) {
 function GameboardPage() {
   const state = useGameState()
   const connected = useConnected()
+  useGameboardSoundCue()
   const joinedPlayers = state.players.filter((player) => player.joined)
-  const previousStepRef = useRef<GameStep>(state.step)
 
   const showReadyTracks = state.phase === 'ready' && state.tracks.length > 0
   const sortedPlayers = [...joinedPlayers].sort((a, b) => b.score - a.score || a.id.localeCompare(b.id))
   const players = <GameboardPlayers players={joinedPlayers} answererId={state.answererId} />
-
-  useEffect(() => {
-    if (previousStepRef.current !== state.step) {
-      if (state.step === 'correct') playGameboardSound('correct')
-      if (state.step === 'wrong') playGameboardSound('wrong')
-      previousStepRef.current = state.step
-    }
-  }, [state.step])
 
   // ボード上の共通レイアウトはユーティリティ束を定数化して step ごとに付け替える。
   const TITLE = 'text-5xl sm:text-7xl font-black leading-none tracking-tighter mx-auto'
@@ -1332,14 +1372,18 @@ const defaultTitle = '早押しイントロクイズ'
 
 export default function App() {
   const path = window.location.pathname
+  const pageTitle = routeTitles[path] ?? defaultTitle
 
-  // ルートに対応する document.title をセットする。SPA だから手で切り替えないと変わらないんだ。
-  useEffect(() => {
-    document.title = routeTitles[path] ?? defaultTitle
-  }, [path])
+  let page: ReactNode
+  if (path === '/console') page = <ConsolePage />
+  else if (path === '/gameboard') page = <GameboardPage />
+  else if (path === '/action') page = <ActionPage />
+  else page = <HomePage />
 
-  if (path === '/console') return <ConsolePage />
-  if (path === '/gameboard') return <GameboardPage />
-  if (path === '/action') return <ActionPage />
-  return <HomePage />
+  return (
+    <>
+      <title>{pageTitle}</title>
+      {page}
+    </>
+  )
 }
