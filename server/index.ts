@@ -1,6 +1,7 @@
 import { SignJWT, importPKCS8 } from 'jose'
 import { Server } from 'socket.io'
 import { Server as Engine } from '@socket.io/bun-engine'
+import { networkInterfaces } from 'node:os'
 import index from '../index.html'
 
 // Bun は cwd の .env を自動で読むので dotenv は不要。
@@ -499,4 +500,22 @@ const server = Bun.serve({
   websocket,
 })
 
-console.log(`Intro Buzz Quiz server listening on http://localhost:${server.port}`)
+const actualPort = server.port ?? port
+
+console.log('Intro Buzz Quiz server listening')
+console.log('')
+console.log('Local URL:')
+console.log(`  http://localhost:${actualPort}/`)
+
+let loggedLanHeader = false
+for (const [name, entries] of Object.entries(networkInterfaces())) {
+  for (const entry of entries ?? []) {
+    if (entry.internal || entry.family !== 'IPv4') continue
+    if (!loggedLanHeader) {
+      console.log('')
+      console.log('LAN URLs:')
+      loggedLanHeader = true
+    }
+    console.log(`  ${name}: http://${entry.address}:${actualPort}/`)
+  }
+}
