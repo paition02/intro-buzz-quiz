@@ -18,4 +18,5 @@ dev = [
   "python-socketio[client]>=5.15.0",
   "playwright>=1.57.0",
   "musickit-api-mock-playwright>=0.1.1",
+  "python-dotenv>=1.2.2",
 ]

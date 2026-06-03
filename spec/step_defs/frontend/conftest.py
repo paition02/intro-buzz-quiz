@@ -8,6 +8,7 @@ import pytest
 from playwright.sync_api import Browser, Error as PlaywrightError, Page, Playwright, sync_playwright
 
 from frontend.musickit_mock import configure_musickit_api_mock, make_developer_token
+from tls_helpers import chromium_certificate_args
 
 
 @pytest.fixture(scope="session")
@@ -17,10 +18,10 @@ def playwright_instance() -> Iterator[Playwright]:
 
 
 @pytest.fixture(scope="session")
-def browser(playwright_instance: Playwright) -> Iterator[Browser]:
+def browser(playwright_instance: Playwright, server_url: str) -> Iterator[Browser]:
     launch_options = {
         "headless": True,
-        "args": ["--no-sandbox", "--disable-dev-shm-usage"],
+        "args": ["--no-sandbox", "--disable-dev-shm-usage", *chromium_certificate_args(server_url)],
     }
     executable_path = os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE") or shutil.which("chromium-browser") or shutil.which("chromium")
     if executable_path:
@@ -48,6 +49,54 @@ def json_token_response() -> str:
 @pytest.fixture
 def frontend_page(browser: Browser, server_url: str, socket_client) -> Iterator[Page]:
     context = browser.new_context(base_url=server_url)
+    context.add_init_script(
+        """
+        (() => {
+          const events = [];
+          window.__introBuzzAudioEvents = events;
+          class FakeAudioContext {
+            constructor() {
+              this.currentTime = 0;
+              this.state = 'running';
+              this.destination = {};
+              events.push({ type: 'context' });
+            }
+            createGain() {
+              return {
+                gain: {
+                  setValueAtTime(value, time) { events.push({ type: 'gain.set', value, time }); },
+                  exponentialRampToValueAtTime(value, time) { events.push({ type: 'gain.ramp', value, time }); },
+                },
+                connect() { events.push({ type: 'gain.connect' }); },
+              };
+            }
+            createOscillator() {
+              const oscillator = {
+                type: 'sine',
+                frequency: {
+                  setValueAtTime(frequency, time) { events.push({ type: 'frequency', frequency, time }); },
+                },
+                connect() { events.push({ type: 'oscillator.connect', oscillatorType: oscillator.type }); },
+                start(time) { events.push({ type: 'oscillator.start', oscillatorType: oscillator.type, time }); },
+                stop(time) { events.push({ type: 'oscillator.stop', oscillatorType: oscillator.type, time }); },
+              };
+              return oscillator;
+            }
+            resume() {
+              this.state = 'running';
+              events.push({ type: 'resume' });
+              return Promise.resolve();
+            }
+            close() {
+              events.push({ type: 'close' });
+              return Promise.resolve();
+            }
+          }
+          window.AudioContext = FakeAudioContext;
+          window.webkitAudioContext = FakeAudioContext;
+        })();
+        """
+    )
     page = context.new_page()
     request_log: list[dict[str, str]] = []
     response_log: list[dict[str, str | int]] = []
@@ -122,17 +171,6 @@ def frontend_page(browser: Browser, server_url: str, socket_client) -> Iterator[
             content_type="application/json",
             body=json_token_response(),
         ),
-    )
-    page.add_init_script(
-        """
-        window.AudioContext = window.AudioContext || class {
-          constructor() { this.currentTime = 0; this.state = 'running'; this.destination = {}; }
-          createGain() { return { gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {} }; }
-          createOscillator() { return { frequency: { setValueAtTime() {} }, connect() {}, start() {}, stop() {}, type: 'sine' }; }
-          resume() { return Promise.resolve(); }
-          close() { return Promise.resolve(); }
-        };
-        """
     )
     try:
         yield page

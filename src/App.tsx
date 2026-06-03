@@ -110,6 +110,12 @@ function setConnected(next: boolean) {
 socket.on('connect', () => setConnected(true))
 socket.on('disconnect', () => setConnected(false))
 
+window.addEventListener('offline', () => setConnected(false))
+window.addEventListener('online', () => {
+  if (!socket.connected) socket.connect()
+  setConnected(socket.connected)
+})
+
 function subscribeState(notify: () => void) {
   stateListeners.add(notify)
   return () => { stateListeners.delete(notify) }
@@ -128,22 +134,16 @@ function useConnected() {
   return useSyncExternalStore(subscribeConnected, () => connected)
 }
 
-function subscribeGameboardSoundCue(notify: () => void) {
-  let previousStep = latestState.step
-  const onState = () => {
-    if (previousStep !== latestState.step) {
-      if (latestState.step === 'correct') playGameboardSound('correct')
-      if (latestState.step === 'wrong') playGameboardSound('wrong')
-      previousStep = latestState.step
-    }
-    notify()
-  }
-  stateListeners.add(onState)
-  return () => { stateListeners.delete(onState) }
-}
+function useGameboardSoundCue(step: GameStep) {
+  const previousStepRef = useRef<GameStep | null>(null)
 
-function useGameboardSoundCue() {
-  useSyncExternalStore(subscribeGameboardSoundCue, () => latestState.step)
+  useEffect(() => {
+    const previousStep = previousStepRef.current
+    previousStepRef.current = step
+    if (previousStep === null || previousStep === step) return
+    if (step === 'correct') playGameboardSound('correct')
+    if (step === 'wrong') playGameboardSound('wrong')
+  }, [step])
 }
 
 function consoleAction<T = GameState>(event: string, body?: unknown): Promise<T> {
@@ -848,6 +848,7 @@ function playGameboardSound(kind: 'correct' | 'wrong') {
   const AudioContextCtor = window.AudioContext ?? (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
   if (!AudioContextCtor) return
   const audioContext = new AudioContextCtor()
+  if (audioContext.state === 'suspended') void audioContext.resume().catch(() => {})
   const start = audioContext.currentTime
   const master = audioContext.createGain()
   master.gain.setValueAtTime(0.7, start)
@@ -1111,7 +1112,7 @@ function ReadyTrackLanes({ tracks }: { tracks: Track[] }) {
 function GameboardPage() {
   const state = useGameState()
   const connected = useConnected()
-  useGameboardSoundCue()
+  useGameboardSoundCue(state.step)
   const joinedPlayers = state.players.filter((player) => player.joined)
 
   const showReadyTracks = state.phase === 'ready' && state.tracks.length > 0
@@ -1137,7 +1138,12 @@ function GameboardPage() {
   let cardClassName = CARD_GB
 
   if (state.phase === 'initialization') {
-    content = <h1 className={READY_TITLE}>ボタンを押してご参加ください</h1>
+    content = (
+      <>
+        <h1 className={READY_TITLE}>ボタンを押してご参加ください</h1>
+        {players}
+      </>
+    )
   } else if (state.phase === 'ready') {
     cardClassName = showReadyTracks ? CARD_READY : CARD_GB
     content = (

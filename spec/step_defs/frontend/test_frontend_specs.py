@@ -12,6 +12,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from pytest_bdd import given, parsers, scenarios, then, when
 
 from frontend.helpers import sample_tracks
+from tls_helpers import tls_verify, websocket_ssl_options
 
 scenarios("../../features/frontend")
 scenarios("../../features/integration")
@@ -41,7 +42,12 @@ def _wait_for_joined_count(socket_client, count: int):
 
 def _current_backend_state(server_url: str):
     events = []
-    client = socketio.Client(reconnection=False, logger=False, engineio_logger=False)
+    client = socketio.Client(
+        reconnection=False,
+        logger=False,
+        engineio_logger=False,
+        websocket_extra_options=websocket_ssl_options(server_url),
+    )
     client.on("state", lambda payload: events.append(payload))
     client.connect(server_url, transports=["websocket"], socketio_path="socket.io", wait_timeout=5)
     try:
@@ -209,7 +215,7 @@ def _wait_for_music_queue(frontend_page: Page, expected: list[str]):
 
 def _prepare_game(socket_client, actor: str = "player-front"):
     _set_ready_tracks(socket_client, 3)
-    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}")
+    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}", verify=tls_verify(socket_client.server_url))
     assert response.status_code == 200
     _wait_for_joined_count(socket_client, 1)
     # The action API intentionally has a cooldown shared by join and buzz.
@@ -385,7 +391,7 @@ def backend_host_plays(socket_client, seconds: int):
 
 @when(parsers.parse('backend actor "{actor}" presses the action API'))
 def backend_actor_presses(socket_client, actor: str):
-    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}")
+    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}", verify=tls_verify(socket_client.server_url))
     assert response.status_code == 200
     socket_client.wait_for_state(step="answering", answererId=actor)
 
@@ -395,7 +401,7 @@ def backend_game_has_actor_answering(socket_client, actor: str):
     _prepare_game(socket_client, actor)
     socket_client.emit("console:play", {"seconds": 1})
     socket_client.wait_for_state(step="playing")
-    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}")
+    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}", verify=tls_verify(socket_client.server_url))
     assert response.status_code == 200
     socket_client.wait_for_state(step="answering", answererId=actor)
 
@@ -494,7 +500,7 @@ def backend_game_has_results(socket_client, actor: str):
     _prepare_game(socket_client, actor)
     socket_client.emit("console:play", {"seconds": 1})
     socket_client.wait_for_state(step="playing")
-    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}")
+    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}", verify=tls_verify(socket_client.server_url))
     assert response.status_code == 200
     socket_client.wait_for_state(step="answering", answererId=actor)
     socket_client.emit("console:judge", {"result": "correct"})
@@ -812,6 +818,13 @@ def _gameboard_page(frontend_page: Page) -> Page:
     return _integration_page(frontend_page, "gameboard")
 
 
+def _visible_gameboard_page(frontend_page: Page) -> Page:
+    pages = getattr(frontend_page, "integration_pages", None)
+    if pages and "gameboard" in pages:
+        return pages["gameboard"]
+    return frontend_page
+
+
 @given("the host console is logged into mocked MusicKit")
 def host_console_logged_into_musickit(frontend_page: Page, socket_client):
     frontend_console_logged_in(frontend_page, socket_client)
@@ -843,7 +856,7 @@ def action_button_is_open(frontend_page: Page, actor: str):
 
 @given(parsers.parse('action button "{actor}" is joined'))
 def action_button_is_joined(socket_client, actor: str):
-    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}")
+    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}", verify=tls_verify(socket_client.server_url))
     assert response.status_code in {200, 204}
     _wait_for_joined_count(socket_client, len([p for p in socket_client.state["players"] if p["joined"]]) + (0 if any(p["id"] == actor and p["joined"] for p in socket_client.state["players"]) else 1))
     time.sleep(1.05)
@@ -852,7 +865,7 @@ def action_button_is_joined(socket_client, actor: str):
 @given(parsers.parse('action buttons "{actors}" are joined'))
 def action_buttons_are_joined(socket_client, actors: str):
     for actor in [value for value in actors.split(",") if value]:
-        response = httpx.post(f"{socket_client.server_url}/api/act/{actor}")
+        response = httpx.post(f"{socket_client.server_url}/api/act/{actor}", verify=tls_verify(socket_client.server_url))
         assert response.status_code in {200, 204}
         time.sleep(1.05)
     expected = len([value for value in actors.split(",") if value])
@@ -861,7 +874,7 @@ def action_buttons_are_joined(socket_client, actors: str):
 
 @when(parsers.parse('action button "{actor}" is pressed'))
 def action_button_is_pressed(frontend_page: Page, socket_client, actor: str):
-    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}")
+    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}", verify=tls_verify(socket_client.server_url))
     last = getattr(frontend_page, "last_action_responses", {})
     last[actor] = response.status_code
     setattr(frontend_page, "last_action_responses", last)
@@ -877,7 +890,7 @@ def action_button_is_pressed(frontend_page: Page, socket_client, actor: str):
 
 @then(parsers.parse('the gameboard shows joined player "{actor}"'))
 def gameboard_shows_joined_player(frontend_page: Page, actor: str):
-    expect(_gameboard_page(frontend_page).get_by_label(actor).first).to_be_visible(timeout=30000)
+    expect(_visible_gameboard_page(frontend_page).get_by_label(actor).first).to_be_visible(timeout=30000)
 
 
 @when("the host starts the game")
@@ -926,6 +939,23 @@ def gameboard_shows_text(frontend_page: Page, text: str):
     if text == "不正解":
         text = "×"
     expect(_gameboard_page(frontend_page).get_by_text(text, exact=True).first).to_be_visible(timeout=30000)
+
+
+@then(parsers.parse('the gameboard plays the "{kind}" sound'))
+def gameboard_plays_sound(frontend_page: Page, kind: str):
+    expected = {"correct": [880, 1174.66], "wrong": [160, 110]}[kind]
+    _gameboard_page(frontend_page).wait_for_function(
+        """
+        (expected) => {
+          const frequencies = (window.__introBuzzAudioEvents ?? [])
+            .filter((event) => event.type === 'frequency')
+            .map((event) => event.frequency);
+          return expected.every((frequency) => frequencies.some((actual) => Math.abs(actual - frequency) < 0.5));
+        }
+        """,
+        arg=expected,
+        timeout=30000,
+    )
 
 
 @then(parsers.parse('player "{actor}" score is {score:d}'))
@@ -1010,7 +1040,7 @@ def backend_current_track_changed(frontend_page: Page, socket_client):
 def player_has_scored_once(socket_client, actor: str):
     socket_client.emit("console:play", {"seconds": 1})
     socket_client.wait_for_state(step="playing")
-    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}")
+    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}", verify=tls_verify(socket_client.server_url))
     assert response.status_code == 200
     socket_client.wait_for_state(step="answering", answererId=actor)
     socket_client.emit("console:judge", {"result": "correct"})

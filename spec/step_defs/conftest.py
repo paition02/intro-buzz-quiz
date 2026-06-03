@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import os
-import socket
-import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -13,64 +11,31 @@ from typing import Any, Iterator
 import httpx
 import pytest
 import socketio
+from dotenv import load_dotenv
+from tls_helpers import tls_verify, websocket_ssl_options
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-
-
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
+load_dotenv(REPO_ROOT / ".env", override=False)
 
 
 @pytest.fixture(scope="session")
 def server_url() -> Iterator[str]:
     configured = os.environ.get("TEST_BACKEND_URL", "").strip().rstrip("/")
-    if configured:
-        yield configured
-        return
+    if not configured:
+        pytest.exit("TEST_BACKEND_URL is required. Set it in the environment or in .env.", returncode=2)
 
-    port = _free_port()
-    env = os.environ.copy()
-    env["PORT"] = str(port)
-    env.setdefault("NODE_ENV", "test")
-    process = subprocess.Popen(
-        ["bun", "server/index.ts"],
-        cwd=REPO_ROOT,
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-    url = f"http://127.0.0.1:{port}"
-    try:
-        deadline = time.time() + 20
-        while time.time() < deadline:
-            if process.poll() is not None:
-                output = process.stdout.read() if process.stdout else ""
-                raise RuntimeError(f"server exited before becoming ready:\n{output}")
-            try:
-                with httpx.Client(timeout=0.5) as client:
-                    response = client.get(f"{url}/")
-                if response.status_code == 200:
-                    break
-            except httpx.HTTPError:
-                time.sleep(0.1)
-        else:
-            raise RuntimeError("server did not become ready")
-        yield url
-    finally:
-        process.terminate()
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            process.kill()
+    yield configured
 
 
 class SocketClient:
     def __init__(self, server_url: str):
         self.server_url = server_url
-        self.sio = socketio.Client(reconnection=False, logger=False, engineio_logger=False)
+        self.sio = socketio.Client(
+            reconnection=False,
+            logger=False,
+            engineio_logger=False,
+            websocket_extra_options=websocket_ssl_options(server_url),
+        )
         self.events: list[dict[str, Any]] = []
         self.sio.on("state", self._on_state)
         self.sio.connect(server_url, transports=["websocket"], socketio_path="socket.io", wait_timeout=5)
@@ -108,7 +73,7 @@ class SocketClient:
 
 @pytest.fixture
 def http(server_url: str):
-    with httpx.Client(base_url=server_url, timeout=5) as client:
+    with httpx.Client(base_url=server_url, timeout=5, verify=tls_verify(server_url)) as client:
         yield client
 
 

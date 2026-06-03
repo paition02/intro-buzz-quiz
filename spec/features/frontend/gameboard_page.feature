@@ -17,6 +17,11 @@ Feature: Gameboard page
     Then the frontend shows "ボタンを押してご参加ください"
     And the frontend shows "Track 1"
 
+  Scenario: Gameboard initialization view shows joined players
+    Given action button "player-front" is joined
+    When the frontend opens "/gameboard"
+    Then the gameboard shows joined player "player-front"
+
   Scenario: Gameboard shows reconnecting state while disconnected
     Given the backend is ready with 3 tracks
     And the frontend opens "/gameboard"
