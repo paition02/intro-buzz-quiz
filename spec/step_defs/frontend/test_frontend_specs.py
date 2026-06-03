@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 import time
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 
 import httpx
 import socketio
@@ -12,6 +12,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from pytest_bdd import given, parsers, scenarios, then, when
 
 from frontend.helpers import sample_tracks
+from frontend.musickit_mock import set_musickit_library_data
 from tls_helpers import tls_verify, websocket_ssl_options
 
 scenarios("../../features/frontend")
@@ -62,31 +63,6 @@ def _current_backend_state(server_url: str):
             client.disconnect()
 
 
-def _track_json(index: int):
-    return {
-        "id": f"library-track-{index}",
-        "type": "library-songs",
-        "attributes": {
-            "name": f"Track {index}",
-            "artistName": f"Artist {index}",
-            "artwork": {"url": f"https://example.test/artwork/{index}/{{w}}x{{h}}.jpg"},
-        },
-        "relationships": {
-            "catalog": {
-                "data": [{
-                    "id": f"track-{index}",
-                    "type": "songs",
-                    "attributes": {
-                        "name": f"Track {index}",
-                        "artistName": f"Artist {index}",
-                        "artwork": {"url": f"https://example.test/artwork/{index}/{{w}}x{{h}}.jpg"},
-                    },
-                }]
-            }
-        },
-    }
-
-
 def _route_json(route: Route, payload: dict, status: int = 200):
     if route.request.method == "OPTIONS":
         route.fulfill(status=204, headers={"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*"})
@@ -99,39 +75,17 @@ def _route_json(route: Route, payload: dict, status: int = 200):
     )
 
 
-def _install_library_playlists(frontend_page: Page, playlists: list[dict], *, paginated: bool = False):
-    def handler(route: Route):
-        parsed = urlparse(route.request.url)
-        if parsed.path != "/v1/me/library/playlists":
-            route.fallback()
-            return
-        if paginated and "page=2" not in parsed.query:
-            _route_json(route, {"data": playlists[:1], "next": "/v1/me/library/playlists?page=2"})
-            return
-        _route_json(route, {"data": playlists[1:] if paginated else playlists})
-
-    frontend_page.route("**/api.music.apple.com/v1/me/library/playlists*", handler)
+def _track_ids(count: int) -> list[str]:
+    return [f"track-{index}" for index in range(1, count + 1)]
 
 
-def _install_playlist_tracks(frontend_page: Page, playlist_id: str, indexes: list[int], *, paginated: bool = False, error: str | None = None):
+def _install_playlist_track_error(frontend_page: Page, playlist_id: str, message: str):
     def handler(route: Route):
         parsed = urlparse(route.request.url)
         if parsed.path != f"/v1/me/library/playlists/{playlist_id}/tracks":
             route.fallback()
             return
-        if error:
-            _route_json(route, {"errors": [{"detail": error}]})
-            return
-        if paginated and "page=2" not in parsed.query:
-            first = indexes[:1]
-            _route_json(route, {"data": [_track_json(i) for i in first], "next": f"/v1/me/library/playlists/{playlist_id}/tracks?page=2"})
-            return
-        page_indexes = indexes[1:] if paginated else indexes
-        payload = {"data": [_track_json(i) for i in page_indexes]}
-        if paginated:
-            payload["data"][0]["attributes"]["name"] = "Track Page 2"
-            payload["data"][0]["relationships"]["catalog"]["data"][0]["attributes"]["name"] = "Track Page 2"
-        _route_json(route, payload)
+        _route_json(route, {"errors": [{"detail": message}], "message": message})
 
     frontend_page.route(f"**/api.music.apple.com/v1/me/library/playlists/{playlist_id}/tracks*", handler)
 
@@ -258,20 +212,25 @@ def musickit_already_authorized(frontend_page: Page):
 
 @given("mocked MusicKit has paginated library playlists")
 def mocked_musickit_paginated_library_playlists(frontend_page: Page):
-    _install_library_playlists(
+    filler_playlists = {
+        f"playlist-filler-{index}": []
+        for index in range(1, 100)
+    }
+    set_musickit_library_data(
         frontend_page,
-        [
-            {"id": "playlist-a", "type": "library-playlists", "attributes": {"name": "Spec Playlist A"}},
-            {"id": "playlist-page-2", "type": "library-playlists", "attributes": {"name": "Spec Playlist Page 2"}},
-        ],
-        paginated=True,
+        {"playlist-a": ["track-1"], **filler_playlists, "playlist-page-2": []},
+        playlist_names={"playlist-page-2": "Spec Playlist Page 2"},
     )
 
 
 @given(parsers.parse('the frontend console is logged into mocked MusicKit with paginated tracks for playlist "{playlist}"'))
 def frontend_console_logged_in_with_paginated_tracks(frontend_page: Page, socket_client, playlist: str):
     _ = socket_client
-    _install_playlist_tracks(frontend_page, "playlist-a", [1, 99], paginated=True)
+    set_musickit_library_data(
+        frontend_page,
+        {"playlist-a": _track_ids(101)},
+        song_titles={"track-101": "Track Page 2"},
+    )
     frontend_page.goto("/console")
     frontend_page.get_by_role("button", name="Apple Musicにログイン", exact=True).click()
     expect(frontend_page.get_by_text(playlist, exact=True)).to_be_visible()
@@ -281,11 +240,11 @@ def frontend_console_logged_in_with_paginated_tracks(frontend_page: Page, socket
 def frontend_console_logged_in_with_long_playlist(frontend_page: Page, socket_client, playlist: str, count: int):
     _ = socket_client
     playlist_id = "playlist-long"
-    _install_library_playlists(
+    set_musickit_library_data(
         frontend_page,
-        [{"id": playlist_id, "type": "library-playlists", "attributes": {"name": playlist}}],
+        {playlist_id: _track_ids(count)},
+        playlist_names={playlist_id: playlist},
     )
-    _install_playlist_tracks(frontend_page, playlist_id, list(range(1, count + 1)))
     frontend_page.goto("/console")
     frontend_page.get_by_role("button", name="Apple Musicにログイン", exact=True).click()
     expect(frontend_page.get_by_text(playlist, exact=True)).to_be_visible()
@@ -301,7 +260,13 @@ def frontend_console_selected_long_playlist(frontend_page: Page, socket_client, 
 @given("the frontend console is logged into mocked MusicKit with overlapping playlists")
 def frontend_console_logged_in_with_overlapping_playlists(frontend_page: Page, socket_client):
     _ = socket_client
-    _install_playlist_tracks(frontend_page, "playlist-b", [2, 4])
+    set_musickit_library_data(
+        frontend_page,
+        {
+            "playlist-a": ["track-1", "track-2", "track-3"],
+            "playlist-b": ["track-2", "track-4"],
+        },
+    )
     frontend_page.goto("/console")
     frontend_page.get_by_role("button", name="Apple Musicにログイン", exact=True).click()
     expect(frontend_page.get_by_text("Spec Playlist A", exact=True)).to_be_visible()
@@ -328,7 +293,7 @@ def mocked_musickit_library_loading_fails(frontend_page: Page, message: str):
 @given(parsers.parse('the frontend console is logged into mocked MusicKit with track loading failure "{message}"'))
 def frontend_console_logged_in_with_track_loading_failure(frontend_page: Page, socket_client, message: str):
     _ = socket_client
-    _install_playlist_tracks(frontend_page, "playlist-a", [1], error=message)
+    _install_playlist_track_error(frontend_page, "playlist-a", message)
     frontend_page.goto("/console")
     frontend_page.get_by_role("button", name="Apple Musicにログイン", exact=True).click()
     expect(frontend_page.get_by_text("Spec Playlist A", exact=True)).to_be_visible()
@@ -638,7 +603,7 @@ def musickit_library_playlists_requested(frontend_page: Page):
 def musickit_library_playlists_page_1_requested(frontend_page: Page):
     _wait_for_request(
         frontend_page,
-        lambda request: "/v1/me/library/playlists" in request["url"] and "page=2" not in request["url"],
+        lambda request: "/v1/me/library/playlists" in request["url"] and "offset=100" not in request["url"],
     )
 
 
@@ -646,7 +611,7 @@ def musickit_library_playlists_page_1_requested(frontend_page: Page):
 def musickit_library_playlists_page_2_requested(frontend_page: Page):
     _wait_for_request(
         frontend_page,
-        lambda request: "/v1/me/library/playlists" in request["url"] and "page=2" in request["url"],
+        lambda request: "/v1/me/library/playlists" in request["url"] and "offset=100" in request["url"],
     )
 
 
@@ -662,7 +627,7 @@ def musickit_library_tracks_requested(frontend_page: Page, playlist_id: str):
 def musickit_library_tracks_page_1_requested(frontend_page: Page, playlist_id: str):
     _wait_for_request(
         frontend_page,
-        lambda request: f"/v1/me/library/playlists/{playlist_id}/tracks" in request["url"] and "page=2" not in request["url"],
+        lambda request: f"/v1/me/library/playlists/{playlist_id}/tracks" in request["url"] and "offset=100" not in request["url"],
     )
 
 
@@ -670,7 +635,7 @@ def musickit_library_tracks_page_1_requested(frontend_page: Page, playlist_id: s
 def musickit_library_tracks_page_2_requested(frontend_page: Page, playlist_id: str):
     _wait_for_request(
         frontend_page,
-        lambda request: f"/v1/me/library/playlists/{playlist_id}/tracks" in request["url"] and "page=2" in request["url"],
+        lambda request: f"/v1/me/library/playlists/{playlist_id}/tracks" in request["url"] and "offset=100" in request["url"],
     )
 
 

@@ -18,7 +18,6 @@ from urllib.parse import parse_qs, urlparse
 
 from musickit_api_mock import (
     Account,
-    AccountResponseFailure,
     AccountResponseSuccess,
     Artwork,
     AuthorizeSuccess,
@@ -33,7 +32,6 @@ from musickit_api_mock import (
     Song,
     SongMetadataFallback,
     Storefront,
-    StorefrontResponseFailure,
     StorefrontResponseSuccess,
     WebPlaybackAsset,
     WebPlaybackResponse,
@@ -133,11 +131,19 @@ def _silence_song() -> Song:
     return _silence_song_cache
 
 
-def _make_song(song_id: str) -> Song:
+def _playlist_name(playlist_id: str) -> str:
+    if playlist_id == "playlist-a":
+        return "Spec Playlist A"
+    if playlist_id == "playlist-b":
+        return "Spec Playlist B"
+    return playlist_id
+
+
+def _make_song(song_id: str, *, title: str | None = None) -> Song:
     base = _silence_song()
     n = song_id.removeprefix("track-") or song_id
     return Song(
-        title=f"Track {n}",
+        title=title or f"Track {n}",
         artist=f"Artist {n}",
         album=base.album,
         duration_ms=base.duration_ms,
@@ -163,9 +169,9 @@ def _make_song(song_id: str) -> Song:
     )
 
 
-def _make_playlist(playlist_id: str, track_ids: list[str]) -> Playlist:
+def _make_playlist(playlist_id: str, track_ids: list[str], *, name: str | None = None) -> Playlist:
     return Playlist(
-        name="Spec Playlist A" if playlist_id == "playlist-a" else "Spec Playlist B",
+        name=name or _playlist_name(playlist_id),
         playlist_type="editorial",
         curator_name="Apple Music",
         has_collaboration=False,
@@ -178,10 +184,10 @@ def _make_playlist(playlist_id: str, track_ids: list[str]) -> Playlist:
     )
 
 
-def _make_library_song(song_id: str) -> LibrarySong:
+def _make_library_song(song_id: str, *, name: str | None = None) -> LibrarySong:
     n = song_id.removeprefix("track-") or song_id
     return LibrarySong(
-        name=f"Track {n}",
+        name=name or f"Track {n}",
         artist_name=f"Artist {n}",
         artwork=Artwork(url=f"https://example.test/artwork/{n}/{{w}}x{{h}}.jpg", width=1000, height=1000),
         duration_ms=2000,
@@ -192,9 +198,14 @@ def _make_library_song(song_id: str) -> LibrarySong:
     )
 
 
-def _make_library_playlist(playlist_id: str, track_ids: list[str] | None = None) -> LibraryPlaylist:
+def _make_library_playlist(
+    playlist_id: str,
+    track_ids: list[str] | None = None,
+    *,
+    name: str | None = None,
+) -> LibraryPlaylist:
     return LibraryPlaylist(
-        name="Spec Playlist A" if playlist_id == "playlist-a" else "Spec Playlist B",
+        name=name or _playlist_name(playlist_id),
         can_delete=True,
         can_edit=True,
         is_public=False,
@@ -229,86 +240,141 @@ def _build_web_playback(song_ids: Iterable[str], *, error: bool) -> dict[str, We
     }
 
 
-def _build_library_playlists_response(playlist_ids: list[str]) -> dict[str, object]:
-    return {
+def _build_library_playlists_response(
+    playlists: dict[str, LibraryPlaylist],
+    *,
+    limit: int,
+    offset: int,
+) -> dict[str, object]:
+    page_entries = list(playlists.items())[offset : offset + limit]
+    body: dict[str, object] = {
         "data": [
             {
-                "id": pid,
+                "id": playlist_id,
                 "type": "library-playlists",
-                "href": f"/v1/me/library/playlists/{pid}",
+                "href": f"/v1/me/library/playlists/{playlist_id}",
                 "attributes": {
-                    "name": "Spec Playlist A" if pid == "playlist-a" else "Spec Playlist B",
-                    "artwork": {"url": "https://example.test/library.jpg", "width": 200, "height": 200},
-                },
-            }
-            for pid in playlist_ids
-        ]
-    }
-
-
-def _build_catalog_songs_response(song_ids: list[str]) -> dict[str, object]:
-    return {
-        "data": [
-            {
-                "id": song_id,
-                "type": "songs",
-                "href": f"/v1/catalog/us/songs/{song_id}",
-                "attributes": {
-                    "name": f"Track {song_id.removeprefix('track-') or song_id}",
-                    "artistName": f"Artist {song_id.removeprefix('track-') or song_id}",
-                    "albumName": "Test Album",
-                    "durationInMillis": 2000,
-                    "genreNames": ["Test"],
-                    "url": f"https://music.apple.com/us/song/{song_id}",
+                    "name": playlist.name,
                     "artwork": {
-                        "url": f"https://example.test/artwork/{song_id.removeprefix('track-') or song_id}/{{w}}x{{h}}.jpg",
-                        "width": 1000,
-                        "height": 1000,
+                        "url": playlist.artwork.url,
+                        "width": playlist.artwork.width,
+                        "height": playlist.artwork.height,
                     },
-                    "playParams": {"id": song_id, "kind": "song"},
                 },
             }
-            for song_id in song_ids
+            for playlist_id, playlist in page_entries
         ]
     }
+    next_offset = offset + limit
+    if next_offset < len(playlists):
+        body["next"] = f"/v1/me/library/playlists?offset={next_offset}&limit={limit}"
+    return body
 
 
-def _register_library_playlists_override(page: Page, *, library_ids: list[str]) -> None:
+def _configure_library_data(
+    mock: MusicKitApiMock,
+    playlist_tracks: dict[str, list[str]],
+    *,
+    playlist_names: dict[str, str] | None = None,
+    song_titles: dict[str, str] | None = None,
+    playback_error: bool = False,
+) -> None:
+    playlist_names = playlist_names or {}
+    song_titles = song_titles or {}
+    song_ids = list(dict.fromkeys(song_id for track_ids in playlist_tracks.values() for song_id in track_ids))
+
+    mock.data.songs = {
+        song_id: _make_song(song_id, title=song_titles.get(song_id))
+        for song_id in song_ids
+    }
+    mock.data.library_songs = {
+        song_id: _make_library_song(song_id, name=song_titles.get(song_id))
+        for song_id in song_ids
+    }
+    mock.data.library_playlists = {
+        playlist_id: _make_library_playlist(
+            playlist_id,
+            track_ids,
+            name=playlist_names.get(playlist_id),
+        )
+        for playlist_id, track_ids in playlist_tracks.items()
+    }
+
+    def resolve_playlist(ctx: LookupContext) -> Playlist | None:
+        if ctx.id not in playlist_tracks:
+            return None
+        return _make_playlist(
+            ctx.id,
+            playlist_tracks[ctx.id],
+            name=playlist_names.get(ctx.id),
+        )
+
+    playlist_callable: Callable[[LookupContext], Playlist | None] = resolve_playlist
+    mock.data.playlists = playlist_callable
+    mock.endpoints.web_playback = _build_web_playback(song_ids, error=playback_error)
+
+
+def set_musickit_library_data(
+    page: Page,
+    playlist_tracks: dict[str, list[str]],
+    *,
+    playlist_names: dict[str, str] | None = None,
+    song_titles: dict[str, str] | None = None,
+) -> None:
+    mock = getattr(page, "music_kit_api_mock", None)
+    if mock is None:
+        raise AssertionError("MusicKit API mock has not been configured for this page")
+    _configure_library_data(
+        mock,
+        playlist_tracks,
+        playlist_names=playlist_names,
+        song_titles=song_titles,
+    )
+
+
+def _parse_positive_int(values: list[str] | None, *, default: int) -> int:
+    if not values:
+        return default
+    try:
+        value = int(values[0])
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def _parse_non_negative_int(values: list[str] | None, *, default: int) -> int:
+    if not values:
+        return default
+    try:
+        value = int(values[0])
+    except ValueError:
+        return default
+    return value if value >= 0 else default
+
+
+def _register_library_playlists_override(page: Page, mock: MusicKitApiMock) -> None:
     def handler(route: Route) -> None:
-        if urlparse(route.request.url).path != "/v1/me/library/playlists":
+        parsed = urlparse(route.request.url)
+        if parsed.path != "/v1/me/library/playlists":
             route.fallback()
             return
         if route.request.method == "OPTIONS":
             route.fulfill(status=204, headers=_CORS_PREFLIGHT_HEADERS)
             return
+        query = parse_qs(parsed.query)
+        limit = min(_parse_positive_int(query.get("limit"), default=100), 100)
+        offset = _parse_non_negative_int(query.get("offset"), default=0)
+        playlists = mock.data.library_playlists
+        if not isinstance(playlists, dict):
+            raise AssertionError("mock.data.library_playlists must be a dict for playlist list responses")
         route.fulfill(
             status=200,
             content_type="application/json",
-            body=json.dumps(_build_library_playlists_response(library_ids)),
+            body=json.dumps(_build_library_playlists_response(playlists, limit=limit, offset=offset)),
             headers={"Access-Control-Allow-Origin": "*"},
         )
 
     page.route("**/api.music.apple.com/v1/me/library/playlists*", handler)
-
-
-def _register_catalog_songs_override(page: Page) -> None:
-    def handler(route: Route) -> None:
-        parsed = urlparse(route.request.url)
-        if not parsed.path.endswith("/songs") or "/v1/catalog/" not in parsed.path:
-            route.fallback()
-            return
-        if route.request.method == "OPTIONS":
-            route.fulfill(status=204, headers=_CORS_PREFLIGHT_HEADERS)
-            return
-        song_ids = parse_qs(parsed.query).get("ids", [])
-        route.fulfill(
-            status=200,
-            content_type="application/json",
-            body=json.dumps(_build_catalog_songs_response(song_ids)),
-            headers={"Access-Control-Allow-Origin": "*"},
-        )
-
-    page.route("**/api.music.apple.com/v1/catalog/*/songs*", handler)
 
 
 def _serve_musickit_js(page: Page) -> None:
@@ -354,20 +420,14 @@ def configure_musickit_api_mock(
     library_ids = list(library_playlist_ids) if library_playlist_ids is not None else DEFAULT_LIBRARY_PLAYLIST_IDS
 
     mock = MusicKitApiMock()
-    mock.data.songs = {song_id: _make_song(song_id) for song_id in song_ids}
-    mock.data.library_songs = {song_id: _make_library_song(song_id) for song_id in song_ids}
-    mock.data.library_playlists = {
-        pid: _make_library_playlist(pid, song_ids[3:5] if pid == "playlist-b" else song_ids[:3])
-        for pid in library_ids
-    }
-
-    def resolve_playlist(ctx: LookupContext) -> Playlist | None:
-        if ctx.id == "playlist-b":
-            return _make_playlist(ctx.id, track_ids=song_ids[3:5])
-        return _make_playlist(ctx.id, track_ids=song_ids[:3])
-
-    playlist_callable: Callable[[LookupContext], Playlist | None] = resolve_playlist
-    mock.data.playlists = playlist_callable
+    _configure_library_data(
+        mock,
+        {
+            playlist_id: song_ids[3:5] if playlist_id == "playlist-b" else song_ids[:3]
+            for playlist_id in library_ids
+        },
+        playback_error=playback_error,
+    )
 
     mock.endpoints.storefront = StorefrontResponseSuccess(
         storefront=Storefront(
@@ -382,7 +442,6 @@ def configure_musickit_api_mock(
         account=Account(subscription_active=True, subscription_storefront="us")
     )
 
-    mock.endpoints.web_playback = _build_web_playback(song_ids, error=playback_error)
     mock.endpoints.widevine_cert = WidevineCertResponseSuccess(cert=b"")
     mock.endpoints.license_catalog_song = LicenseResponseSuccess(license=b"")
     mock.endpoints.play_activity = PlayActivityResponseSuccess()
@@ -404,6 +463,6 @@ def configure_musickit_api_mock(
     _serve_musickit_js(page)
     _block_unmocked_musickit_requests(page)
     intercept(mock, page)
-    _register_library_playlists_override(page, library_ids=library_ids)
-    _register_catalog_songs_override(page)
+    _register_library_playlists_override(page, mock)
+    setattr(page, "music_kit_api_mock", mock)
     return mock
