@@ -68,4 +68,5 @@ Feature: Gameboard page
   Scenario: Gameboard results view shows sorted scores
     Given a backend game has results with actor "player-front" scoring once
     When the frontend opens "/gameboard"
-    Then the frontend shows backend scores in descending order
+    Then the frontend shows "結果発表！"
+    And the frontend shows backend scores in descending order

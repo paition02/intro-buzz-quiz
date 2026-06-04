@@ -1342,16 +1342,19 @@ function GameboardPage() {
     )
   } else if (state.step === 'results') {
     content = (
-      <div className="flex justify-center items-end gap-8 sm:gap-16 flex-wrap">
-        {sortedPlayers.map((player) => (
-          <div className="grid justify-items-center gap-4" key={player.id}>
-            <div className="m-8">
-              <PlayerBadge id={player.id} label={false} variant="gameboard" size="large" />
+      <>
+        <h1 className="text-5xl sm:text-7xl font-black leading-none mx-auto text-center">結果発表！</h1>
+        <div className="flex justify-center items-end gap-8 sm:gap-16 flex-wrap">
+          {sortedPlayers.map((player) => (
+            <div className="grid justify-items-center gap-4" key={player.id}>
+              <div className="m-8">
+                <PlayerBadge id={player.id} label={false} variant="gameboard" size="large" />
+              </div>
+              <strong className="text-6xl sm:text-7xl font-black text-amber leading-none">{player.score}</strong>
             </div>
-            <strong className="text-6xl sm:text-7xl font-black text-amber leading-none">{player.score}</strong>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      </>
     )
   } else {
     content = <h1 className={TITLE}>待機中</h1>
