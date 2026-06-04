@@ -223,6 +223,19 @@ def musickit_current_track_loading_delayed(frontend_page: Page):
     )
 
 
+@given("MusicKit auto-starts after seeking while loading")
+def musickit_auto_starts_after_seek(frontend_page: Page):
+    frontend_page.add_init_script(
+        """
+        (() => {
+          const autoPlayAfterMethods = ['seekToTime'];
+          window.__introBuzzMusicKitAutoPlayAfterMethods = autoPlayAfterMethods;
+          if (window.__musicKitObserver) window.__musicKitObserver.autoPlayAfterMethods = autoPlayAfterMethods;
+        })();
+        """
+    )
+
+
 @given("mocked MusicKit has paginated library playlists")
 def mocked_musickit_paginated_library_playlists(frontend_page: Page):
     filler_playlists = {
@@ -742,6 +755,23 @@ def musickit_changes_to_current_track(frontend_page: Page, socket_client):
 @then("MusicKit seeks to 0")
 def musickit_seeks_to_zero(frontend_page: Page):
     _wait_for_music_call(frontend_page, "seekToTime", "(call) => call.payload.time === 0")
+
+
+@then("MusicKit pauses the loading autoplay")
+def musickit_pauses_loading_autoplay(frontend_page: Page):
+    frontend_page.wait_for_function(
+        """
+        () => {
+          const calls = window.__musicKitObserver?.calls ?? [];
+          const seekIndex = calls.findIndex((call) => call.name === 'seekToTime' && call.payload.time === 0);
+          if (seekIndex < 0) return false;
+          const autoplayIndex = calls.findIndex((call, index) => index > seekIndex && call.name === 'play');
+          if (autoplayIndex < 0) return false;
+          return calls.slice(autoplayIndex + 1).some((call) => call.name === 'pause');
+        }
+        """,
+        timeout=30000,
+    )
 
 
 @then(parsers.parse('the frontend play button shows "{label}" and is disabled'))

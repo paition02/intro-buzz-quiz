@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import index from '../client/index.html'
 
-// Bun は cwd の .env を自動で読むので dotenv は不要。
+// Bun が cwd の .env を読む。HTTP_PORT / HTTPS_PORT は数値として渡す。
 const isDevelopment = process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'test'
 
 type Phase = 'initialization' | 'ready' | 'game'
@@ -627,24 +627,56 @@ function handleAct(req: Bun.BunRequest<'/api/act/:actorId'>) {
   return new Response(null, { status })
 }
 
-// engine.handler() から Bun.serve 用の websocket / idleTimeout / maxRequestBodySize を取り出す。
-const { websocket, idleTimeout, maxRequestBodySize } = engine.handler()
-const portEnv = process.env.PORT?.trim()
-
-if (!portEnv) {
-  throw new Error('PORT is required')
+function readPort(name: string) {
+  const value = process.env[name]?.trim()
+  if (!value) throw new Error(`${name} is required`)
+  const port = Number(value)
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`${name} must be an integer between 1 and 65535`)
+  }
+  return port
 }
 
-const port = Number(portEnv)
+// engine.handler() から Bun.serve 用の websocket / idleTimeout / maxRequestBodySize を取り出す。
+const { websocket, idleTimeout, maxRequestBodySize } = engine.handler()
+const httpPort = readPort('HTTP_PORT')
+const httpsPort = readPort('HTTPS_PORT')
 
-if (!Number.isInteger(port) || port < 1 || port > 65535) {
-  throw new Error('PORT must be an integer between 1 and 65535')
+if (httpPort === httpsPort) {
+  throw new Error('HTTP_PORT and HTTPS_PORT must be different')
 }
 
 const httpsCertificate = ensureHttpsCertificate()
 
-const server = Bun.serve({
-  port,
+const appRoutes = {
+  // SPA は単一の index.html。表示の出し分けはクライアント側が pathname で行う。
+  '/': index,
+  '/console': index,
+  '/gameboard': index,
+  '/action': index,
+  '/api/token': { GET: handleToken },
+  '/api/act/:actorId': { POST: handleAct },
+}
+
+function handleAppRequest(req: Request, server: Parameters<typeof engine.handleRequest>[1]) {
+  if (new URL(req.url).pathname.startsWith('/socket.io/')) return engine.handleRequest(req, server)
+  return new Response('Not Found', { status: 404 })
+}
+
+const httpServer = Bun.serve({
+  port: httpPort,
+  hostname: '0.0.0.0',
+  development: isDevelopment,
+  idleTimeout,
+  maxRequestBodySize,
+  routes: appRoutes,
+  // routes に無いものだけここに落ちる。/socket.io/ は engine に丸ごと委ねる(HTTP も WS アップグレードも)。
+  fetch: handleAppRequest,
+  websocket,
+})
+
+const httpsServer = Bun.serve({
+  port: httpsPort,
   hostname: '0.0.0.0',
   development: isDevelopment,
   idleTimeout,
@@ -653,32 +685,23 @@ const server = Bun.serve({
     cert: readFileSync(httpsCertificate.certFile, 'utf8'),
     key: readFileSync(httpsCertificate.keyFile, 'utf8'),
   },
-  routes: {
-    // SPA は単一の index.html。表示の出し分けはクライアント側が pathname で行う。
-    '/': index,
-    '/console': index,
-    '/gameboard': index,
-    '/action': index,
-    '/api/token': { GET: handleToken },
-    '/api/act/:actorId': { POST: handleAct },
-  },
+  routes: appRoutes,
   // routes に無いものだけここに落ちる。/socket.io/ は engine に丸ごと委ねる(HTTP も WS アップグレードも)。
-  fetch(req, server) {
-    if (new URL(req.url).pathname.startsWith('/socket.io/')) return engine.handleRequest(req, server)
-    return new Response('Not Found', { status: 404 })
-  },
+  fetch: handleAppRequest,
   websocket,
 })
 
-const actualPort = server.port ?? port
+const actualHttpPort = httpServer.port ?? httpPort
+const actualHttpsPort = httpsServer.port ?? httpsPort
 
 console.log('Intro Buzz Quiz server listening')
 console.log('')
 console.log('Local CA certificate:')
 console.log(`  ${httpsCertificate.caCert}`)
 console.log('')
-console.log('Local URL:')
-console.log(`  https://localhost:${actualPort}/`)
+console.log('Local URLs:')
+console.log(`  HTTP:  http://localhost:${actualHttpPort}/`)
+console.log(`  HTTPS: https://localhost:${actualHttpsPort}/`)
 
 let loggedLanHeader = false
 for (const [name, entries] of Object.entries(networkInterfaces())) {
@@ -689,6 +712,7 @@ for (const [name, entries] of Object.entries(networkInterfaces())) {
       console.log('LAN URLs:')
       loggedLanHeader = true
     }
-    console.log(`  ${name}: https://${entry.address}:${actualPort}/`)
+    console.log(`  ${name} HTTP:  http://${entry.address}:${actualHttpPort}/`)
+    console.log(`  ${name} HTTPS: https://${entry.address}:${actualHttpsPort}/`)
   }
 }

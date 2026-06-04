@@ -54,15 +54,15 @@ cp .env.example .env
 bun dev
 ```
 
-`bun --hot` で Bun サーバーをホットリロード付きで起動します。`0.0.0.0` で待ち受けるため LAN 内の端末からアクセスできます。実際の URL は起動時のログに表示されます。
+`bun --hot` で Bun サーバーをホットリロード付きで起動します。HTTP と HTTPS を同時に `0.0.0.0` で待ち受けるため LAN 内の端末からアクセスできます。実際の URL は起動時のログに表示されます。
 
 | 用途 | URL |
 | --- | --- |
-| ホスト操作（PC / スマホ） | `https://localhost:<PORT>/console` |
-| 大画面表示 | `https://localhost:<PORT>/gameboard` |
-| 早押しボタン（各プレイヤーのスマホ） | `https://localhost:<PORT>/action` |
+| ホスト操作（PC / スマホ） | `http://localhost:<HTTP_PORT>/console` / `https://localhost:<HTTPS_PORT>/console` |
+| 大画面表示 | `http://localhost:<HTTP_PORT>/gameboard` / `https://localhost:<HTTPS_PORT>/gameboard` |
+| 早押しボタン（各プレイヤーのスマホ） | `http://localhost:<HTTP_PORT>/action` / `https://localhost:<HTTPS_PORT>/action` |
 
-LAN 内の別端末から使う場合は `localhost` を PC の IP アドレスに置き換えます（例: `https://192.168.x.x:<PORT>/action`）。物理ボタンは `POST https://<PCのIP>:<PORT>/api/act/<任意のID>` を叩きます。
+`.env` の例では `HTTP_PORT=1199`、`HTTPS_PORT=2199` です。LAN 内の別端末から使う場合は `localhost` を PC の IP アドレスに置き換えます（例: `http://192.168.x.x:<HTTP_PORT>/action` または `https://192.168.x.x:<HTTPS_PORT>/action`）。物理ボタンは `POST http://<PCのIP>:<HTTP_PORT>/api/act/<任意のID>` または `POST https://<PCのIP>:<HTTPS_PORT>/api/act/<任意のID>` を叩きます。
 
 ## 遊び方
 

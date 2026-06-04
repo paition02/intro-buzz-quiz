@@ -109,6 +109,7 @@ def frontend_page(browser: Browser, server_url: str, socket_client) -> Iterator[
         (() => {
           const calls = [];
           const initialMethodDelays = window.__introBuzzMusicKitDelayConfig ?? {};
+          const initialAutoPlayAfterMethods = window.__introBuzzMusicKitAutoPlayAfterMethods ?? [];
           const summarize = (name, payload = {}) => {
             if (name === 'setQueue') return { songs: payload?.songs ?? [], startPlaying: payload?.startPlaying };
             if (name === 'changeToMediaAtIndex') return { index: payload };
@@ -117,7 +118,7 @@ def frontend_page(browser: Browser, server_url: str, socket_client) -> Iterator[
             return payload;
           };
           const record = (name, payload = {}) => calls.push({ name, payload: summarize(name, payload), at: Date.now() });
-          window.__musicKitObserver = { calls, methodDelays: initialMethodDelays };
+          window.__musicKitObserver = { calls, methodDelays: initialMethodDelays, autoPlayAfterMethods: initialAutoPlayAfterMethods };
           let value;
           const patchInstance = (mk) => {
             if (!mk) return mk;
@@ -129,8 +130,15 @@ def frontend_page(browser: Browser, server_url: str, socket_client) -> Iterator[
               const observed = (...args) => {
                 record(method, args.length === 1 ? args[0] : args);
                 const delay = Number(window.__musicKitObserver?.methodDelays?.[method] ?? 0);
-                if (!Number.isFinite(delay) || delay <= 0) return original(...args);
-                return new Promise((resolve) => setTimeout(resolve, delay)).then(() => original(...args));
+                const autoPlayAfterMethods = window.__musicKitObserver?.autoPlayAfterMethods ?? [];
+                const shouldAutoPlay = Array.isArray(autoPlayAfterMethods) && autoPlayAfterMethods.includes(method);
+                const runOriginal = () => {
+                  const result = original(...args);
+                  if (!shouldAutoPlay) return result;
+                  return Promise.resolve(result).then((value) => Promise.resolve(mk.play()).then(() => value));
+                };
+                if (!Number.isFinite(delay) || delay <= 0) return runOriginal();
+                return new Promise((resolve) => setTimeout(resolve, delay)).then(runOriginal);
               };
               observed.__introBuzzObserved = true;
               Object.defineProperty(mk, method, {

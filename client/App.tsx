@@ -311,13 +311,23 @@ function phaseLabel(phase: Phase, step: GameStep) {
   return labels[step]
 }
 
-
-function CircularSecondsSlider({ value, onChange }: { value: number; onChange: (value: number) => void }) {
+function CircularSecondsSlider({
+  value,
+  onChange,
+  onCommit,
+}: {
+  value: number
+  onChange: (value: number) => void
+  onCommit?: (value: number) => void
+}) {
   const min = 0.1
   const max = 30
   const step = 0.1
   const radius = 78
   const center = 96
+  const activePointerIdRef = useRef<number | null>(null)
+  const interactionRectRef = useRef<DOMRectReadOnly | null>(null)
+  const latestValueRef = useRef(value)
   const circumference = 2 * Math.PI * radius
   const progress = (value - min) / (max - min)
   const dashOffset = circumference * (1 - progress)
@@ -325,15 +335,21 @@ function CircularSecondsSlider({ value, onChange }: { value: number; onChange: (
   const knobX = center + radius * Math.cos((angle * Math.PI) / 180)
   const knobY = center + radius * Math.sin((angle * Math.PI) / 180)
 
-  const updateFromPoint = (clientX: number, clientY: number, target: Element) => {
-    const rect = target.getBoundingClientRect()
+  useEffect(() => {
+    latestValueRef.current = value
+  }, [value])
+
+  const updateFromPoint = (clientX: number, clientY: number, rect: DOMRectReadOnly) => {
     const x = clientX - rect.left - rect.width / 2
     const y = clientY - rect.top - rect.height / 2
     let degrees = (Math.atan2(y, x) * 180) / Math.PI + 90
     if (degrees < 0) degrees += 360
     const raw = min + (degrees / 360) * (max - min)
     const stepped = Math.round(raw / step) * step
-    onChange(Number(Math.min(max, Math.max(min, stepped)).toFixed(1)))
+    const nextValue = Number(Math.min(max, Math.max(min, stepped)).toFixed(1))
+    latestValueRef.current = nextValue
+    onChange(nextValue)
+    return nextValue
   }
 
   return (
@@ -348,16 +364,39 @@ function CircularSecondsSlider({ value, onChange }: { value: number; onChange: (
         aria-valuenow={value}
         tabIndex={0}
         onPointerDown={(event) => {
+          activePointerIdRef.current = event.pointerId
+          interactionRectRef.current = event.currentTarget.getBoundingClientRect()
           event.currentTarget.setPointerCapture(event.pointerId)
-          updateFromPoint(event.clientX, event.clientY, event.currentTarget)
+          updateFromPoint(event.clientX, event.clientY, interactionRectRef.current)
         }}
         onPointerMove={(event) => {
-          if (event.buttons !== 1) return
-          updateFromPoint(event.clientX, event.clientY, event.currentTarget)
+          if (activePointerIdRef.current !== event.pointerId) return
+          updateFromPoint(event.clientX, event.clientY, interactionRectRef.current ?? event.currentTarget.getBoundingClientRect())
+        }}
+        onPointerUp={(event) => {
+          if (activePointerIdRef.current !== event.pointerId) return
+          const nextValue = updateFromPoint(event.clientX, event.clientY, interactionRectRef.current ?? event.currentTarget.getBoundingClientRect())
+          activePointerIdRef.current = null
+          interactionRectRef.current = null
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+          onCommit?.(nextValue)
+        }}
+        onPointerCancel={(event) => {
+          if (activePointerIdRef.current !== event.pointerId) return
+          activePointerIdRef.current = null
+          interactionRectRef.current = null
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+          onCommit?.(latestValueRef.current)
         }}
         onKeyDown={(event) => {
-          if (event.key === 'ArrowRight' || event.key === 'ArrowUp') onChange(Number(Math.min(max, value + step).toFixed(1)))
-          if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') onChange(Number(Math.max(min, value - step).toFixed(1)))
+          let nextValue: number | null = null
+          if (event.key === 'ArrowRight' || event.key === 'ArrowUp') nextValue = Number(Math.min(max, value + step).toFixed(1))
+          if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') nextValue = Number(Math.max(min, value - step).toFixed(1))
+          if (nextValue == null) return
+          event.preventDefault()
+          latestValueRef.current = nextValue
+          onChange(nextValue)
+          onCommit?.(nextValue)
         }}
       >
         <circle className="fill-none stroke-white/15" strokeWidth={18} cx={center} cy={center} r={radius} />
@@ -392,9 +431,13 @@ function ConsolePage() {
   const [busy, setBusy] = useState(false)
   const [loadingLibraryPlaylists, setLoadingLibraryPlaylists] = useState(false)
   const [consoleMessage, setConsoleMessage] = useState<string | null>(null)
+  const [draftPlaybackSeconds, setDraftPlaybackSeconds] = useState(state.playbackSeconds)
   const preparedQueueKeyRef = useRef<string | null>(null)
   const autoLoginRequestedRef = useRef(false)
   const autoLoadLibraryPlaylistsRequestedRef = useRef(false)
+  const editingPlaybackSecondsRef = useRef(false)
+  const pendingPlaybackSecondsRef = useRef<number | null>(null)
+  const playbackSecondsRequestIdRef = useRef(0)
   // MusicKit の再生は state を唯一の駆動源にする(命令的ハンドラからは触らない)。
   // 二重ロード防止用の「ロード要求済み index」と、playing への遷移を 1 回だけ拾うための「直前 step」。
   const requestedTrackLoadIndexRef = useRef(-1)
@@ -411,7 +454,7 @@ function ConsolePage() {
   const joinedPlayers = useMemo(() => state.players.filter((player) => player.joined), [state.players])
   const selectedPlaylistIds = state.selectedPlaylistIds
   const selectedPlaylistIdSet = useMemo(() => new Set(selectedPlaylistIds), [selectedPlaylistIds])
-  const seconds = state.playbackSeconds
+  const seconds = draftPlaybackSeconds
   const currentTrackLoaded = state.currentTrackIndex >= 0 && musicKit.loadedTrackIndex === state.currentTrackIndex
   const canPlayIntro = state.step === 'beforePlayback' && currentTrackLoaded && !musicKit.preparing
   const currentTrackLoading = state.step === 'beforePlayback' && state.currentTrackIndex >= 0 && !canPlayIntro
@@ -434,6 +477,46 @@ function ConsolePage() {
       setBusy(false)
     }
   }
+
+  useEffect(() => {
+    const pendingPlaybackSeconds = pendingPlaybackSecondsRef.current
+    if (pendingPlaybackSeconds != null) {
+      if (state.playbackSeconds === pendingPlaybackSeconds) {
+        pendingPlaybackSecondsRef.current = null
+        setDraftPlaybackSeconds(state.playbackSeconds)
+      }
+      return
+    }
+    if (!editingPlaybackSecondsRef.current) setDraftPlaybackSeconds(state.playbackSeconds)
+  }, [state.playbackSeconds])
+
+  const handlePlaybackSecondsChange = useCallback((value: number) => {
+    editingPlaybackSecondsRef.current = true
+    setDraftPlaybackSeconds(value)
+  }, [])
+
+  const handlePlaybackSecondsCommit = useCallback((value: number) => {
+    editingPlaybackSecondsRef.current = false
+    setDraftPlaybackSeconds(value)
+    const requestId = playbackSecondsRequestIdRef.current + 1
+    const needsSync = latestState.playbackSeconds !== value || pendingPlaybackSecondsRef.current != null
+    playbackSecondsRequestIdRef.current = requestId
+    pendingPlaybackSecondsRef.current = needsSync ? value : null
+    if (!needsSync) return
+
+    void consoleAction('console:playback-seconds', { seconds: value })
+      .then((nextState) => {
+        if (playbackSecondsRequestIdRef.current !== requestId) return
+        pendingPlaybackSecondsRef.current = null
+        setDraftPlaybackSeconds(nextState.playbackSeconds)
+      })
+      .catch((error) => {
+        if (playbackSecondsRequestIdRef.current !== requestId) return
+        pendingPlaybackSecondsRef.current = null
+        setDraftPlaybackSeconds(latestState.playbackSeconds)
+        setConsoleMessage(error instanceof Error ? error.message : String(error))
+      })
+  }, [])
 
   const loadLibraryPlaylists = useCallback(async (): Promise<Playlist[]> => {
     setLoadingLibraryPlaylists(true)
@@ -795,11 +878,8 @@ function ConsolePage() {
             <span className="justify-self-start text-cream font-bold">再生秒数</span>
             <CircularSecondsSlider
               value={seconds}
-              onChange={(value) => {
-                void consoleAction('console:playback-seconds', { seconds: value }).catch((error) => {
-                  setConsoleMessage(error instanceof Error ? error.message : String(error))
-                })
-              }}
+              onChange={handlePlaybackSecondsChange}
+              onCommit={handlePlaybackSecondsCommit}
             />
           </div>
           <div className="grid gap-3.5 mt-4">

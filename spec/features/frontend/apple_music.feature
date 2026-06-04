@@ -80,6 +80,13 @@ Feature: MusicKit integration
     And MusicKit changes to the backend current track
     And MusicKit seeks to 0
 
+  Scenario: Loading the current track stops MusicKit autoplay
+    Given MusicKit auto-starts after seeking while loading
+    And the frontend console selected playlist "Spec Playlist A"
+    When the frontend clicks "ゲーム開始"
+    Then backend phase is "game" and step is "beforePlayback"
+    And MusicKit pauses the loading autoplay
+
   Scenario: Play is locked until the current MusicKit track finishes loading
     Given MusicKit current track loading is delayed
     And the frontend console selected playlist "Spec Playlist A"

@@ -180,6 +180,12 @@ export function useMusicKitPlayback() {
   const loadedTrackIndexRef = useRef<number | null>(null)
   const playbackGenerationRef = useRef(0)
 
+  const pauseIfMusicKitStartedPlayback = useCallback((mk: MusicKit.MusicKitInstance) => {
+    if (!mk.isPlaying) return
+    mk.pause()
+    setMusicKitStatus({ playing: false })
+  }, [])
+
   const cancelScheduledPlayback = useCallback(() => {
     playbackGenerationRef.current += 1
     if (stopTimerRef.current) clearTimeout(stopTimerRef.current)
@@ -198,13 +204,14 @@ export function useMusicKitPlayback() {
     setMusicKitStatus({ playing: false, loadingTrackIndex: index, loadedTrackIndex: null })
     if (mk.isPlaying) mk.pause()
     await mk.seekToTime(0)
+    pauseIfMusicKitStartedPlayback(mk)
     if (loadGeneration !== loadGenerationRef.current) return
     if (playbackGeneration != null && playbackGeneration !== playbackGenerationRef.current) return
     loadingTrackIndexRef.current = null
     loadedTrackIndexRef.current = index
     loadPromiseRef.current = null
     setMusicKitStatus({ playing: false, loadingTrackIndex: null, loadedTrackIndex: index })
-  }, [])
+  }, [pauseIfMusicKitStartedPlayback])
 
   const authorize = useCallback(async () => {
     const mk = await getMusicKit()
@@ -292,6 +299,7 @@ export function useMusicKitPlayback() {
         const queueTracks = tracks.slice(0, QUEUE_CHUNK_SIZE)
         mk.shuffleMode = MusicKit.PlayerShuffleMode.off
         await mk.setQueue({ songs: queueTracks.map((track) => track.id), startPlaying: false })
+        pauseIfMusicKitStartedPlayback(mk)
         if (generation !== prepareGenerationRef.current) return
         queuedChunkStartRef.current = 0
         mk.repeatMode = MusicKit.PlayerRepeatMode.one
@@ -301,7 +309,7 @@ export function useMusicKitPlayback() {
     })()
     preparePromiseRef.current = promise
     await promise
-  }, [])
+  }, [pauseIfMusicKitStartedPlayback])
 
   const ensureTrackQueued = useCallback(async (mk: MusicKit.MusicKitInstance, trackIndex: number) => {
     const tracks = tracksRef.current
@@ -313,11 +321,13 @@ export function useMusicKitPlayback() {
       const queueTracks = tracks.slice(chunkStart, chunkStart + QUEUE_CHUNK_SIZE)
       mk.shuffleMode = MusicKit.PlayerShuffleMode.off
       await mk.setQueue({ songs: queueTracks.map((track) => track.id), startPlaying: false })
+      pauseIfMusicKitStartedPlayback(mk)
       queuedChunkStartRef.current = chunkStart
       mk.repeatMode = MusicKit.PlayerRepeatMode.one
     }
     if (mk.nowPlayingItemIndex !== queueIndex) await mk.changeToMediaAtIndex(queueIndex)
-  }, [])
+    pauseIfMusicKitStartedPlayback(mk)
+  }, [pauseIfMusicKitStartedPlayback])
 
   const startLoadTrack = useCallback((index: number, { cancelPlayback = true }: { cancelPlayback?: boolean } = {}) => {
     if (cancelPlayback) cancelScheduledPlayback()
@@ -338,6 +348,7 @@ export function useMusicKitPlayback() {
         if (generation !== loadGenerationRef.current) return
         if (mk.isPlaying) mk.pause()
         await mk.seekToTime(0)
+        pauseIfMusicKitStartedPlayback(mk)
         if (generation !== loadGenerationRef.current) return
         loadingTrackIndexRef.current = null
         loadedTrackIndexRef.current = index
@@ -355,7 +366,7 @@ export function useMusicKitPlayback() {
     })()
     loadPromiseRef.current = promise
     return promise
-  }, [cancelScheduledPlayback, ensureTrackQueued])
+  }, [cancelScheduledPlayback, ensureTrackQueued, pauseIfMusicKitStartedPlayback])
 
   const loadTrack = useCallback((index: number) => startLoadTrack(index), [startLoadTrack])
 
