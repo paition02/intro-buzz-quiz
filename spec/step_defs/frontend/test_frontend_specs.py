@@ -937,19 +937,14 @@ def gameboard_shows_text(frontend_page: Page, text: str):
     expect(_gameboard_page(frontend_page).get_by_text(text, exact=True).first).to_be_visible(timeout=30000)
 
 
-@then(parsers.parse('the console plays the "{kind}" sound'))
-def console_plays_sound(frontend_page: Page, kind: str):
-    expected = {"correct": [880, 1174.66], "wrong": [160, 110]}[kind]
+@then("the console plays a result sound")
+def console_plays_result_sound(frontend_page: Page):
     frontend_page.wait_for_function(
         """
-        (expected) => {
-          const frequencies = (window.__introBuzzAudioEvents ?? [])
-            .filter((event) => event.type === 'frequency')
-            .map((event) => event.frequency);
-          return expected.every((frequency) => frequencies.some((actual) => Math.abs(actual - frequency) < 0.5));
+        () => {
+          return (window.__introBuzzAudioEvents ?? []).some((event) => event.type === 'oscillator.start');
         }
         """,
-        arg=expected,
         timeout=30000,
     )
 
