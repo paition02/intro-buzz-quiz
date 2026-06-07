@@ -42,14 +42,13 @@ export function useSequentialPlayback(): SequentialPlayback {
 
     const previousVolume = mk.volume
     mk.volume = 0
+
     try {
       await mk.play()
+      await new Promise<void>((resolve) => setTimeout(resolve))
     } finally {
-      try {
-        if (mk.isPlaying) await mk.pause()
-      } finally {
-        mk.volume = previousVolume
-      }
+      if (mk.isPlaying) await mk.pause()
+      mk.volume = previousVolume
     }
 
     ref.current.nextIndex++
