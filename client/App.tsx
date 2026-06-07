@@ -1683,14 +1683,14 @@ function ActionPage() {
 
   return (
     <main
-      className="min-h-svh overflow-hidden grid place-items-center"
+      className="min-h-dvh overflow-hidden grid"
       style={{
         '--player-color-soft': color.softBackground,
         '--player-color-glow': `hsl(${color.hue} 76% 52% / 0.46)`,
       } as CSSProperties}
     >
       <button
-        className="w-screen min-h-svh border-0 rounded-none grid place-items-center text-inherit cursor-pointer shadow-none p-4 transition touch-manipulation disabled:cursor-wait disabled:opacity-100"
+        className="grid place-items-center text-inherit cursor-pointer transition touch-manipulation disabled:cursor-wait disabled:opacity-100"
         style={{ backgroundColor: visualState === 'pressed' ? color.softBackground : 'transparent' }}
         type="button"
         disabled={busy}
