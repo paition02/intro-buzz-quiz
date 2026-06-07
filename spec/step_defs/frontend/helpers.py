@@ -8,13 +8,12 @@ SAMPLE_PLAYLISTS = [
 ]
 
 
-def sample_tracks(count: int = 3, playlist: str = "Spec Playlist A") -> list[dict[str, Any]]:
+def sample_tracks(count: int = 3) -> list[dict[str, Any]]:
     return [
         {
             "id": f"track-{index}",
             "title": f"Track {index}",
             "artist": f"Artist {index}",
-            "playlist": playlist,
             "artworkUrl": f"https://example.test/artwork/{index}.jpg",
             "artworkThumbUrl": f"https://example.test/artwork/{index}-thumb.jpg",
         }

@@ -59,11 +59,11 @@ Feature: Gameboard page
     When the judging animation expires
     Then backend phase is "game" and step is "beforePlayback"
 
-  Scenario: Gameboard reveal view shows current track artwork information
+  Scenario: Gameboard reveal view shows revealed track information
     Given a backend game is before playback with actor "player-front"
     When the frontend opens "/gameboard"
     And the backend host gives up
-    Then the frontend shows the backend current track information
+    Then the frontend shows revealed track information
 
   Scenario: Gameboard results view shows sorted scores
     Given a backend game has results with actor "player-front" scoring once

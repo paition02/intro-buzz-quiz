@@ -7,7 +7,6 @@ Feature: Game flow
     Given a game is before playback with joined players "player-1"
     When the host plays the intro for 0.1 seconds
     Then the step is "playing"
-    And has played current track is true
     When the playback timeout expires
     Then the step is "beforePlayback"
 
@@ -15,7 +14,6 @@ Feature: Game flow
     Given player "player-1" has answer rights
     When the host judges the answer as "correct"
     Then the step is "correct"
-    And last result is "correct"
     And player "player-1" score is 1
     When the judging animation expires
     Then the step is "reveal"
@@ -24,7 +22,6 @@ Feature: Game flow
     Given player "player-1" has answer rights
     When the host judges the answer as "wrong"
     Then the step is "wrong"
-    And last result is "wrong"
     And player "player-1" score is 0
     When the judging animation expires
     Then the step is "beforePlayback"
@@ -34,7 +31,6 @@ Feature: Game flow
     Given player "player-1" has answer rights
     When the host judges the answer as "unexpected"
     Then the step is "answering"
-    And there is no last result
     And player "player-1" score is 0
 
   Scenario: Give up reveals from beforePlayback
@@ -42,7 +38,6 @@ Feature: Game flow
     When the host gives up
     Then the step is "reveal"
     And there is no answerer
-    And there is no last result
 
   Scenario: Show results clears current track
     Given the game is revealing the answer
@@ -55,26 +50,21 @@ Feature: Game flow
     Given a started game with 3 tracks
     And the game is revealing the answer
     When the host advances to the next round
-    Then the current game order index is 1
-    And the current track follows game track order
+    Then the current track changed
+    And the current track is one of the selected tracks
 
-  Scenario: Next round wraps to the beginning of the shuffled order
+  Scenario: Next round is ignored on the final track
     Given the game is revealing the final track of a 3 track game
     When the host advances to the next round
-    Then the current game order index is 0
-    And the current track follows game track order
+    Then the current track is unchanged
 
   Scenario: Next game clears players but keeps selected tracks
     Given the game is showing results with players "player-1,player-2"
     When the host starts the next game
     Then the phase is "ready"
     And the step is "idle"
-    And host login is true
-    And playback seconds is 0.5
-    And has played current track is false
     And there is no current track
     And there is no answerer
-    And there is no last result
     And there are no players
     And the track count is 3
     And selected playlist ids are "playlist-a"

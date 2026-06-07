@@ -7,8 +7,6 @@ Feature: Initial state and routes
     Given a fresh server state
     Then the phase is "initialization"
     And the step is "idle"
-    And host login is false
-    And playback seconds is 0.5
     And there are no players
     And there are no tracks
 

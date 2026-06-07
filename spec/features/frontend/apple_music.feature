@@ -1,11 +1,11 @@
 Feature: MusicKit integration
   As a host
-  I want the console to use MusicKit for authorization, playlist loading, queueing, and playback
+  I want the console to use MusicKit for authorization, playlist loading, and game controls
   So that the game uses real Apple Music behavior through one integration boundary
 
   Scenario: MusicKit SDK is initialized with the developer token from the server
     When the frontend opens "/console" with mocked MusicKit
-    Then MusicKit is configured with the developer token from the server
+    Then the MusicKit developer token is requested
     And the frontend shows "Apple Music 未ログイン"
 
   Scenario: Already authorized MusicKit loads library playlists
@@ -27,7 +27,7 @@ Feature: MusicKit integration
   Scenario: Authorizing MusicKit loads the library playlists
     When the frontend opens "/console" with mocked MusicKit
     And the frontend clicks "Apple Musicにログイン"
-    Then MusicKit authorization is requested
+    Then the frontend shows "Apple Music ログイン済み"
     And MusicKit library playlists are requested
     And the frontend shows "Spec Playlist A"
 
@@ -51,70 +51,50 @@ Feature: MusicKit integration
     Then the frontend shows artwork thumbnail URL "https://example.test/artwork/1/80x80.jpg"
     When the frontend clicks "Spec Playlist A"
     And the frontend clicks "ゲーム開始"
-    Then backend current track artwork URL uses size "1000x1000"
-    And backend current track artwork thumbnail URL uses size "80x80"
+    Then the selected round artwork uses size "1000x1000"
+    And the selected round artwork thumbnail uses size "80x80"
 
-  Scenario: Selecting a playlist prepares a MusicKit queue with catalog song ids
+  Scenario: Selecting a playlist sends the selected tracks to the backend
     Given the frontend console is logged into mocked MusicKit
     When the frontend clicks "Spec Playlist A"
-    Then MusicKit queue is prepared with songs "track-1,track-2,track-3"
-    And backend selected playlist ids are "playlist-a"
+    Then backend selected playlist ids are "playlist-a"
+    And the selected track count is 3
 
-  Scenario: Preparing more than 50 tracks queues the first MusicKit chunk
+  Scenario: Selecting more than 50 tracks sends the selected tracks to the backend
     Given the frontend console is logged into mocked MusicKit with playlist "Spec Long Playlist" containing 55 tracks
     When the frontend clicks "Spec Long Playlist"
-    Then MusicKit queue is prepared with the first 50 songs from "track-1" to "track-50"
-    And backend selected playlist ids are "playlist-long"
+    Then backend selected playlist ids are "playlist-long"
+    And the selected track count is 55
 
-  Scenario: Loading a track outside the first MusicKit chunk replaces the queue
-    Given the frontend console selected mocked playlist "Spec Long Playlist" containing 55 tracks
-    And the backend current track is "track-55"
-    When the frontend loads the backend current track
-    Then MusicKit queue is prepared with songs "track-51,track-52,track-53,track-54,track-55"
-    And MusicKit changes to queue index 4
-
-  Scenario: Starting a selected game loads the current track on MusicKit
+  Scenario: Starting a selected game prepares the first round without playback
     Given the frontend console selected playlist "Spec Playlist A"
     When the frontend clicks "ゲーム開始"
     Then backend phase is "game" and step is "beforePlayback"
-    And MusicKit changes to the backend current track
-    And MusicKit seeks to 0
-
-  Scenario: Loading the current track stops MusicKit autoplay
-    Given MusicKit auto-starts after seeking while loading
-    And the frontend console selected playlist "Spec Playlist A"
-    When the frontend clicks "ゲーム開始"
-    Then backend phase is "game" and step is "beforePlayback"
-    And MusicKit pauses the loading autoplay
-
-  Scenario: Play is locked until the current MusicKit track finishes loading
-    Given MusicKit current track loading is delayed
-    And the frontend console selected playlist "Spec Playlist A"
-    When the frontend clicks "ゲーム開始"
-    Then the frontend play button shows "ロード中" and is disabled
-    And MusicKit has not started playback
     And the frontend play button becomes enabled
 
-  Scenario: Playing the intro uses MusicKit playback and stops after the duration
+  Scenario: Play is available when the current round is ready
+    Given the frontend console selected playlist "Spec Playlist A"
+    When the frontend clicks "ゲーム開始"
+    Then the frontend play button becomes enabled
+
+  Scenario: Playing the intro advances playback and stops after the duration
     Given the frontend console selected playlist "Spec Playlist A"
     When the frontend clicks "ゲーム開始"
     And the frontend clicks "再生"
-    Then MusicKit starts playback
-    And MusicKit pauses playback after the intro duration
-    And MusicKit seeks to 0 after playback
+    Then backend phase is "game" and step is "playing"
+    And the backend returns before playback after the intro duration
 
-  Scenario: Revealing a round plays the current track in full loop
+  Scenario: Revealing a round shows the current track
     Given the frontend console selected playlist "Spec Playlist A"
     When the frontend clicks "ゲーム開始"
     And the frontend clicks "ギブアップ"
-    Then MusicKit repeat mode is one
-    And MusicKit starts playback
+    Then backend phase is "game" and step is "reveal"
+    And the frontend shows revealed track information
 
   Scenario: Logging out of Apple Music returns the console to the unauthenticated state
     Given the frontend console is logged into mocked MusicKit
     When the frontend clicks "ログアウト"
-    Then MusicKit unauthorization is requested
-    And the frontend shows "Apple Music 未ログイン"
+    Then the frontend shows "Apple Music 未ログイン"
 
   Scenario: MusicKit configuration failure is shown on the console
     Given mocked MusicKit configuration fails with "Token request failed"

@@ -21,7 +21,7 @@ Feature: Action API
     And player "player-1" is not joined
 
   Scenario: Action toggles participation during ready phase
-    Given the host is logged in
+    Given the host console is ready
     When actor "player-1" presses the action API
     Then the HTTP status is 200
     And the response body is empty
@@ -71,6 +71,16 @@ Feature: Action API
     Then the HTTP status is 409
     And the response body is empty
     And the step is "beforePlayback"
+
+  Scenario: Rejected action does not consume cooldown
+    Given a game is before playback with joined players "player-1"
+    When actor "player-1" presses the action API
+    Then the HTTP status is 409
+    When the host plays the intro for 1 seconds
+    And actor "player-1" presses the action API
+    Then the HTTP status is 200
+    And the step is "answering"
+    And answerer is "player-1"
 
   Scenario: Buzzing after playback ended is allowed
     Given a game is before playback with joined players "player-1"

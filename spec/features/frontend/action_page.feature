@@ -5,7 +5,7 @@ Feature: Action button page
     When the frontend opens "/action"
     Then the document title is "早押しボタン | 早押しイントロクイズ"
     And the action button has no visible text
-    And the action actor id is a UUID persisted in session storage
+    And the action page keeps the same player identity after reload
 
   Scenario: Pressing the action button joins before the game starts
     Given the frontend opens "/action"
@@ -13,8 +13,10 @@ Feature: Action button page
     Then one joined player is shown in backend state
 
   Scenario: Pressing during an answerable round marks the answerer on the board
-    Given a backend game is before playback with actor "player-front"
-    And the frontend opens "/action" as actor "player-front"
-    When the backend host plays the intro for 1 seconds
+    Given the frontend opens "/action"
+    When the frontend action button is pressed
+    Then one joined player is shown in backend state
+    When the backend starts a game with the joined action player
+    And the backend host plays the intro for 1 seconds
     And the frontend action button is pressed
-    Then backend answerer is "player-front"
+    Then the joined action player has answer rights

@@ -1,83 +1,68 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
+import { Activity, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { QRCodeSVG } from 'qrcode.react'
 import { io } from 'socket.io-client'
 import type { Socket } from 'socket.io-client'
-import { useMusicKitPlayback } from './useMusicKit'
-
-type Phase = 'initialization' | 'ready' | 'game'
-type GameStep =
-  | 'idle'
-  | 'loading'
-  | 'beforePlayback'
-  | 'playing'
-  | 'answering'
-  | 'judging'
-  | 'correct'
-  | 'wrong'
-  | 'reveal'
-  | 'results'
-
-type Player = {
-  id: string
-  joined: boolean
-  lastActionAt: number | null
-  score: number
-}
-
-type Track = {
-  id: string
-  title: string
-  artist: string
-  playlist: string
-  artworkUrl?: string
-  artworkThumbUrl?: string
-}
-
-type Playlist = {
-  id: string
-  name: string
-}
-
-type GameState = {
-  phase: Phase
-  step: GameStep
-  hostLoggedIn: boolean
-  playlists: string[]
-  selectedPlaylistIds: string[]
-  players: Player[]
-  tracks: Track[]
-  gameTrackOrder: number[]
-  currentGameTrackOrderIndex: number
-  currentTrackIndex: number
-  currentTrack: Track | null
-  hasPlayedCurrentTrack: boolean
-  playbackSeconds: number
-  answererId: string | null
-  lastResult: 'correct' | 'wrong' | null
-  message: string
-  updatedAt: number
-}
+import { useMusicKitAuth, useMusicKitInstance } from './useMusicKit'
+import { useSequentialPlayback } from './useSequentialPlayback'
+import type { GameState, GameStep, Phase, Player, Track } from '../type/game'
+import {
+  playlistTracksQueryOptions,
+  useLibraryPlaylistsQuery,
+  usePlaylistTracksQuery,
+  type MusicPlaylist,
+} from './useMusicKitLibraryQueries'
 
 type ActionVisualState = 'idle' | 'pressed' | 'muted' | 'error'
 
 const initialState: GameState = {
   phase: 'initialization',
   step: 'idle',
-  hostLoggedIn: false,
-  playlists: [],
   selectedPlaylistIds: [],
   players: [],
   tracks: [],
-  gameTrackOrder: [],
-  currentGameTrackOrderIndex: -1,
-  currentTrackIndex: -1,
-  currentTrack: null,
-  hasPlayedCurrentTrack: false,
-  playbackSeconds: 0.5,
+  shuffledTrackIds: [],
+  roundIndex: -1,
   answererId: null,
-  lastResult: null,
-  message: '接続中...',
-  updatedAt: Date.now(),
+}
+
+const GAME_STATE_KEYS = Object.keys(initialState) as Array<keyof GameState>
+
+function roundTrackIdFromState(state: GameState) {
+  return state.roundIndex >= 0 ? state.shuffledTrackIds[state.roundIndex] ?? null : null
+}
+
+function roundTrackFromState(state: GameState) {
+  const trackId = roundTrackIdFromState(state)
+  if (trackId == null) return null
+  return state.tracks.find((track) => track.id === trackId) ?? null
+}
+
+function gameStateChange(previous: GameState, next: GameState): Partial<GameState> {
+  const change: Partial<GameState> = {}
+  for (const key of GAME_STATE_KEYS) {
+    if (JSON.stringify(previous[key]) !== JSON.stringify(next[key])) {
+      Object.assign(change, { [key]: next[key] })
+    }
+  }
+  return change
+}
+
+function consoleStatusMessage(state: GameState, playbackSeconds: number) {
+  if (state.phase === 'initialization') return 'Apple Musicへログインしてください'
+  if (state.phase === 'ready') {
+    if (state.tracks.length > 0) return `${state.selectedPlaylistIds.length}件のプレイリストから${state.tracks.length}曲を選択中。開始できます`
+    return 'プレイリストを選んで、プレイヤーの参加を待っています'
+  }
+  if (state.step === 'loading') return '曲を準備しています'
+  if (state.step === 'beforePlayback') return '再生秒数を指定して、再生ボタンを押してください'
+  if (state.step === 'playing') return `${playbackSeconds}秒再生中。早押し待ちです`
+  if (state.step === 'answering') return '解答権が取られました'
+  if (state.step === 'correct') return '正解！'
+  if (state.step === 'wrong') return '残念、不正解'
+  if (state.step === 'reveal') return '正解発表中です'
+  if (state.step === 'results') return '結果発表です'
+  return ''
 }
 
 // サーバが唯一の真実(single source of truth)。ここが肝心なんだ!
@@ -87,15 +72,15 @@ const initialState: GameState = {
 // 初回 state を取りこぼし、gameboard が固まることがあった。それを構造ごと潰す。
 const socket: Socket = io()
 
-// 外部ストア(socket)を React に橋渡しする。useSyncExternalStore は getSnapshot を毎レンダーで
-// 読むので、購読登録とレンダーの隙間に届いた分も取りこぼさない(初回 race を構造で潰す要)。
+// socket から届いた最新 state はモジュールで保持し、useGameState が React state として返す。
+// onChange には前回から変わった GameState の key だけを渡す。
 let latestState: GameState = initialState
 let connected = socket.connected
 const stateListeners = new Set<() => void>()
 const connectedListeners = new Set<() => void>()
 
-socket.on('state', (state: GameState) => {
-  latestState = state
+socket.on('state', (nextState: GameState) => {
+  latestState = nextState
   stateListeners.forEach((notify) => notify())
 })
 
@@ -126,22 +111,33 @@ function subscribeConnected(notify: () => void) {
   return () => { connectedListeners.delete(notify) }
 }
 
-function useGameState() {
-  return useSyncExternalStore(subscribeState, () => latestState)
+function useGameState(onChange?: (change: Partial<GameState>) => void | Promise<void>) {
+  const previousStateRef = useRef(latestState)
+
+  const subscribe = useCallback((notify: () => void) => {
+    return subscribeState(() => {
+      const change = gameStateChange(previousStateRef.current, latestState)
+      previousStateRef.current = latestState
+      void onChange?.(change)
+      notify()
+    })
+  }, [onChange])
+
+  return useSyncExternalStore(subscribe, () => latestState)
 }
 
 function useConnected() {
   return useSyncExternalStore(subscribeConnected, () => connected)
 }
 
-function consoleAction<T = GameState>(event: string, body?: unknown): Promise<T> {
+function consoleAction(event: string, body?: unknown): Promise<void> {
   return new Promise((resolve, reject) => {
-    const callback = (error: Error | null, response?: { ok: boolean; state?: T; error?: string }) => {
+    const callback = (error: Error | null, response?: { ok: boolean; error?: string }) => {
       if (error) {
         reject(error)
         return
       }
-      if (response?.ok && response.state) resolve(response.state)
+      if (response?.ok) resolve()
       else reject(new Error(response?.error ?? 'Socket.IO console action failed'))
     }
     if (body === undefined) socket.timeout(5000).emit(event, callback)
@@ -195,6 +191,10 @@ function uniqueTracksById(tracks: Track[]) {
   })
 }
 
+function errorFromUnknown(error: unknown) {
+  return error instanceof Error ? error : new Error(String(error))
+}
+
 // 共通の className 束。Tailwind ユーティリティを React 側でまとめて DRY に保つ。
 const GLASS = 'bg-white/5 border border-white/10 shadow-2xl backdrop-blur-lg'
 const BTN = 'inline-flex items-center justify-center rounded-full font-bold cursor-pointer no-underline transition disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none'
@@ -205,6 +205,7 @@ const BTN_DANGER = `${BTN} px-5 py-3 text-rose bg-rose/10`
 const INPUT_BASE = 'w-full rounded-2xl border border-white/10 bg-black/20 text-white px-4 py-3 disabled:opacity-60'
 const HINT = 'text-muted'
 const EYEBROW = 'text-amber uppercase tracking-widest text-xs font-black mb-2'
+const JUDGE_RESULT_DURATION_MS = 1800
 
 // CSS の ::before/::after で描いていた形は inline SVG コンポーネントにした。
 // inline なら fill / stroke / currentColor がそのまま効く(外部ファイル参照だとホスト CSS が
@@ -245,7 +246,7 @@ function CheckGlyph({ className }: { className?: string }) {
   )
 }
 
-function PlayerBadge({ id, active = false, reacting = false, label = true, score, variant = 'console', size = 'normal' }: { id: string; active?: boolean; reacting?: boolean; label?: boolean; score?: number; variant?: 'console' | 'gameboard'; size?: 'normal' | 'large' }) {
+function PlayerBadge({ id, active = false, entering = false, label = true, score, variant = 'console', size = 'normal' }: { id: string; active?: boolean; entering?: boolean; label?: boolean; score?: number; variant?: 'console' | 'gameboard'; size?: 'normal' | 'large' }) {
   const color = playerColor(id)
 
   if (!label && variant === 'gameboard') {
@@ -255,7 +256,7 @@ function PlayerBadge({ id, active = false, reacting = false, label = true, score
       <span className={['relative flex flex-col items-center transition-transform', large ? 'w-28' : 'w-14', active && (large ? 'scale-110' : 'scale-125')].filter(Boolean).join(' ')} aria-label={id}>
         <PersonGlyph
           color={color.background}
-          className={['block', large ? 'w-20 h-28' : 'w-9 h-12', reacting && 'animate-react-pop'].filter(Boolean).join(' ')}
+          className={['block', large ? 'w-20 h-28' : 'w-9 h-12', entering && 'animate-participant-enter'].filter(Boolean).join(' ')}
           style={{ filter: active ? `drop-shadow(0 0 36px ${color.background}) drop-shadow(0 0 10px white)` : `drop-shadow(0 0 18px ${color.background})` }}
         />
         {score != null && <span className="mt-2 text-amber text-2xl leading-none font-black">{score}</span>}
@@ -419,52 +420,105 @@ function CircularSecondsSlider({
   )
 }
 
+function PlaylistTracksPanel({ playlistId }: { playlistId: string }) {
+  const tracksQuery = usePlaylistTracksQuery(playlistId)
+  const tracks = tracksQuery.data
+  const error = tracksQuery.error
+  const loading = tracksQuery.isPending || tracksQuery.isFetching
+
+  return (
+    <div className="mt-2 p-2.5 rounded-xl bg-black/20 border border-white/10 max-h-72 overflow-y-auto">
+      {loading && <p className={HINT}>曲を読み込み中...</p>}
+      {!loading && error && <p className="text-rose font-bold">{error instanceof Error ? error.message : String(error)}</p>}
+      {!loading && !error && tracks?.length === 0 && <p className={HINT}>曲がありません</p>}
+      {!loading && !error && tracks && tracks.length > 0 && (
+        <ul className="list-none m-0 p-0 grid gap-2">
+          {tracks.map((track, index) => (
+            <li className="flex items-center gap-2.5 min-w-0 text-cream" key={`${track.id}-${index}`}>
+              <span className="w-7 shrink-0 text-right text-muted tabular-nums">{index + 1}</span>
+              {(track.artworkThumbUrl ?? track.artworkUrl) && <img className="size-9 rounded-lg shrink-0" src={track.artworkThumbUrl ?? track.artworkUrl} alt="" />}
+              <span className="min-w-0 grid">
+                <span className="overflow-hidden text-ellipsis whitespace-nowrap font-bold">{track.title}</span>
+                <span className="overflow-hidden text-ellipsis whitespace-nowrap text-muted text-sm">{track.artist}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+function PlaylistListItem({
+  playlist,
+  selected,
+  expanded,
+  busy,
+  authorized,
+  onSelect,
+  onToggleExpanded,
+}: {
+  playlist: MusicPlaylist
+  selected: boolean
+  expanded: boolean
+  busy: boolean
+  authorized: boolean
+  onSelect: (playlist: MusicPlaylist) => void
+  onToggleExpanded: (playlist: MusicPlaylist) => void
+}) {
+  return (
+    <li className="rounded-2xl bg-white/5" key={playlist.id}>
+      <div className={`w-full rounded-2xl border flex items-stretch overflow-hidden text-cream ${selected ? 'bg-amber/20 border-amber/50' : 'bg-white/5 border-white/10'}`}>
+        <button
+          type="button"
+          className="flex-1 min-w-0 px-3 py-2.5 bg-transparent text-inherit border-0 flex justify-start items-center gap-2.5 text-left cursor-pointer disabled:cursor-not-allowed"
+          disabled={busy || !authorized}
+          onClick={() => onSelect(playlist)}
+          aria-pressed={selected}
+        >
+          <span className={`size-5 rounded-full border-2 inline-grid place-items-center shrink-0 ${selected ? 'bg-amber border-amber text-cocoa' : 'bg-white/10 border-white/40'}`}>
+            {selected && <CheckGlyph className="size-3.5" />}
+          </span>
+          <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{playlist.name}</span>
+        </button>
+        <button
+          type="button"
+          className={`w-12 grid place-items-center border-0 border-l border-white/10 cursor-pointer disabled:cursor-not-allowed ${expanded ? 'bg-white/5 text-amber' : 'bg-transparent text-cream'}`}
+          disabled={busy || !authorized}
+          onClick={() => onToggleExpanded(playlist)}
+          aria-label={expanded ? 'プレイリストを閉じる' : 'プレイリストを開く'}
+        >
+          <ChevronGlyph color={expanded ? '#ffb14e' : '#f7f2ea'} className={`w-3 h-3 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+        </button>
+      </div>
+      <Activity mode={expanded ? 'visible' : 'hidden'}>
+        <PlaylistTracksPanel playlistId={playlist.id} />
+      </Activity>
+    </li>
+  )
+}
+
 function ConsolePage() {
-  const state = useGameState()
-  const musicKit = useMusicKitPlayback()
-  const [libraryPlaylists, setLibraryPlaylists] = useState<Playlist[]>([])
+  const { instance: musicKitInstance, error: musicKitInitError } = useMusicKitInstance()
+  const { setSongIds, prepareNext, playFromStart, stop } = useSequentialPlayback()
+  const musicKitAuth = useMusicKitAuth()
+  const queryClient = useQueryClient()
+  const libraryPlaylistsQuery = useLibraryPlaylistsQuery()
+  const libraryPlaylists = libraryPlaylistsQuery.data ?? []
+  const loadingLibraryPlaylists = libraryPlaylistsQuery.isPending || libraryPlaylistsQuery.isFetching
   const [playlistSearch, setPlaylistSearch] = useState('')
   const [expandedPlaylistIds, setExpandedPlaylistIds] = useState<Set<string>>(() => new Set())
-  const [playlistTracks, setPlaylistTracks] = useState<Record<string, Track[]>>({})
-  const [loadingPlaylistIds, setLoadingPlaylistIds] = useState<Set<string>>(() => new Set())
-  const [playlistErrors, setPlaylistErrors] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
-  const [loadingLibraryPlaylists, setLoadingLibraryPlaylists] = useState(false)
   const [consoleMessage, setConsoleMessage] = useState<string | null>(null)
-  const [draftPlaybackSeconds, setDraftPlaybackSeconds] = useState(state.playbackSeconds)
-  const preparedQueueKeyRef = useRef<string | null>(null)
-  const autoLoginRequestedRef = useRef(false)
+  const [playbackSeconds, setPlaybackSeconds] = useState(0.5)
+  const [isPreparingNext, setIsPreparingNext] = useState(false)
+  const [playbackError, setPlaybackError] = useState<Error | null>(null)
+  const autoReadyRequestedRef = useRef(false)
   const autoLoadLibraryPlaylistsRequestedRef = useRef(false)
-  const editingPlaybackSecondsRef = useRef(false)
-  const pendingPlaybackSecondsRef = useRef<number | null>(null)
-  const playbackSecondsRequestIdRef = useRef(0)
-  // MusicKit の再生は state を唯一の駆動源にする(命令的ハンドラからは触らない)。
-  // 二重ロード防止用の「ロード要求済み index」と、playing への遷移を 1 回だけ拾うための「直前 step」。
-  const requestedTrackLoadIndexRef = useRef(-1)
-  const playbackModeRef = useRef<'idle' | 'intro' | 'reveal'>('idle')
-  const revealTrackIndexRef = useRef(-1)
-  const previousStepForPlaybackRef = useRef<GameStep>(state.step)
-  const getLibraryPlaylists = musicKit.getLibraryPlaylists
-  const prepareQueue = musicKit.prepareQueue
-  const stopPlayback = musicKit.stop
-  const playFullLoopTrack = musicKit.playFullLoopTrack
-  const loadTrack = musicKit.loadTrack
-  const playIntro = musicKit.playIntro
-
-  const joinedPlayers = useMemo(() => state.players.filter((player) => player.joined), [state.players])
-  const selectedPlaylistIds = state.selectedPlaylistIds
-  const selectedPlaylistIdSet = useMemo(() => new Set(selectedPlaylistIds), [selectedPlaylistIds])
-  const seconds = draftPlaybackSeconds
-  const currentTrackLoaded = state.currentTrackIndex >= 0 && musicKit.loadedTrackIndex === state.currentTrackIndex
-  const canPlayIntro = state.step === 'beforePlayback' && currentTrackLoaded && !musicKit.preparing
-  const currentTrackLoading = state.step === 'beforePlayback' && state.currentTrackIndex >= 0 && !canPlayIntro
-  const playButtonLabel = musicKit.playing ? '再生中' : currentTrackLoading ? 'ロード中' : '再生'
-
-  const visiblePlaylists = useMemo(() => {
-    const query = playlistSearch.trim().toLowerCase()
-    if (!query) return libraryPlaylists
-    return libraryPlaylists.filter((playlist) => playlist.name.toLowerCase().includes(query))
-  }, [libraryPlaylists, playlistSearch])
+  const playEndedTimeoutIdRef = useRef<number | null>(null)
+  const feedbackEndedTimeoutIdRef = useRef<number | null>(null)
+  const musicKitReady = musicKitInstance !== null
+  const musicKitError = musicKitInitError ?? musicKitAuth.error ?? playbackError
 
   const run = async (action: () => Promise<void>) => {
     setBusy(true)
@@ -478,78 +532,126 @@ function ConsolePage() {
     }
   }
 
-  useEffect(() => {
-    const pendingPlaybackSeconds = pendingPlaybackSecondsRef.current
-    if (pendingPlaybackSeconds != null) {
-      if (state.playbackSeconds === pendingPlaybackSeconds) {
-        pendingPlaybackSecondsRef.current = null
-        setDraftPlaybackSeconds(state.playbackSeconds)
+  const report = useCallback((error: unknown) => {
+    setConsoleMessage(error instanceof Error ? error.message : String(error))
+  }, [])
+
+  const loadLibraryPlaylists = useCallback(async (): Promise<MusicPlaylist[]> => {
+    const result = await libraryPlaylistsQuery.refetch()
+    if (result.error) throw result.error
+    const playlists = result.data ?? []
+    const playlistIds = new Set(playlists.map((playlist) => playlist.id))
+    setExpandedPlaylistIds((current) => new Set([...current].filter((playlistId) => playlistIds.has(playlistId))))
+    return playlists
+  }, [libraryPlaylistsQuery])
+
+  const clearPlayEndedTimeout = useCallback(() => {
+    if (playEndedTimeoutIdRef.current === null) return
+    window.clearTimeout(playEndedTimeoutIdRef.current)
+    playEndedTimeoutIdRef.current = null
+  }, [])
+
+  const clearFeedbackEndedTimeout = useCallback(() => {
+    if (feedbackEndedTimeoutIdRef.current === null) return
+    window.clearTimeout(feedbackEndedTimeoutIdRef.current)
+    feedbackEndedTimeoutIdRef.current = null
+  }, [])
+
+  const state = useGameState(useCallback(async (change: Partial<GameState>) => {
+    if (musicKitInstance === null || !musicKitAuth.authorized) return
+
+    if (change.step !== undefined && change.step !== 'playing') clearPlayEndedTimeout()
+    if (change.step !== undefined && change.step !== 'correct' && change.step !== 'wrong') clearFeedbackEndedTimeout()
+
+    if (change.step !== undefined && change.step !== 'playing' && change.step !== 'reveal') {
+      try {
+        await stop()
+        setPlaybackError(null)
+      } catch (error) {
+        setPlaybackError(errorFromUnknown(error))
       }
-      return
     }
-    if (!editingPlaybackSecondsRef.current) setDraftPlaybackSeconds(state.playbackSeconds)
-  }, [state.playbackSeconds])
+
+    if (change.step === 'reveal') {
+      try {
+        await playFromStart()
+        setPlaybackError(null)
+      } catch (error) {
+        setPlaybackError(errorFromUnknown(error))
+      }
+    }
+
+    if (change.roundIndex !== undefined && change.roundIndex >= 0) {
+      if (change.shuffledTrackIds !== undefined) {
+        const songIds = change.shuffledTrackIds.slice(change.roundIndex)
+        try {
+          await setSongIds(songIds)
+          setPlaybackError(null)
+        } catch (error) {
+          setPlaybackError(errorFromUnknown(error))
+          return
+        }
+      }
+
+      setIsPreparingNext(true)
+      try {
+        await prepareNext()
+        setPlaybackError(null)
+      } catch (error) {
+        setPlaybackError(errorFromUnknown(error))
+      }
+      setIsPreparingNext(false)
+    }
+
+  }, [clearFeedbackEndedTimeout, clearPlayEndedTimeout, musicKitAuth.authorized, musicKitInstance, playFromStart, prepareNext, setSongIds, stop]))
+
+  useEffect(() => {
+    return () => {
+      clearPlayEndedTimeout()
+      clearFeedbackEndedTimeout()
+    }
+  }, [clearFeedbackEndedTimeout, clearPlayEndedTimeout])
+
+  const participatingPlayers = state.players
+  const selectedPlaylistIds = state.selectedPlaylistIds
+  const selectedPlaylistIdSet = useMemo(() => new Set(selectedPlaylistIds), [selectedPlaylistIds])
+  const seconds = playbackSeconds
+  const statusMessage = consoleStatusMessage(state, seconds)
+  const roundTrackId = roundTrackIdFromState(state)
+  const roundTrack = roundTrackFromState(state)
+  const canPlayIntro = state.step === 'beforePlayback' && roundTrackId != null && !isPreparingNext && playbackError === null && musicKitReady && musicKitAuth.authorized
+  const canGoNextRound = state.phase === 'game' && state.step === 'reveal' && state.roundIndex >= 0 && state.roundIndex + 1 < state.shuffledTrackIds.length
+  const playButtonLabel = state.step === 'playing' ? '再生中' : '再生'
+
+  const visiblePlaylists = useMemo(() => {
+    const query = playlistSearch.trim().toLowerCase()
+    if (!query) return libraryPlaylists
+    return libraryPlaylists.filter((playlist) => playlist.name.toLowerCase().includes(query))
+  }, [libraryPlaylists, playlistSearch])
 
   const handlePlaybackSecondsChange = useCallback((value: number) => {
-    editingPlaybackSecondsRef.current = true
-    setDraftPlaybackSeconds(value)
+    setPlaybackSeconds(value)
   }, [])
 
   const handlePlaybackSecondsCommit = useCallback((value: number) => {
-    editingPlaybackSecondsRef.current = false
-    setDraftPlaybackSeconds(value)
-    const requestId = playbackSecondsRequestIdRef.current + 1
-    const needsSync = latestState.playbackSeconds !== value || pendingPlaybackSecondsRef.current != null
-    playbackSecondsRequestIdRef.current = requestId
-    pendingPlaybackSecondsRef.current = needsSync ? value : null
-    if (!needsSync) return
-
-    void consoleAction('console:playback-seconds', { seconds: value })
-      .then((nextState) => {
-        if (playbackSecondsRequestIdRef.current !== requestId) return
-        pendingPlaybackSecondsRef.current = null
-        setDraftPlaybackSeconds(nextState.playbackSeconds)
-      })
-      .catch((error) => {
-        if (playbackSecondsRequestIdRef.current !== requestId) return
-        pendingPlaybackSecondsRef.current = null
-        setDraftPlaybackSeconds(latestState.playbackSeconds)
-        setConsoleMessage(error instanceof Error ? error.message : String(error))
-      })
+    setPlaybackSeconds(value)
   }, [])
 
-  const loadLibraryPlaylists = useCallback(async (): Promise<Playlist[]> => {
-    setLoadingLibraryPlaylists(true)
-    try {
-      const playlists = await getLibraryPlaylists() as Playlist[]
-      const playlistIds = new Set(playlists.map((playlist) => playlist.id))
-      setLibraryPlaylists(playlists)
-      setExpandedPlaylistIds((current) => new Set([...current].filter((playlistId) => playlistIds.has(playlistId))))
-      return playlists
-    } finally {
-      setLoadingLibraryPlaylists(false)
-    }
-  }, [getLibraryPlaylists])
-
   useEffect(() => {
-    const report = (error: unknown) => {
-      setConsoleMessage(error instanceof Error ? error.message : String(error))
-    }
+    if (!musicKitAuth.authorized) autoLoadLibraryPlaylistsRequestedRef.current = false
+    if (state.phase !== 'initialization') autoReadyRequestedRef.current = false
 
-    if (!musicKit.authorized) autoLoadLibraryPlaylistsRequestedRef.current = false
-    if (state.hostLoggedIn) autoLoginRequestedRef.current = false
-
-    if (musicKit.ready && musicKit.authorized && !state.hostLoggedIn && !autoLoginRequestedRef.current) {
-      autoLoginRequestedRef.current = true
-      void consoleAction('console:login').catch((error) => {
-        autoLoginRequestedRef.current = false
+    if (musicKitReady && musicKitAuth.authorized && state.phase === 'initialization' && !autoReadyRequestedRef.current) {
+      autoReadyRequestedRef.current = true
+      void consoleAction('console:ready').catch((error) => {
+        autoReadyRequestedRef.current = false
         report(error)
       })
     }
 
     if (
-      musicKit.ready &&
-      musicKit.authorized &&
+      musicKitReady &&
+      musicKitAuth.authorized &&
       !loadingLibraryPlaylists &&
       libraryPlaylists.length === 0 &&
       !autoLoadLibraryPlaylistsRequestedRef.current
@@ -557,114 +659,36 @@ function ConsolePage() {
       autoLoadLibraryPlaylistsRequestedRef.current = true
       void loadLibraryPlaylists().catch(report)
     }
-
-    const previousStep = previousStepForPlaybackRef.current
-    previousStepForPlaybackRef.current = state.step
-
-    if (musicKit.ready && musicKit.authorized) {
-      if (state.selectedPlaylistIds.length > 0 && state.tracks.length > 0) {
-        const queueKey = `${state.selectedPlaylistIds.join('|')}:${state.tracks.map((track) => track.id).join('|')}`
-        if (preparedQueueKeyRef.current !== queueKey) {
-          preparedQueueKeyRef.current = queueKey
-          requestedTrackLoadIndexRef.current = -1 // キューが入れ替わったらロード要求済み index も無効化
-          void prepareQueue(state.tracks).catch((error) => {
-            preparedQueueKeyRef.current = null
-            report(error)
-          })
-        }
-      }
-
-      // 曲のロードは state.currentTrackIndex に追従する(旧 handleStart/handleNextRound の命令的ロードを置換)。
-      // index が変わった時だけ読み直す。playing→beforePlayback の復帰みたいな step だけの変化では読み直さない。
-      if (state.currentTrackIndex < 0) {
-        requestedTrackLoadIndexRef.current = -1
-      } else if (requestedTrackLoadIndexRef.current !== state.currentTrackIndex) {
-        requestedTrackLoadIndexRef.current = state.currentTrackIndex
-        void loadTrack(state.currentTrackIndex).catch((error) => {
-          requestedTrackLoadIndexRef.current = -1
-          report(error)
-        })
-      }
-    } else if (state.currentTrackIndex < 0) {
-      requestedTrackLoadIndexRef.current = -1
-    }
-
-    // イントロ再生は step が playing に"入った"瞬間に 1 回だけ。
-    // step 遷移(playing→beforePlayback の復帰)はサーバ所有のまま、クライアントはそれに追従する。
-    if (state.step === 'playing' && previousStep !== 'playing') {
-      playbackModeRef.current = 'intro'
-      revealTrackIndexRef.current = -1
-      void playIntro(state.currentTrackIndex, state.playbackSeconds).catch(report)
-    } else if (state.step === 'reveal' && state.currentTrackIndex >= 0) {
-      if (playbackModeRef.current !== 'reveal' || revealTrackIndexRef.current !== state.currentTrackIndex) {
-        playbackModeRef.current = 'reveal'
-        revealTrackIndexRef.current = state.currentTrackIndex
-        void playFullLoopTrack(state.currentTrackIndex).catch(report)
-      }
-    } else if (playbackModeRef.current !== 'idle') {
-      playbackModeRef.current = 'idle'
-      revealTrackIndexRef.current = -1
-      void stopPlayback().catch(report)
-    }
   }, [
     libraryPlaylists.length,
     loadLibraryPlaylists,
     loadingLibraryPlaylists,
-    loadTrack,
-    musicKit.authorized,
-    musicKit.ready,
-    playFullLoopTrack,
-    playIntro,
-    prepareQueue,
-    state.currentTrackIndex,
-    state.hostLoggedIn,
-    state.playbackSeconds,
-    state.selectedPlaylistIds,
-    state.step,
-    state.tracks,
-    stopPlayback,
+    musicKitAuth.authorized,
+    musicKitReady,
+    report,
+    state.phase,
   ])
 
   const handleLogin = () => run(async () => {
-    autoLoginRequestedRef.current = true
+    autoReadyRequestedRef.current = true
     autoLoadLibraryPlaylistsRequestedRef.current = true
     try {
-      await musicKit.authorize()
-      await consoleAction('console:login')
+      await musicKitAuth.authorize()
+      await consoleAction('console:ready')
       const playlists = await loadLibraryPlaylists()
       setConsoleMessage(`Apple Musicにログインしました。${playlists.length}件のライブラリプレイリストを取得しました`)
     } catch (error) {
-      autoLoginRequestedRef.current = false
+      autoReadyRequestedRef.current = false
       autoLoadLibraryPlaylistsRequestedRef.current = false
       throw error
     }
   })
 
-  const fetchPlaylistTracks = async (playlist: Playlist) => {
-    if (playlistTracks[playlist.id]) return playlistTracks[playlist.id]
-    setLoadingPlaylistIds((current) => new Set(current).add(playlist.id))
-    setPlaylistErrors((current) => {
-      const next = { ...current }
-      delete next[playlist.id]
-      return next
-    })
-    try {
-      const tracks = await musicKit.getPlaylistTracks(playlist.id, playlist.name, 'library') as Track[]
-      setPlaylistTracks((current) => ({ ...current, [playlist.id]: tracks }))
-      return tracks
-    } catch (error) {
-      setPlaylistErrors((current) => ({ ...current, [playlist.id]: error instanceof Error ? error.message : String(error) }))
-      throw error
-    } finally {
-      setLoadingPlaylistIds((current) => {
-        const next = new Set(current)
-        next.delete(playlist.id)
-        return next
-      })
-    }
+  const fetchPlaylistTracks = async (playlist: MusicPlaylist) => {
+    return queryClient.ensureQueryData(playlistTracksQueryOptions(musicKitInstance, musicKitAuth.authorized, playlist.id))
   }
 
-  const togglePlaylistSelected = (playlist: Playlist) => run(async () => {
+  const togglePlaylistSelected = (playlist: MusicPlaylist) => run(async () => {
     const currentSelectedIds = new Set(state.selectedPlaylistIds)
     if (currentSelectedIds.has(playlist.id)) currentSelectedIds.delete(playlist.id)
     else currentSelectedIds.add(playlist.id)
@@ -673,57 +697,81 @@ function ConsolePage() {
     const trackGroups = await Promise.all(selectedPlaylists.map((selectedPlaylist) => fetchPlaylistTracks(selectedPlaylist)))
     const tracks = uniqueTracksById(trackGroups.flat())
 
-    await consoleAction('console:playlists', {
+    await consoleAction('console:select-playlists', {
       selectedPlaylistIds: selectedPlaylists.map((selectedPlaylist) => selectedPlaylist.id),
-      playlists: selectedPlaylists.map((selectedPlaylist) => selectedPlaylist.name),
       tracks,
     })
-
-    if (tracks.length > 0) {
-      void prepareQueue(tracks).catch((error) => {
-        setConsoleMessage(error instanceof Error ? error.message : String(error))
-      })
-      preparedQueueKeyRef.current = `${selectedPlaylists.map((selectedPlaylist) => selectedPlaylist.id).join('|')}:${tracks.map((track) => track.id).join('|')}`
-    } else {
-      preparedQueueKeyRef.current = null
-    }
-    requestedTrackLoadIndexRef.current = -1
 
     if (selectedPlaylists.length === 0) {
       setConsoleMessage('プレイリストの選択を解除しました')
     } else {
-      setConsoleMessage(`${selectedPlaylists.length}件のプレイリストから${tracks.length}曲をMusicKitキューへ読み込みました`)
+      setConsoleMessage(`${selectedPlaylists.length}件のプレイリストから${tracks.length}曲を選択しました`)
     }
   })
 
-  const togglePlaylistExpanded = (playlist: Playlist) => run(async () => {
-    const willExpand = !expandedPlaylistIds.has(playlist.id)
+  const togglePlaylistExpanded = (playlist: MusicPlaylist) => run(async () => {
     setExpandedPlaylistIds((current) => {
       const next = new Set(current)
       if (next.has(playlist.id)) next.delete(playlist.id)
       else next.add(playlist.id)
       return next
     })
-    if (willExpand) await fetchPlaylistTracks(playlist)
   })
 
-  // ここからのハンドラは"intent を送るだけ"。MusicKit の再生/停止/ロードは上の reconciler が
-  // state を見て一手に引き受ける。命令的呼び出しと effect の二重駆動をここで断ち切る。
+  // 再生操作はボタンと useGameState(onChange) からだけ useSequentialPlayback へ渡す。
   const handleStart = () => run(async () => {
+    if (state.tracks.length === 0) {
+      setConsoleMessage('曲を選択してから開始してください')
+      return
+    }
     await consoleAction('console:start')
   })
 
   const handlePlay = () => run(async () => {
     if (!canPlayIntro) {
-      setConsoleMessage('曲のロード完了を待っています')
+      setConsoleMessage('曲の準備完了を待っています')
       return
     }
-    await consoleAction('console:play', { seconds })
+    await consoleAction('console:play')
+    await playFromStart()
+    setPlaybackError(null)
+    clearPlayEndedTimeout()
+    playEndedTimeoutIdRef.current = window.setTimeout(async () => {
+      playEndedTimeoutIdRef.current = null
+      try {
+        await stop()
+        setPlaybackError(null)
+        await consoleAction('console:play-ended')
+      } catch (error) {
+        setPlaybackError(errorFromUnknown(error))
+        report(error)
+      }
+    }, Math.ceil(seconds * 1000))
   })
 
-  const handleJudge = (result: 'correct' | 'wrong') => run(async () => {
-    const judgedState = await consoleAction('console:judge', { result })
-    if (judgedState.step === result) playResultSound(result)
+  const handleCorrect = () => run(async () => {
+    await consoleAction('console:correct')
+    playResultSound('correct')
+    clearFeedbackEndedTimeout()
+    feedbackEndedTimeoutIdRef.current = window.setTimeout(async () => {
+      feedbackEndedTimeoutIdRef.current = null
+      try {
+        await consoleAction('console:correct-feedback-ended')
+      } catch (error) {
+        setPlaybackError(errorFromUnknown(error))
+        report(error)
+      }
+    }, JUDGE_RESULT_DURATION_MS)
+  })
+
+  const handleWrong = () => run(async () => {
+    await consoleAction('console:wrong')
+    playResultSound('wrong')
+    clearFeedbackEndedTimeout()
+    feedbackEndedTimeoutIdRef.current = window.setTimeout(() => {
+      feedbackEndedTimeoutIdRef.current = null
+      void consoleAction('console:wrong-feedback-ended').catch(report)
+    }, JUDGE_RESULT_DURATION_MS)
   })
 
   const handleGiveUp = () => run(async () => {
@@ -735,12 +783,16 @@ function ConsolePage() {
   })
 
   const handleShowResults = () => run(async () => {
-    const resultsState = await consoleAction('console:show-results')
-    if (resultsState.step === 'results') playResultsSound()
+    await consoleAction('console:show-results')
+    playResultsSound()
   })
 
   const handleNextGame = () => run(async () => {
     await consoleAction('console:next-game')
+  })
+
+  const handleReset = () => run(async () => {
+    await consoleAction('console:reset')
   })
 
   return (
@@ -756,11 +808,11 @@ function ConsolePage() {
         <div>
           <p className={EYEBROW}>現在</p>
           <h2 className="m-0 mb-2.5 text-2xl font-bold">{phaseLabel(state.phase, state.step)}</h2>
-          <p className="mt-0 text-subtle leading-relaxed">{state.message}</p>
+          <p className="mt-0 text-subtle leading-relaxed">{statusMessage}</p>
           {consoleMessage && <p className={`mt-0 leading-relaxed ${HINT}`}>{consoleMessage}</p>}
-          {musicKit.error && <p className="mt-0 leading-relaxed text-rose font-bold">MusicKit: <span>{musicKit.error}</span></p>}
+          {musicKitError && <p className="mt-0 leading-relaxed text-rose font-bold">MusicKit: <span>{musicKitError.message}</span></p>}
         </div>
-        <button className={BTN_DANGER} onClick={() => consoleAction('console:reset')}>リセット</button>
+        <button className={BTN_DANGER} onClick={handleReset}>リセット</button>
       </section>
 
       <section className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
@@ -768,16 +820,16 @@ function ConsolePage() {
         <div className={`${GLASS} rounded-2xl p-6 min-w-0`}>
           <h2 className="m-0 mb-2.5 text-2xl font-bold">1. 初期化</h2>
           <p className="mt-0 text-subtle leading-relaxed">Apple Musicにログインして、MusicKitで実際に再生できる状態にします。</p>
-          <div className={`flex items-center gap-3 my-4 p-3.5 rounded-2xl border ${!musicKit.ready ? 'bg-white/5 border-white/10' : musicKit.authorized ? 'bg-mint/10 border-mint/30' : 'bg-rose/10 border-rose/30'}`}>
-            <span className={`size-3.5 rounded-full shrink-0 ${!musicKit.ready ? 'bg-muted animate-dot-pulse' : musicKit.authorized ? 'bg-mint' : 'bg-rose'}`} />
+          <div className={`flex items-center gap-3 my-4 p-3.5 rounded-2xl border ${!musicKitReady ? 'bg-white/5 border-white/10' : musicKitAuth.authorized ? 'bg-mint/10 border-mint/30' : 'bg-rose/10 border-rose/30'}`}>
+            <span className={`size-3.5 rounded-full shrink-0 ${!musicKitReady ? 'bg-muted animate-dot-pulse' : musicKitAuth.authorized ? 'bg-mint' : 'bg-rose'}`} />
             <div>
-              <strong className="block text-cream">{musicKit.ready ? (musicKit.authorized ? 'Apple Music ログイン済み' : 'Apple Music 未ログイン') : 'MusicKit 準備中'}</strong>
-              <p className="mt-1 mb-0 text-subtle leading-snug">{musicKit.ready ? (musicKit.authorized ? 'ライブラリのプレイリストを複数選択できます' : 'ログインするとライブラリのプレイリストを取得できます') : 'MusicKit JS を初期化しています'}</p>
+              <strong className="block text-cream">{musicKitReady ? (musicKitAuth.authorized ? 'Apple Music ログイン済み' : 'Apple Music 未ログイン') : 'MusicKit 準備中'}</strong>
+              <p className="mt-1 mb-0 text-subtle leading-snug">{musicKitReady ? (musicKitAuth.authorized ? 'ライブラリのプレイリストを複数選択できます' : 'ログインするとライブラリのプレイリストを取得できます') : 'MusicKit JS を初期化しています'}</p>
             </div>
           </div>
           <div className="flex flex-wrap gap-2.5 mt-3.5 max-md:[&>button]:flex-1">
-            <button className={BTN_PRIMARY} disabled={busy || !musicKit.ready || musicKit.authorized} onClick={handleLogin}>Apple Musicにログイン</button>
-            <button className={BTN_GHOST} disabled={busy || !musicKit.authorized} onClick={() => run(musicKit.unauthorize)}>ログアウト</button>
+            <button className={BTN_PRIMARY} disabled={busy || !musicKitReady || musicKitAuth.authorized} onClick={handleLogin}>Apple Musicにログイン</button>
+            <button className={BTN_GHOST} disabled={busy || !musicKitAuth.authorized} onClick={() => run(musicKitAuth.unauthorize)}>ログアウト</button>
           </div>
         </div>
 
@@ -785,7 +837,7 @@ function ConsolePage() {
           <h2 className="m-0 mb-2.5 text-2xl font-bold">2. 準備</h2>
           <div className="flex items-center justify-between gap-3 text-cream font-bold mt-4 mb-3">
             <span>ライブラリプレイリスト</span>
-            <button className={BTN_GHOST_SMALL} disabled={busy || loadingLibraryPlaylists || !musicKit.authorized} onClick={() => run(async () => { await loadLibraryPlaylists() })}>{loadingLibraryPlaylists ? '読み込み中' : '再読み込み'}</button>
+            <button className={BTN_GHOST_SMALL} disabled={busy || loadingLibraryPlaylists || !musicKitAuth.authorized} onClick={() => run(async () => { await loadLibraryPlaylists() })}>{loadingLibraryPlaylists ? '読み込み中' : '再読み込み'}</button>
           </div>
           <input
             type="search"
@@ -793,62 +845,21 @@ function ConsolePage() {
             placeholder="プレイリスト名で検索"
             value={playlistSearch}
             onChange={(event) => setPlaylistSearch(event.target.value)}
-            disabled={busy || !musicKit.authorized || libraryPlaylists.length === 0}
+            disabled={busy || !musicKitAuth.authorized || libraryPlaylists.length === 0}
           />
           <ul className="list-none m-0 mt-2.5 p-0 grid gap-2 max-h-80 overflow-y-auto">
             {visiblePlaylists.length ? visiblePlaylists.map((playlist) => {
-              const selected = selectedPlaylistIdSet.has(playlist.id)
-              const expanded = expandedPlaylistIds.has(playlist.id)
-              const loading = loadingPlaylistIds.has(playlist.id)
-              const error = playlistErrors[playlist.id]
-              const tracks = playlistTracks[playlist.id]
               return (
-                <li className="rounded-2xl bg-white/5" key={playlist.id}>
-                  <div className={`w-full rounded-2xl border flex items-stretch overflow-hidden text-cream ${selected ? 'bg-amber/20 border-amber/50' : 'bg-white/5 border-white/10'}`}>
-                    <button
-                      type="button"
-                      className="flex-1 min-w-0 px-3 py-2.5 bg-transparent text-inherit border-0 flex justify-start items-center gap-2.5 text-left cursor-pointer disabled:cursor-not-allowed"
-                      disabled={busy || !musicKit.authorized}
-                      onClick={() => togglePlaylistSelected(playlist)}
-                      aria-pressed={selected}
-                    >
-                      <span className={`size-5 rounded-full border-2 inline-grid place-items-center shrink-0 ${selected ? 'bg-amber border-amber text-cocoa' : 'bg-white/10 border-white/40'}`}>
-                        {selected && <CheckGlyph className="size-3.5" />}
-                      </span>
-                      <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{playlist.name}</span>
-                    </button>
-                    <button
-                      type="button"
-                      className={`w-12 grid place-items-center border-0 border-l border-white/10 cursor-pointer disabled:cursor-not-allowed ${expanded ? 'bg-white/5 text-amber' : 'bg-transparent text-cream'}`}
-                      disabled={busy || !musicKit.authorized}
-                      onClick={() => togglePlaylistExpanded(playlist)}
-                      aria-label={expanded ? 'プレイリストを閉じる' : 'プレイリストを開く'}
-                    >
-                      <ChevronGlyph color={expanded ? '#ffb14e' : '#f7f2ea'} className={`w-3 h-3 transition-transform ${expanded ? 'rotate-180' : ''}`} />
-                    </button>
-                  </div>
-                  {expanded && (
-                    <div className="mt-2 p-2.5 rounded-xl bg-black/20 border border-white/10 max-h-72 overflow-y-auto">
-                      {loading && <p className={HINT}>曲を読み込み中...</p>}
-                      {!loading && error && <p className="text-rose font-bold">{error}</p>}
-                      {!loading && !error && tracks?.length === 0 && <p className={HINT}>曲がありません</p>}
-                      {!loading && !error && tracks && tracks.length > 0 && (
-                        <ul className="list-none m-0 p-0 grid gap-2">
-                          {tracks.map((track, index) => (
-                            <li className="flex items-center gap-2.5 min-w-0 text-cream" key={`${track.id}-${index}`}>
-                              <span className="w-7 shrink-0 text-right text-muted tabular-nums">{index + 1}</span>
-                              {(track.artworkThumbUrl ?? track.artworkUrl) && <img className="size-9 rounded-lg shrink-0" src={track.artworkThumbUrl ?? track.artworkUrl} alt="" />}
-                              <span className="min-w-0 grid">
-                                <span className="overflow-hidden text-ellipsis whitespace-nowrap font-bold">{track.title}</span>
-                                <span className="overflow-hidden text-ellipsis whitespace-nowrap text-muted text-sm">{track.artist}</span>
-                              </span>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  )}
-                </li>
+                <PlaylistListItem
+                  authorized={musicKitAuth.authorized}
+                  busy={busy}
+                  expanded={expandedPlaylistIds.has(playlist.id)}
+                  key={playlist.id}
+                  onSelect={togglePlaylistSelected}
+                  onToggleExpanded={togglePlaylistExpanded}
+                  playlist={playlist}
+                  selected={selectedPlaylistIdSet.has(playlist.id)}
+                />
               )
             }) : <li className={HINT}>{loadingLibraryPlaylists ? 'ライブラリのプレイリストを読み込み中...' : libraryPlaylists.length ? '一致するプレイリストがありません' : 'ログイン後にライブラリのプレイリストを取得します'}</li>}
           </ul>
@@ -862,7 +873,7 @@ function ConsolePage() {
           </div>
           <div className="flex items-center gap-2 flex-wrap mt-3">
             <span className={HINT}>参加中:</span>
-            {joinedPlayers.length ? joinedPlayers.map((player) => (
+            {participatingPlayers.length ? participatingPlayers.map((player) => (
               <PlayerBadge id={player.id} label={false} key={player.id} />
             )) : <span className={HINT}>まだいません</span>}
           </div>
@@ -885,12 +896,12 @@ function ConsolePage() {
           <div className="grid gap-3.5 mt-4">
             <div className="grid gap-2.5 grid-cols-1 md:grid-cols-2 [&>button]:min-h-14">
               <button className={BTN_PRIMARY} disabled={busy || !canPlayIntro} onClick={handlePlay}>{playButtonLabel}</button>
-              <button className={BTN_GHOST} disabled={busy || state.phase !== 'game' || !['beforePlayback', 'playing', 'answering', 'wrong'].includes(state.step)} onClick={handleGiveUp}>ギブアップ</button>
-              <button className={BTN_PRIMARY} disabled={busy || state.step !== 'answering'} onClick={() => handleJudge('correct')}>正解</button>
-              <button className={BTN_PRIMARY} disabled={busy || state.step !== 'answering'} onClick={() => handleJudge('wrong')}>不正解</button>
+              <button className={BTN_GHOST} disabled={busy || state.phase !== 'game' || state.step !== 'beforePlayback'} onClick={handleGiveUp}>ギブアップ</button>
+              <button className={BTN_PRIMARY} disabled={busy || state.step !== 'answering'} onClick={handleCorrect}>正解</button>
+              <button className={BTN_PRIMARY} disabled={busy || state.step !== 'answering'} onClick={handleWrong}>不正解</button>
             </div>
             <div className="grid gap-2.5 grid-cols-1 md:grid-cols-3 pt-3.5 border-t border-white/10 [&>button]:min-h-14">
-              <button className={BTN_PRIMARY} disabled={busy || state.step !== 'reveal'} onClick={handleNextRound}>次のラウンドへ</button>
+              <button className={BTN_PRIMARY} disabled={busy || !canGoNextRound} onClick={handleNextRound}>次のラウンドへ</button>
               <button className={BTN_PRIMARY} disabled={busy || state.step !== 'reveal'} onClick={handleShowResults}>結果発表へ</button>
               <button className={BTN_PRIMARY} disabled={busy || state.step !== 'results'} onClick={handleNextGame}>次のゲームへ</button>
             </div>
@@ -899,12 +910,12 @@ function ConsolePage() {
 
         <div className={`${GLASS} rounded-2xl p-6 min-w-0`}>
           <h2 className="m-0 mb-2.5 text-2xl font-bold">曲情報</h2>
-          {state.currentTrack ? (
+          {roundTrack ? (
             <div className="flex items-center gap-4 rounded-2xl p-5 bg-linear-to-br from-pink/20 to-sky/20 border border-white/10">
-              {(state.currentTrack.artworkThumbUrl ?? state.currentTrack.artworkUrl) ? (
+              {(roundTrack.artworkThumbUrl ?? roundTrack.artworkUrl) ? (
                 <img
                   className="size-24 rounded-xl shrink-0 object-cover bg-linear-to-br from-pink to-amber"
-                  src={state.currentTrack.artworkThumbUrl ?? state.currentTrack.artworkUrl}
+                  src={roundTrack.artworkThumbUrl ?? roundTrack.artworkUrl}
                   alt=""
                   loading="lazy"
                 />
@@ -912,11 +923,11 @@ function ConsolePage() {
                 <span className="size-24 rounded-xl shrink-0 grid place-items-center bg-linear-to-br from-pink to-amber text-cocoa text-4xl font-black" aria-hidden="true">♪</span>
               )}
               <div className="min-w-0">
-                <strong className="block text-2xl font-bold leading-tight">{state.currentTrack.title}</strong>
-                <span className="block mt-2.5 text-subtle">{state.currentTrack.artist}</span>
+                <strong className="block text-2xl font-bold leading-tight">{roundTrack.title}</strong>
+                <span className="block mt-2.5 text-subtle">{roundTrack.artist}</span>
               </div>
             </div>
-          ) : <p className="mt-0 text-subtle leading-relaxed">まだ曲はロードされていません。</p>}
+          ) : <p className="mt-0 text-subtle leading-relaxed">まだ曲は準備されていません。</p>}
         </div>
         </div>
       </section>
@@ -1093,6 +1104,33 @@ function GameboardPlayers({ players, answererId }: {
   players: Player[]
   answererId: string | null
 }) {
+  const previousPlayerIdsRef = useRef<Set<string> | null>(null)
+  const [enteringPlayerIds, setEnteringPlayerIds] = useState<Set<string>>(() => new Set())
+
+  useEffect(() => {
+    const currentPlayerIds = new Set(players.map((player) => player.id))
+    const previousPlayerIds = previousPlayerIdsRef.current
+    previousPlayerIdsRef.current = currentPlayerIds
+    if (previousPlayerIds == null) return
+
+    const enteredPlayerIds = players.map((player) => player.id).filter((id) => !previousPlayerIds.has(id))
+    if (enteredPlayerIds.length === 0) return
+
+    setEnteringPlayerIds((ids) => new Set([...ids, ...enteredPlayerIds]))
+    const timeoutIds = enteredPlayerIds.map((id) => window.setTimeout(() => {
+      setEnteringPlayerIds((ids) => {
+        if (!ids.has(id)) return ids
+        const next = new Set(ids)
+        next.delete(id)
+        return next
+      })
+    }, 800))
+
+    return () => {
+      timeoutIds.forEach(window.clearTimeout)
+    }
+  }, [players])
+
   if (players.length === 0) return null
   return (
     <div className="w-full pt-5 border-t border-white/10">
@@ -1101,11 +1139,11 @@ function GameboardPlayers({ players, answererId }: {
           <PlayerBadge
             id={player.id}
             active={player.id === answererId}
-            reacting={player.lastActionAt != null}
+            entering={enteringPlayerIds.has(player.id)}
             label={false}
             score={player.score}
             variant="gameboard"
-            key={`${player.id}:${player.lastActionAt ?? 0}`}
+            key={player.id}
           />
         ))}
       </div>
@@ -1319,11 +1357,12 @@ function ReadyTrackLanes({ tracks }: { tracks: Track[] }) {
 function GameboardPage() {
   const state = useGameState()
   const connected = useConnected()
-  const joinedPlayers = state.players.filter((player) => player.joined)
+  const participatingPlayers = state.players
+  const roundTrack = roundTrackFromState(state)
 
   const showReadyTracks = state.phase === 'ready' && state.tracks.length > 0
-  const sortedPlayers = [...joinedPlayers].sort((a, b) => b.score - a.score || a.id.localeCompare(b.id))
-  const players = <GameboardPlayers players={joinedPlayers} answererId={state.answererId} />
+  const sortedPlayers = [...participatingPlayers].sort((a, b) => b.score - a.score || a.id.localeCompare(b.id))
+  const players = <GameboardPlayers players={participatingPlayers} answererId={state.answererId} />
 
   // ボード上の共通レイアウトはユーティリティ束を定数化して step ごとに付け替える。
   const TITLE = 'text-5xl sm:text-7xl font-black leading-none tracking-tighter mx-auto'
@@ -1412,12 +1451,12 @@ function GameboardPage() {
         {players}
       </>
     )
-  } else if (state.step === 'reveal' && state.currentTrack) {
+  } else if (state.step === 'reveal' && roundTrack) {
     content = (
       <div className="rounded-3xl p-5 bg-linear-to-br from-pink/20 to-sky/20 border border-white/10 grid justify-items-center gap-4">
-        <TrackArtwork track={state.currentTrack} />
-        <strong className="block text-3xl sm:text-5xl font-bold leading-tight">{state.currentTrack.title}</strong>
-        <span className="block mt-2.5 text-subtle">{state.currentTrack.artist}</span>
+        <TrackArtwork track={roundTrack} />
+        <strong className="block text-3xl sm:text-5xl font-bold leading-tight">{roundTrack.title}</strong>
+        <span className="block mt-2.5 text-subtle">{roundTrack.artist}</span>
       </div>
     )
   } else if (state.step === 'results') {
@@ -1580,7 +1619,7 @@ function ActionPage() {
       try {
         master.disconnect()
       } catch {
-        // The sound may already have been garbage-collected or replaced by a test double.
+        // The audio graph may already be released by the browser.
       }
     }, 1700)
   }

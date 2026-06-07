@@ -41,6 +41,7 @@ declare namespace MusicKit {
     stop(): Promise<void>;
     skipToNextItem(): Promise<void>;
     skipToPreviousItem(): Promise<void>;
+    playNext(options: QueueOptions, clear?: boolean): Promise<Queue | void>;
     seekToTime(time: number): Promise<void>;
     mute(): void;
     unmute(): Promise<void>;

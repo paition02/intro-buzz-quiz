@@ -92,7 +92,7 @@ bun dev
 
 | ステップ | 説明 |
 | --- | --- |
-| `loading` | 次の曲をロード中 |
+| `loading` | 次の曲を準備中 |
 | `beforePlayback` | 再生前。ホストの再生待ち |
 | `playing` | イントロ再生中。早押し受付中 |
 | `answering` | 解答権が確定。ホストの正誤判定待ち |
@@ -122,7 +122,7 @@ MusicKit JS 用の Apple Music developer token を返します。`jose` で ES25
 | `204 No Content` | 正常だが反応なし（すでに他の人が解答権を取得済み 等） |
 | `400 Bad Request` | `actorId` が空 |
 | `409 Conflict` | 今は受け付けられない状態（未参加での早押し、受付時間外 等） |
-| `429 Too Many Requests` | クールダウン中（同一プレイヤーは最短 250ms 間隔） |
+| `429 Too Many Requests` | クールダウン中（同一プレイヤーの受理済み action は最短 250ms 間隔） |
 
 挙動の要点:
 
@@ -134,16 +134,19 @@ MusicKit JS 用の Apple Music developer token を返します。`jose` で ES25
 
 ### WebSocket (`/socket.io/`)
 
-接続時にサーバーは現在の状態を `state` イベントで送信します。ホストコンソールの操作は以下のイベントで送られ、各操作は ack で最新状態を返します。
+接続時にサーバーは現在の状態を `state` イベントで送信します。ホストコンソールの操作は以下のイベントで送られ、各操作は ack で成否を返します。状態の同期は `state` イベントで行います。
 
 | イベント | 操作 |
 | --- | --- |
-| `console:login` | Apple Music ログイン完了を通知（→ `ready`） |
-| `console:playlists` | 選択プレイリスト群と曲リストを設定 |
-| `console:playback-seconds` | 再生秒数を設定（0.1〜30） |
+| `console:ready` | ホストコンソールが再生準備完了したことを通知（→ `ready`） |
+| `console:select-playlists` | 選択プレイリストID群と曲リストを設定 |
 | `console:start` | ゲーム開始（曲順シャッフル・スコアリセット） |
 | `console:play` | イントロ再生開始 |
-| `console:judge` | 正誤判定（`{ result: 'correct' \| 'wrong' }`） |
+| `console:play-ended` | イントロ再生終了 |
+| `console:correct` | 正解判定 |
+| `console:wrong` | 不正解判定 |
+| `console:correct-feedback-ended` | 正解フィードバック終了（正解発表へ） |
+| `console:wrong-feedback-ended` | 不正解フィードバック終了（再生前へ） |
 | `console:give-up` | ギブアップ（正解発表へ） |
 | `console:next-round` | 次の曲へ |
 | `console:show-results` | 結果発表へ |
@@ -154,7 +157,7 @@ MusicKit JS 用の Apple Music developer token を返します。`jose` で ES25
 
 - `index.html` で MusicKit JS v3 を CDN から読み込みます。
 - 再生を行うのは**ホストコンソール (`/console`) のみ**です。ゲームボードは正解 / 不正解の効果音（Web Audio で合成）のみ鳴らします。
-- ホストコンソールはゲーム状態を駆動源として再生を制御します（`playing` ステップで指定秒数だけイントロ再生、`reveal` ステップで曲をフルループ再生）。再生の開始 / 停止 / 曲ロードはすべて状態の変化に追従して行われます。
+- ホストコンソールはゲーム状態を駆動源として再生を制御します（`playing` ステップで指定秒数だけイントロ再生、`reveal` ステップで曲をフルループ再生）。再生の開始 / 停止 / MusicKit キュー準備はすべて状態の変化に追従して行われます。
 - プレイリストの曲はライブラリ版からカタログ版へ解決し、MusicKit キューには 50 曲単位のロットで投入します。再生対象の曲が別ロットにある場合は、そのロットへキューを張り替えてリピートモードを「1 曲」に設定します。
 
 ## スクリプト

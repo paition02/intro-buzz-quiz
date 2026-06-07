@@ -3,13 +3,12 @@ from __future__ import annotations
 from typing import Any
 
 
-def make_tracks(count: int, playlist: str = "Playlist A", offset: int = 1) -> list[dict[str, Any]]:
+def make_tracks(count: int, offset: int = 1) -> list[dict[str, Any]]:
     return [
         {
             "id": f"track-{offset + index}",
             "title": f"Song {offset + index}",
             "artist": f"Artist {offset + index}",
-            "playlist": playlist,
             "artworkUrl": f"https://example.test/artwork/{offset + index}.jpg",
             "artworkThumbUrl": f"https://example.test/artwork/{offset + index}-thumb.jpg",
         }
@@ -19,6 +18,17 @@ def make_tracks(count: int, playlist: str = "Playlist A", offset: int = 1) -> li
 
 def player(state: dict[str, Any], actor_id: str) -> dict[str, Any] | None:
     return next((p for p in state["players"] if p["id"] == actor_id), None)
+
+
+def round_track(state: dict[str, Any]) -> dict[str, Any] | None:
+    round_index = state["roundIndex"]
+    if round_index < 0:
+        return None
+    track_ids = state["shuffledTrackIds"]
+    if round_index >= len(track_ids):
+        return None
+    track_id = track_ids[round_index]
+    return next((track for track in state["tracks"] if track["id"] == track_id), None)
 
 
 def assert_player(state: dict[str, Any], actor_id: str) -> dict[str, Any]:

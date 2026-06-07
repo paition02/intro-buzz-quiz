@@ -37,6 +37,7 @@ class SocketClient:
             websocket_extra_options=websocket_ssl_options(server_url),
         )
         self.events: list[dict[str, Any]] = []
+        self.last_ack: dict[str, Any] | None = None
         self.sio.on("state", self._on_state)
         self.sio.connect(server_url, transports=["websocket"], socketio_path="socket.io", wait_timeout=5)
 
@@ -48,12 +49,27 @@ class SocketClient:
             self.sio.disconnect()
 
     def emit(self, event: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        event_count = len(self.events)
         response = self.sio.call(event, data=payload, timeout=5)
         assert isinstance(response, dict), response
-        assert response.get("ok") is True, response
-        state = response.get("state")
-        assert isinstance(state, dict), response
-        return state
+        assert isinstance(response.get("ok"), bool), response
+        self.last_ack = response
+        if response["ok"]:
+            return self.wait_for_next_state(event_count)
+        return self.state
+
+    def send(self, event: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        self.sio.emit(event, data=payload)
+        time.sleep(0.02)
+        return self.state
+
+    def wait_for_next_state(self, event_count: int) -> dict[str, Any]:
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            if len(self.events) > event_count:
+                return self.events[-1]
+            time.sleep(0.02)
+        raise AssertionError(f"state event after {event_count} not observed; latest={self.events[-1] if self.events else None}")
 
     def wait_for_state(self, **expected: Any) -> dict[str, Any]:
         deadline = time.time() + 5

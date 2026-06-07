@@ -6,81 +6,31 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import index from '../client/index.html'
+import type { GameState, Player, Track } from '../type/game'
 
 // Bun が cwd の .env を読む。HTTP_PORT / HTTPS_PORT は数値として渡す。
-const isDevelopment = process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'test'
+const isDevelopment = process.env.NODE_ENV !== 'production'
 
-type Phase = 'initialization' | 'ready' | 'game'
-type GameStep =
-  | 'idle'
-  | 'loading'
-  | 'beforePlayback'
-  | 'playing'
-  | 'answering'
-  | 'judging'
-  | 'correct'
-  | 'wrong'
-  | 'reveal'
-  | 'results'
-
-type Player = {
-  id: string
-  joined: boolean
-  lastActionAt: number | null
-  score: number
-}
-
-type Track = {
-  id: string
-  title: string
-  artist: string
-  playlist: string
-  artworkUrl?: string
-  artworkThumbUrl?: string
-}
-
-type GameState = {
-  phase: Phase
-  step: GameStep
-  hostLoggedIn: boolean
-  playlists: string[]
-  selectedPlaylistIds: string[]
+type InternalGameState = Omit<GameState, 'players'> & {
   players: Record<string, Player>
-  tracks: Track[]
-  gameTrackOrder: number[]
-  currentGameTrackOrderIndex: number
-  currentTrackIndex: number
-  currentTrack: Track | null
-  hasPlayedCurrentTrack: boolean
-  playbackSeconds: number
-  answererId: string | null
-  lastResult: 'correct' | 'wrong' | null
-  message: string
-  updatedAt: number
 }
 
-let state: GameState = {
+let state: InternalGameState = {
   phase: 'initialization',
   step: 'idle',
-  hostLoggedIn: false,
-  playlists: [],
   selectedPlaylistIds: [],
   players: {},
   tracks: [],
-  gameTrackOrder: [],
-  currentGameTrackOrderIndex: -1,
-  currentTrackIndex: -1,
-  currentTrack: null,
-  hasPlayedCurrentTrack: false,
-  playbackSeconds: 0.5,
+  shuffledTrackIds: [],
+  roundIndex: -1,
   answererId: null,
-  lastResult: null,
-  message: 'ホストがApple Musicへログインするのを待っています',
-  updatedAt: Date.now(),
 }
 
-let playbackSequence = 0
 const actionCooldownMs = 250
+let lastAcceptedActionAtByActorId: Record<string, number> = {}
+let roundIntroPlayed = false
+const invalidStateError = 'この操作は現在の状態では実行できません'
+type ConsoleActionResult = true | string
 
 const appleTeamId = process.env.APPLE_TEAM_ID ?? ''
 const appleKeyId = process.env.APPLE_KEY_ID ?? ''
@@ -254,7 +204,7 @@ async function generateAppleMusicToken(expiresInSeconds = 60 * 60 * 24) {
   return { token, expiresAt: new Date(expiresAt * 1000) }
 }
 
-function publicState() {
+function publicState(): GameState {
   return {
     ...state,
     players: Object.values(state.players).sort((a, b) => a.id.localeCompare(b.id)),
@@ -262,7 +212,6 @@ function publicState() {
 }
 
 function emitState() {
-  state.updatedAt = Date.now()
   io.emit('state', publicState())
 }
 
@@ -271,72 +220,67 @@ function update(mutator: () => void) {
   emitState()
 }
 
-function ensurePlayer(actorId: string) {
-  const id = actorId.trim() || 'anonymous'
-  state.players[id] ??= { id, joined: false, lastActionAt: null, score: 0 }
-  return state.players[id]
+function uniqueTracksById(tracks: Track[]) {
+  const seenTrackIds = new Set<string>()
+  return tracks.filter((track) => {
+    if (seenTrackIds.has(track.id)) return false
+    seenTrackIds.add(track.id)
+    return true
+  })
 }
 
-function shuffledIndices(length: number) {
-  const indices = Array.from({ length }, (_, index) => index)
-  for (let i = indices.length - 1; i > 0; i -= 1) {
+function shuffledValues<T>(values: T[]) {
+  const shuffled = [...values]
+  for (let i = shuffled.length - 1; i > 0; i -= 1) {
     const j = Math.floor(Math.random() * (i + 1))
-    ;[indices[i], indices[j]] = [indices[j], indices[i]]
+    ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
   }
-  return indices
+  return shuffled
 }
 
-function resetGameTrackOrder() {
-  state.gameTrackOrder = shuffledIndices(state.tracks.length)
-  state.currentGameTrackOrderIndex = -1
+function hasSameSongIds(left: string[], right: string[]) {
+  if (left.length !== right.length) return false
+  const rightIds = new Set(right)
+  return left.every((songId) => rightIds.has(songId))
+}
+
+function resetShuffledTrackIds() {
+  state.shuffledTrackIds = shuffledValues(state.tracks.map((track) => track.id))
+  state.roundIndex = -1
 }
 
 function loadCurrentTrack() {
   if (state.tracks.length === 0) {
     state.step = 'idle'
-    state.currentGameTrackOrderIndex = -1
-    state.currentTrackIndex = -1
-    state.currentTrack = null
-    state.message = '曲が選択されていません'
+    state.roundIndex = -1
     return
   }
-  if (state.gameTrackOrder.length !== state.tracks.length) resetGameTrackOrder()
-  const nextOrderIndex = state.currentGameTrackOrderIndex + 1 >= state.gameTrackOrder.length ? 0 : state.currentGameTrackOrderIndex + 1
-  const nextTrackIndex = state.gameTrackOrder[nextOrderIndex] ?? 0
-  state.currentGameTrackOrderIndex = nextOrderIndex
-  state.currentTrackIndex = nextTrackIndex
-  state.currentTrack = state.tracks[nextTrackIndex]
-  state.hasPlayedCurrentTrack = false
+  const selectedSongIds = state.tracks.map((track) => track.id)
+  if (!hasSameSongIds(state.shuffledTrackIds, selectedSongIds)) resetShuffledTrackIds()
+  state.roundIndex = state.roundIndex + 1 >= state.shuffledTrackIds.length ? 0 : state.roundIndex + 1
+  roundIntroPlayed = false
   state.step = 'beforePlayback'
   state.answererId = null
-  state.lastResult = null
-  state.message = '再生秒数を指定して、再生ボタンを押してください'
 }
 
 
-type ConsolePlaylistPayload = {
-  playlists?: unknown
+type ConsoleSelectPlaylistsPayload = {
   selectedPlaylistIds?: unknown
   tracks?: Partial<Track>[]
 }
 
-function normalizePlaybackSeconds(seconds: unknown) {
-  const value = Number(seconds)
-  return Number.isFinite(value) && value >= 0.1 && value <= 30 ? value : null
-}
-
-function consoleLogin() {
+function consoleReady(): ConsoleActionResult {
+  if (state.phase !== 'initialization') return invalidStateError
   update(() => {
-    state.hostLoggedIn = true
     state.phase = 'ready'
     state.step = 'idle'
-    state.message = 'プレイリストを選んで、プレイヤーの参加を待っています'
   })
-  return publicState()
+  return true
 }
 
-function consoleSetPlaylists(payload: ConsolePlaylistPayload = {}) {
-  const playlists = Array.isArray(payload.playlists) ? payload.playlists.map(String).filter(Boolean) : []
+function consoleSelectPlaylists(payload: ConsoleSelectPlaylistsPayload = {}): ConsoleActionResult {
+  if (state.phase !== 'ready') return invalidStateError
+
   const selectedPlaylistIds = Array.isArray(payload.selectedPlaylistIds)
     ? payload.selectedPlaylistIds.map(String).map((id) => id.trim()).filter(Boolean)
     : []
@@ -345,195 +289,170 @@ function consoleSetPlaylists(payload: ConsolePlaylistPayload = {}) {
       id: String(track.id ?? ''),
       title: String(track.title ?? ''),
       artist: String(track.artist ?? ''),
-      playlist: String(track.playlist ?? playlists[0] ?? ''),
       artworkUrl: typeof track.artworkUrl === 'string' ? track.artworkUrl : undefined,
       artworkThumbUrl: typeof track.artworkThumbUrl === 'string' ? track.artworkThumbUrl : undefined,
     })).filter((track: Track) => track.id && track.title)
     : []
+  const uniqueTracks = uniqueTracksById(tracks)
   update(() => {
-    state.playlists = playlists
     state.selectedPlaylistIds = selectedPlaylistIds
-    state.tracks = tracks.length > 0
-      ? tracks
+    state.tracks = uniqueTracks.length > 0
+      ? uniqueTracks
       : []
-    state.gameTrackOrder = []
-    state.currentGameTrackOrderIndex = -1
-    state.currentTrackIndex = -1
-    state.currentTrack = null
-    state.hasPlayedCurrentTrack = false
-    state.message = state.tracks.length > 0 ? `${playlists.length}件のプレイリストから${state.tracks.length}曲を選択中。開始できます` : '曲がありません'
+    state.shuffledTrackIds = []
+    state.roundIndex = -1
+    roundIntroPlayed = false
   })
-  return publicState()
+  return true
 }
 
-function consoleSetPlaybackSeconds(payload: { seconds?: unknown } = {}) {
-  update(() => {
-    const seconds = normalizePlaybackSeconds(payload.seconds)
-    if (seconds != null) state.playbackSeconds = seconds
-  })
-  return publicState()
-}
+function consoleStart(): ConsoleActionResult {
+  if (state.phase !== 'ready') return invalidStateError
+  if (state.tracks.length === 0) return '曲を選択してから開始してください'
 
-function consoleStart() {
   update(() => {
-    if (state.tracks.length === 0) {
-      state.message = '曲を選択してから開始してください'
-      return
-    }
     state.phase = 'game'
     state.step = 'loading'
-    state.currentTrackIndex = -1
     Object.values(state.players).forEach((player) => { player.score = 0 })
-    resetGameTrackOrder()
-    state.message = '曲をロードしています'
+    resetShuffledTrackIds()
     loadCurrentTrack()
   })
-  return publicState()
+  return true
 }
 
-function consolePlay(payload: { seconds?: unknown } = {}) {
-  let playbackToken: number | null = null
-  let playbackDurationMs = 0
+function consolePlay(): ConsoleActionResult {
+  if (state.phase !== 'game' || state.step !== 'beforePlayback') return invalidStateError
+
   update(() => {
-    const seconds = normalizePlaybackSeconds(payload.seconds)
-    if (seconds != null) state.playbackSeconds = seconds
-    if (state.phase === 'game' && state.step === 'beforePlayback') {
-      playbackToken = ++playbackSequence
-      playbackDurationMs = Math.ceil(state.playbackSeconds * 1000)
-      state.step = 'playing'
-      state.answererId = null
-      state.hasPlayedCurrentTrack = true
-      state.message = `${state.playbackSeconds}秒再生中。早押し待ちです`
-    }
+    state.step = 'playing'
+    state.answererId = null
+    roundIntroPlayed = true
   })
 
-  if (playbackToken != null) {
-    setTimeout(() => {
-      update(() => {
-        if (
-          state.phase === 'game' &&
-          state.step === 'playing' &&
-          state.answererId === null &&
-          playbackSequence === playbackToken
-        ) {
-          state.step = 'beforePlayback'
-          state.message = 'もう一度再生できます'
-        }
-      })
-    }, playbackDurationMs)
-  }
-
-  return publicState()
+  return true
 }
 
-function consoleJudge(payload: { result?: unknown } = {}) {
-  if (payload.result !== 'correct' && payload.result !== 'wrong') return publicState()
-  const result = payload.result
+function consolePlayEnded(): ConsoleActionResult {
+  if (state.phase !== 'game' || state.step !== 'playing') return invalidStateError
+
   update(() => {
-    if (state.phase !== 'game' || state.step !== 'answering') return
-    state.lastResult = result
-    state.step = result
-    if (result === 'correct' && state.answererId) state.players[state.answererId].score += 1
-    state.message = result === 'correct' ? '正解！' : '残念、不正解'
+    state.step = 'beforePlayback'
   })
-  setTimeout(() => {
-    update(() => {
-      if (result === 'correct' && state.step === 'correct') {
-        state.step = 'reveal'
-        state.message = '正解発表中です'
-      } else if (result === 'wrong' && state.step === 'wrong') {
-        state.step = 'beforePlayback'
-        state.answererId = null
-        state.message = 'もう一度再生できます'
-      }
-    })
-  }, 1800)
-  return publicState()
+
+  return true
 }
 
-function consoleGiveUp() {
+function consoleCorrect(): ConsoleActionResult {
+  if (state.phase !== 'game' || state.step !== 'answering') return invalidStateError
+
   update(() => {
-    if (state.phase !== 'game') return
-    if (!['beforePlayback', 'playing', 'answering', 'wrong'].includes(state.step)) return
-    playbackSequence += 1
+    state.step = 'correct'
+    if (state.answererId) state.players[state.answererId].score += 1
+  })
+  return true
+}
+
+function consoleWrong(): ConsoleActionResult {
+  if (state.phase !== 'game' || state.step !== 'answering') return invalidStateError
+
+  update(() => {
+    state.step = 'wrong'
+  })
+  return true
+}
+
+function consoleCorrectFeedbackEnded(): ConsoleActionResult {
+  if (state.phase !== 'game' || state.step !== 'correct') return invalidStateError
+
+  update(() => {
+    state.step = 'reveal'
+  })
+  return true
+}
+
+function consoleGiveUp(): ConsoleActionResult {
+  if (state.phase !== 'game' || state.step !== 'beforePlayback') return invalidStateError
+
+  update(() => {
     state.step = 'reveal'
     state.answererId = null
-    state.lastResult = null
-    state.message = '正解発表中です'
   })
-  return publicState()
+  return true
 }
 
-function consoleShowResults() {
+function consoleWrongFeedbackEnded(): ConsoleActionResult {
+  if (state.phase !== 'game' || state.step !== 'wrong') return invalidStateError
+
   update(() => {
-    if (state.phase !== 'game' || state.step !== 'reveal') return
-    state.step = 'results'
-    state.currentTrack = null
-    state.currentTrackIndex = -1
+    state.step = 'beforePlayback'
     state.answererId = null
-    state.lastResult = null
-    state.message = '結果発表です'
   })
-  return publicState()
+  return true
 }
 
-function consoleNextRound() {
+function consoleShowResults(): ConsoleActionResult {
+  if (state.phase !== 'game' || state.step !== 'reveal') return invalidStateError
+
   update(() => {
-    if (state.phase === 'game' && state.step === 'reveal') {
-      state.step = 'loading'
-      state.message = '次の曲をロードしています'
-      loadCurrentTrack()
-    }
+    state.step = 'results'
+    state.roundIndex = -1
+    roundIntroPlayed = false
+    state.answererId = null
   })
-  return publicState()
+  return true
 }
 
-function consoleNextGame() {
+function consoleNextRound(): ConsoleActionResult {
+  if (state.phase !== 'game' || state.step !== 'reveal') return invalidStateError
+  if (state.roundIndex < 0 || state.roundIndex + 1 >= state.shuffledTrackIds.length) return invalidStateError
+
+  update(() => {
+    state.step = 'loading'
+    loadCurrentTrack()
+  })
+  return true
+}
+
+function consoleNextGame(): ConsoleActionResult {
+  if (state.phase !== 'game' || state.step !== 'results') return invalidStateError
+
   update(() => {
     state.phase = 'ready'
     state.step = 'idle'
-    state.currentTrack = null
-    state.currentTrackIndex = -1
-    state.gameTrackOrder = []
-    state.currentGameTrackOrderIndex = -1
-    state.hasPlayedCurrentTrack = false
+    state.shuffledTrackIds = []
+    state.roundIndex = -1
+    roundIntroPlayed = false
     state.answererId = null
-    state.lastResult = null
     state.players = {}
-    state.message = '次のゲームの準備中です'
+    lastAcceptedActionAtByActorId = {}
   })
-  return publicState()
+  return true
 }
 
-function consoleReset() {
+function consoleReset(): ConsoleActionResult {
   update(() => {
+    lastAcceptedActionAtByActorId = {}
     state = {
       phase: 'initialization',
       step: 'idle',
-      hostLoggedIn: false,
-      playlists: [],
       selectedPlaylistIds: [],
       players: {},
       tracks: [],
-      gameTrackOrder: [],
-      currentGameTrackOrderIndex: -1,
-      currentTrackIndex: -1,
-      currentTrack: null,
-      hasPlayedCurrentTrack: false,
-      playbackSeconds: 0.5,
+      shuffledTrackIds: [],
+      roundIndex: -1,
       answererId: null,
-      lastResult: null,
-      message: 'ホストがApple Musicへログインするのを待っています',
-      updatedAt: Date.now(),
     }
   })
-  return publicState()
+  return true
 }
 
-function acknowledge<T>(callback: unknown, action: () => T) {
+function acknowledge(callback: unknown, action: () => ConsoleActionResult) {
   try {
-    const state = action()
-    if (typeof callback === 'function') callback({ ok: true, state })
+    const result = action()
+    if (typeof callback === 'function') {
+      if (result === true) callback({ ok: true })
+      else callback({ ok: false, error: result })
+    }
   } catch (error) {
     if (typeof callback === 'function') callback({ ok: false, error: error instanceof Error ? error.message : String(error) })
   }
@@ -551,12 +470,15 @@ io.bind(engine)
 
 io.on('connection', (socket) => {
   socket.emit('state', publicState())
-  socket.on('console:login', (callback) => acknowledge(callback, consoleLogin))
-  socket.on('console:playlists', (payload, callback) => acknowledge(callback, () => consoleSetPlaylists(payload)))
-  socket.on('console:playback-seconds', (payload, callback) => acknowledge(callback, () => consoleSetPlaybackSeconds(payload)))
+  socket.on('console:ready', (callback) => acknowledge(callback, consoleReady))
+  socket.on('console:select-playlists', (payload, callback) => acknowledge(callback, () => consoleSelectPlaylists(payload)))
   socket.on('console:start', (callback) => acknowledge(callback, consoleStart))
-  socket.on('console:play', (payload, callback) => acknowledge(callback, () => consolePlay(payload)))
-  socket.on('console:judge', (payload, callback) => acknowledge(callback, () => consoleJudge(payload)))
+  socket.on('console:play', (callback) => acknowledge(callback, consolePlay))
+  socket.on('console:play-ended', (callback) => acknowledge(callback, consolePlayEnded))
+  socket.on('console:correct', (callback) => acknowledge(callback, consoleCorrect))
+  socket.on('console:wrong', (callback) => acknowledge(callback, consoleWrong))
+  socket.on('console:correct-feedback-ended', (callback) => acknowledge(callback, consoleCorrectFeedbackEnded))
+  socket.on('console:wrong-feedback-ended', (callback) => acknowledge(callback, consoleWrongFeedbackEnded))
   socket.on('console:give-up', (callback) => acknowledge(callback, consoleGiveUp))
   socket.on('console:next-round', (callback) => acknowledge(callback, consoleNextRound))
   socket.on('console:show-results', (callback) => acknowledge(callback, consoleShowResults))
@@ -583,48 +505,43 @@ function handleAct(req: Bun.BunRequest<'/api/act/:actorId'>) {
 
   if (!actorId) return new Response(null, { status: 400 })
 
-  const player = ensurePlayer(actorId)
-
-  if (player.lastActionAt !== null && now - player.lastActionAt < actionCooldownMs) {
+  const lastAcceptedActionAt = lastAcceptedActionAtByActorId[actorId] ?? null
+  if (lastAcceptedActionAt !== null && now - lastAcceptedActionAt < actionCooldownMs) {
     return new Response(null, { status: 429, headers: { 'Retry-After': '1' } })
   }
 
-  let status: 200 | 204 | 409 = 409
+  const player = state.players[actorId]
 
-  update(() => {
-    player.lastActionAt = now
-
-    if (state.phase === 'initialization' || state.phase === 'ready') {
-      player.joined = !player.joined
-      state.message = `参加者が${player.joined ? '参加' : '退出'}しました`
-      status = 200
-      return
-    }
-
-    if (state.phase === 'game' && state.answererId !== null) {
-      status = 204
-      return
-    }
-
-    const canAnswer = state.step === 'playing' || (state.step === 'beforePlayback' && state.hasPlayedCurrentTrack)
-
-    if (state.phase === 'game' && canAnswer) {
-      if (!player.joined) {
-        status = 409
-        return
+  if (state.phase === 'initialization' || state.phase === 'ready') {
+    update(() => {
+      if (player) {
+        delete state.players[actorId]
+      } else {
+        state.players[actorId] = { id: actorId, score: 0 }
       }
+    })
+    lastAcceptedActionAtByActorId[actorId] = now
+    return new Response(null, { status: 200 })
+  }
 
+  if (state.phase === 'game' && state.answererId !== null) {
+    return new Response(null, { status: 204 })
+  }
+
+  const canAnswer = state.step === 'playing' || (state.step === 'beforePlayback' && roundIntroPlayed)
+
+  if (state.phase === 'game' && canAnswer) {
+    if (!player) return new Response(null, { status: 409 })
+
+    update(() => {
       state.answererId = player.id
       state.step = 'answering'
-      state.message = '解答権が取られました'
-      status = 200
-      return
-    }
+    })
+    lastAcceptedActionAtByActorId[actorId] = now
+    return new Response(null, { status: 200 })
+  }
 
-    status = 409
-  })
-
-  return new Response(null, { status })
+  return new Response(null, { status: 409 })
 }
 
 function readPort(name: string) {

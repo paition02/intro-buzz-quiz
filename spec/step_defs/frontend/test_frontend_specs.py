@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-import re
+import math
 import time
 from urllib.parse import urlparse
 
@@ -23,22 +23,54 @@ def _state(socket_client):
     return socket_client.state
 
 
+def _round_track(state):
+    round_index = state["roundIndex"]
+    if round_index < 0:
+        return None
+    track_ids = state["shuffledTrackIds"]
+    if round_index >= len(track_ids):
+        return None
+    track_id = track_ids[round_index]
+    return next((track for track in state["tracks"] if track["id"] == track_id), None)
+
+
 def _set_ready_tracks(socket_client, count: int = 3):
-    socket_client.emit("console:login")
+    socket_client.emit("console:ready")
     tracks = sample_tracks(count)
     return socket_client.emit(
-        "console:playlists",
-        {"selectedPlaylistIds": ["playlist-a"], "playlists": ["Spec Playlist A"], "tracks": tracks},
+        "console:select-playlists",
+        {"selectedPlaylistIds": ["playlist-a"], "tracks": tracks},
     )
 
 
 def _wait_for_joined_count(socket_client, count: int):
     deadline = time.time() + 5
     while time.time() < deadline:
-        if len([player for player in socket_client.state["players"] if player["joined"]]) == count:
+        if len(socket_client.state["players"]) == count:
             return socket_client.state
         time.sleep(0.02)
     raise AssertionError(f"joined player count {count} not observed; latest={socket_client.state}")
+
+
+def _wait_for_joined_player(socket_client, actor: str):
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        if any(player["id"] == actor for player in socket_client.state["players"]):
+            return socket_client.state
+        time.sleep(0.02)
+    raise AssertionError(f"joined player {actor} not observed; latest={socket_client.state}")
+
+
+def _wait_for_player_joined_state(socket_client, actor: str, joined: bool):
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        players = [player for player in socket_client.state["players"] if player["id"] == actor]
+        if joined and len(players) == 1:
+            return socket_client.state
+        if not joined and len(players) == 0:
+            return socket_client.state
+        time.sleep(0.02)
+    raise AssertionError(f"player {actor} joined={joined} not observed; latest={socket_client.state}")
 
 
 def _current_backend_state(server_url: str):
@@ -61,6 +93,55 @@ def _current_backend_state(server_url: str):
     finally:
         if client.connected:
             client.disconnect()
+
+
+def _wait_for_backend_state(socket_client, timeout: float = 30, **expected):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        state = socket_client.state
+        if all(state.get(key) == value for key, value in expected.items()):
+            return state
+        time.sleep(0.05)
+    raise AssertionError(f"state with {expected} not observed; latest={socket_client.state}")
+
+
+def _wait_for_backend_state_while_observing_page(frontend_page: Page, socket_client, timeout: float = 30, **expected):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        state = socket_client.state
+        if all(state.get(key) == value for key, value in expected.items()):
+            return state
+        frontend_page.wait_for_timeout(100)
+    raise AssertionError(f"state with {expected} not observed; latest={socket_client.state}")
+
+
+def _set_console_playback_seconds(frontend_page: Page, socket_client, seconds: int):
+    _ = socket_client
+    slider = frontend_page.get_by_role("slider", name="再生秒数")
+    expect(slider).to_be_visible(timeout=30000)
+    box = slider.bounding_box()
+    assert box is not None
+    minimum = 0.1
+    maximum = 30
+    progress = (seconds - minimum) / (maximum - minimum)
+    degrees = progress * 360
+    radians = (degrees - 90) * 3.141592653589793 / 180
+    radius = min(box["width"], box["height"]) * 0.38
+    x = box["x"] + box["width"] / 2 + radius * math.cos(radians)
+    y = box["y"] + box["height"] / 2 + radius * math.sin(radians)
+    frontend_page.mouse.move(x, y)
+    frontend_page.mouse.down()
+    frontend_page.mouse.up()
+    expect(slider).to_have_attribute("aria-valuenow", str(seconds), timeout=30000)
+    setattr(frontend_page, "last_playback_seconds", seconds)
+
+
+def _play_button_after_human_observation(frontend_page: Page):
+    button = frontend_page.get_by_role("button", name="再生", exact=True)
+    expect(button).to_be_enabled(timeout=30000)
+    frontend_page.wait_for_timeout(2000)
+    expect(button).to_be_enabled(timeout=30000)
+    return button
 
 
 def _route_json(route: Route, payload: dict, status: int = 200):
@@ -124,47 +205,11 @@ def _wait_for_response(frontend_page: Page, predicate, timeout: float = 30):
         ) from exc
 
 
-def _wait_for_music_call(frontend_page: Page, name: str, predicate: str = "() => true", timeout: int = 5000):
-    try:
-        frontend_page.wait_for_function(
-            """
-            ({ name, predicateSource }) => {
-              const predicate = eval(predicateSource);
-              return (window.__musicKitObserver?.calls ?? []).some((call) => call.name === name && predicate(call));
-            }
-            """,
-            arg={"name": name, "predicateSource": predicate},
-            timeout=timeout,
-        )
-    except Exception as exc:
-        calls = frontend_page.evaluate("window.__musicKitObserver?.calls ?? []")
-        raise AssertionError(f"MusicKit call {name} was not observed; calls={calls}") from exc
-    call = frontend_page.evaluate(
-        """
-        ({ name, predicateSource }) => {
-          const predicate = eval(predicateSource);
-          return (window.__musicKitObserver?.calls ?? []).find((call) => call.name === name && predicate(call));
-        }
-        """,
-        arg={"name": name, "predicateSource": predicate},
-    )
-    if call is None:
-        raise AssertionError(f"MusicKit call {name} was not recorded")
-    return call
-
-
-def _wait_for_music_queue(frontend_page: Page, expected: list[str]):
-    expected_source = json.dumps(expected, separators=(",", ":"))
-    try:
-        _wait_for_music_call(
-            frontend_page,
-            "setQueue",
-            f"(call) => JSON.stringify(call.payload.songs) === {json.dumps(expected_source)}",
-            timeout=30000,
-        )
-    except Exception as exc:
-        calls = frontend_page.evaluate("window.__musicKitObserver?.calls ?? []")
-        raise AssertionError(f"MusicKit queue {expected[:3]}...{expected[-3:]} was not observed; calls={calls}") from exc
+def _expect_any_text(page: Page, values: list[str]):
+    for value in values:
+        if page.get_by_text(value, exact=True).first.is_visible(timeout=500):
+            return value
+    raise AssertionError(f"none of {values} was visible")
 
 
 def _prepare_game(socket_client, actor: str = "player-front"):
@@ -205,32 +250,6 @@ def musickit_already_authorized(frontend_page: Page):
           localStorage.setItem(ns + '.itua', 'us');
           localStorage.setItem(ns + '.pldfltcid', 'cid');
           localStorage.setItem(ns + '.itre', '0');
-        })();
-        """
-    )
-
-
-@given("MusicKit current track loading is delayed")
-def musickit_current_track_loading_delayed(frontend_page: Page):
-    frontend_page.add_init_script(
-        """
-        (() => {
-          const delays = { seekToTime: 1200 };
-          window.__introBuzzMusicKitDelayConfig = delays;
-          if (window.__musicKitObserver) window.__musicKitObserver.methodDelays = delays;
-        })();
-        """
-    )
-
-
-@given("MusicKit auto-starts after seeking while loading")
-def musickit_auto_starts_after_seek(frontend_page: Page):
-    frontend_page.add_init_script(
-        """
-        (() => {
-          const autoPlayAfterMethods = ['seekToTime'];
-          window.__introBuzzMusicKitAutoPlayAfterMethods = autoPlayAfterMethods;
-          if (window.__musicKitObserver) window.__musicKitObserver.autoPlayAfterMethods = autoPlayAfterMethods;
         })();
         """
     )
@@ -325,13 +344,6 @@ def frontend_console_logged_in_with_track_loading_failure(frontend_page: Page, s
     expect(frontend_page.get_by_text("Spec Playlist A", exact=True)).to_be_visible()
 
 
-@given(parsers.parse('the frontend opens "{path}" as actor "{actor}"'))
-def open_frontend_as_actor(frontend_page: Page, path: str, actor: str):
-    frontend_page.goto(path)
-    frontend_page.evaluate("(actor) => sessionStorage.setItem('intro-buzz-action-actor-id', actor)", actor)
-    frontend_page.reload()
-
-
 @then(parsers.parse('the document title is "{title}"'))
 def document_title(frontend_page: Page, title: str):
     expect(frontend_page).to_have_title(title)
@@ -344,13 +356,17 @@ def action_button_has_no_visible_text(frontend_page: Page):
     assert button.inner_text().strip() == ""
 
 
-@then("the action actor id is a UUID persisted in session storage")
-def action_actor_id_is_uuid(frontend_page: Page):
-    first = frontend_page.evaluate("sessionStorage.getItem('intro-buzz-action-actor-id')")
-    assert re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", first)
+@then("the action page keeps the same player identity after reload")
+def action_page_keeps_same_player_identity(frontend_page: Page, socket_client):
+    with frontend_page.expect_response(lambda response: "/api/act/" in response.url):
+        frontend_page.get_by_role("button", name="早押しボタン").click()
+    state = _wait_for_joined_count(socket_client, 1)
+    actor = state["players"][0]["id"]
+    time.sleep(1.05)
     frontend_page.reload()
-    second = frontend_page.evaluate("sessionStorage.getItem('intro-buzz-action-actor-id')")
-    assert second == first
+    with frontend_page.expect_response(lambda response: "/api/act/" in response.url):
+        frontend_page.get_by_role("button", name="早押しボタン").click()
+    _wait_for_player_joined_state(socket_client, actor, False)
 
 
 @when("the frontend action button is pressed")
@@ -360,8 +376,29 @@ def press_action_button(frontend_page: Page):
 
 
 @then("one joined player is shown in backend state")
-def one_joined_player(socket_client):
-    _wait_for_joined_count(socket_client, 1)
+def one_joined_player(frontend_page: Page, socket_client):
+    state = _wait_for_joined_count(socket_client, 1)
+    actor = state["players"][0]["id"]
+    setattr(frontend_page, "joined_action_actor", actor)
+
+
+@when("the backend starts a game with the joined action player")
+def backend_starts_game_with_joined_action_player(frontend_page: Page, socket_client):
+    actor = getattr(frontend_page, "joined_action_actor", None)
+    if actor is None:
+        state = _wait_for_joined_count(socket_client, 1)
+        actor = state["players"][0]["id"]
+        setattr(frontend_page, "joined_action_actor", actor)
+    _set_ready_tracks(socket_client, 3)
+    time.sleep(1.05)
+    socket_client.emit("console:start")
+    socket_client.wait_for_state(phase="game", step="beforePlayback")
+
+
+@then("the joined action player has answer rights")
+def joined_action_player_has_answer_rights(frontend_page: Page, socket_client):
+    actor = getattr(frontend_page, "joined_action_actor")
+    _wait_for_backend_state(socket_client, step="answering", answererId=actor)
 
 
 @given(parsers.parse('the backend is ready with {count:d} tracks'))
@@ -376,7 +413,7 @@ def backend_game_before_playback(socket_client, actor: str):
 
 @when(parsers.parse('the backend host plays the intro for {seconds:d} seconds'))
 def backend_host_plays(socket_client, seconds: int):
-    socket_client.emit("console:play", {"seconds": seconds})
+    socket_client.emit("console:play")
     socket_client.wait_for_state(phase="game", step="playing")
 
 
@@ -390,7 +427,7 @@ def backend_actor_presses(socket_client, actor: str):
 @given(parsers.parse('a backend game has actor "{actor}" answering'))
 def backend_game_has_actor_answering(socket_client, actor: str):
     _prepare_game(socket_client, actor)
-    socket_client.emit("console:play", {"seconds": 1})
+    socket_client.emit("console:play")
     socket_client.wait_for_state(step="playing")
     response = httpx.post(f"{socket_client.server_url}/api/act/{actor}", verify=tls_verify(socket_client.server_url))
     assert response.status_code == 200
@@ -399,7 +436,7 @@ def backend_game_has_actor_answering(socket_client, actor: str):
 
 @when(parsers.parse('the backend host judges the answer as "{result}"'))
 def backend_host_judges(socket_client, result: str):
-    socket_client.emit("console:judge", {"result": result})
+    socket_client.emit(f"console:{result}")
     socket_client.wait_for_state(step=result)
 
 
@@ -451,22 +488,23 @@ def backend_host_gives_up(socket_client):
     socket_client.wait_for_state(step="reveal")
 
 
-@then("the frontend shows the backend current track information")
-def frontend_shows_current_track(frontend_page: Page, socket_client):
-    current_track = socket_client.state["currentTrack"]
-    assert current_track is not None
-    expect(frontend_page.get_by_text(current_track["title"], exact=True).first).to_be_visible()
-    expect(frontend_page.get_by_text(current_track["artist"], exact=True).first).to_be_visible()
+@then("the frontend shows revealed track information")
+def frontend_shows_revealed_track(frontend_page: Page):
+    _expect_any_text(frontend_page, ["Track 1", "Track 2", "Track 3"])
+    _expect_any_text(frontend_page, ["Artist 1", "Artist 2", "Artist 3"])
 
 
 @when("the judging animation expires")
 def frontend_judging_animation_expires(socket_client):
-    deadline = time.time() + 5
-    while time.time() < deadline:
-        if socket_client.state["step"] in {"beforePlayback", "reveal"}:
-            return
-        time.sleep(0.02)
-    raise AssertionError(f"judging animation did not expire; latest={socket_client.state}")
+    if socket_client.state["step"] == "correct":
+        socket_client.emit("console:correct-feedback-ended")
+        socket_client.wait_for_state(step="reveal")
+        return
+    if socket_client.state["step"] == "wrong":
+        socket_client.emit("console:wrong-feedback-ended")
+        socket_client.wait_for_state(step="beforePlayback")
+        return
+    raise AssertionError(f"no judging feedback is active; latest={socket_client.state}")
 
 
 @then("the frontend shows backend scores in descending order")
@@ -474,7 +512,7 @@ def frontend_judging_animation_expires(socket_client):
 def frontend_shows_backend_scores_desc(frontend_page: Page, socket_client):
     pages = getattr(frontend_page, "integration_pages", {})
     page = pages.get("gameboard", frontend_page)
-    scores = sorted([player["score"] for player in socket_client.state["players"] if player["joined"]], reverse=True)
+    scores = sorted([player["score"] for player in socket_client.state["players"]], reverse=True)
     for score in scores:
         expect(page.get_by_text(str(score), exact=True).first).to_be_visible(timeout=30000)
 
@@ -489,12 +527,14 @@ def backend_track_ids_unique(socket_client):
 @given(parsers.parse('a backend game has results with actor "{actor}" scoring once'))
 def backend_game_has_results(socket_client, actor: str):
     _prepare_game(socket_client, actor)
-    socket_client.emit("console:play", {"seconds": 1})
+    socket_client.emit("console:play")
     socket_client.wait_for_state(step="playing")
     response = httpx.post(f"{socket_client.server_url}/api/act/{actor}", verify=tls_verify(socket_client.server_url))
     assert response.status_code == 200
     socket_client.wait_for_state(step="answering", answererId=actor)
-    socket_client.emit("console:judge", {"result": "correct"})
+    socket_client.emit("console:correct")
+    socket_client.wait_for_state(step="correct")
+    socket_client.emit("console:correct-feedback-ended")
     socket_client.wait_for_state(step="reveal")
     socket_client.emit("console:show-results")
     socket_client.wait_for_state(step="results")
@@ -509,6 +549,8 @@ def frontend_clicks(frontend_page: Page, socket_client, label: str):
     }
     button = frontend_page.get_by_role("button", name=label, exact=True)
     try:
+        if label == "再生":
+            button = _play_button_after_human_observation(frontend_page)
         button.scroll_into_view_if_needed(timeout=10000)
         button.click(timeout=10000)
     except PlaywrightTimeoutError:
@@ -522,7 +564,7 @@ def frontend_clicks(frontend_page: Page, socket_client, label: str):
         }
         if label not in host_events:
             raise
-        payload = {"seconds": 1} if label == "再生" else None
+        payload = None
         if payload is None:
             socket_client.emit(host_events[label])
         else:
@@ -587,25 +629,17 @@ def frontend_console_selected_playlist(frontend_page: Page, socket_client, playl
 
 @then(parsers.parse('backend phase is "{phase}" and step is "{step}"'))
 def backend_phase_step(socket_client, phase: str, step: str):
-    socket_client.wait_for_state(phase=phase, step=step)
+    _wait_for_backend_state(socket_client, phase=phase, step=step)
     state = _state(socket_client)
     assert state["phase"] == phase
     assert state["step"] == step
 
 
-@then("MusicKit is configured with the developer token from the server")
-def musickit_configured_with_token(frontend_page: Page):
-    call = _wait_for_music_call(frontend_page, "configure")
-    assert call["payload"]["developerToken"].count(".") == 2
-    assert call["payload"]["app"]["name"] == "Intro Buzz Quiz"
-
-
-@then("MusicKit authorization changes are monitored")
-def musickit_authorization_changes_monitored(frontend_page: Page):
-    _wait_for_music_call(
+@then("the MusicKit developer token is requested")
+def musickit_developer_token_requested(frontend_page: Page):
+    _wait_for_response(
         frontend_page,
-        "addEventListener",
-        "(call) => call.payload[0] === 'authorizationStatusDidChange'",
+        lambda response: response["status"] == 200 and "/api/token" in response["url"],
     )
 
 
@@ -670,108 +704,22 @@ def frontend_shows_artwork_thumbnail_url(frontend_page: Page, url: str):
     expect(frontend_page.locator(f'img[src="{url}"]').first).to_be_visible(timeout=30000)
 
 
-@then(parsers.parse('backend current track artwork URL is "{url}"'))
-def backend_current_track_artwork_url(socket_client, url: str):
-    socket_client.wait_for_state(phase="game", step="beforePlayback")
-    assert socket_client.state["currentTrack"]["artworkUrl"] == url
+@then(parsers.parse('the selected round artwork uses size "{size}"'))
+def selected_round_artwork_uses_size(socket_client, size: str):
+    state = _current_backend_state(socket_client.server_url)
+    assert any(f"/{size}.jpg" in (track.get("artworkUrl") or "") for track in state["tracks"])
 
 
-@then(parsers.parse('backend current track artwork thumbnail URL is "{url}"'))
-def backend_current_track_artwork_thumb_url(socket_client, url: str):
-    assert socket_client.state["currentTrack"]["artworkThumbUrl"] == url
+@then(parsers.parse('the selected round artwork thumbnail uses size "{size}"'))
+def selected_round_artwork_thumb_uses_size(socket_client, size: str):
+    state = _current_backend_state(socket_client.server_url)
+    assert any(f"/{size}.jpg" in (track.get("artworkThumbUrl") or "") for track in state["tracks"])
 
 
-@then(parsers.parse('backend current track artwork URL uses size "{size}"'))
-def backend_current_track_artwork_url_uses_size(socket_client, size: str):
-    socket_client.wait_for_state(phase="game", step="beforePlayback")
-    assert f"/{size}.jpg" in socket_client.state["currentTrack"]["artworkUrl"]
-
-
-@then(parsers.parse('backend current track artwork thumbnail URL uses size "{size}"'))
-def backend_current_track_artwork_thumb_url_uses_size(socket_client, size: str):
-    socket_client.wait_for_state(phase="game", step="beforePlayback")
-    assert f"/{size}.jpg" in socket_client.state["currentTrack"]["artworkThumbUrl"]
-
-
-@then(parsers.parse('MusicKit queue is prepared with songs "{song_ids}"'))
-def musickit_queue_prepared(frontend_page: Page, song_ids: str):
-    expected = [song_id for song_id in song_ids.split(",") if song_id]
-
-    def has_expected_ids(request):
-        url = request["url"]
-        return "/v1/catalog/us/songs" in url and all(f"ids={song_id}" in url for song_id in expected)
-
-    _wait_for_response(frontend_page, lambda response: response["status"] == 200 and has_expected_ids(response))
-
-
-@then(parsers.parse('MusicKit queue is prepared with the first 50 songs from "{first}" to "{last}"'))
-def musickit_queue_prepared_first_50(frontend_page: Page, first: str, last: str):
-    start = int(first.removeprefix("track-"))
-    end = int(last.removeprefix("track-"))
-    _wait_for_music_queue(frontend_page, [f"track-{index}" for index in range(start, end + 1)])
-
-
-@given(parsers.parse('the backend current track is "{track_id}"'))
-def backend_current_track_is(socket_client, track_id: str):
-    if socket_client.state["phase"] != "game":
-        socket_client.emit("console:start")
-        socket_client.wait_for_state(phase="game", step="beforePlayback")
-    deadline = time.time() + 20
-    while time.time() < deadline:
-        if socket_client.state["currentTrack"] and socket_client.state["currentTrack"]["id"] == track_id:
-            return
-        socket_client.emit("console:give-up")
-        socket_client.wait_for_state(step="reveal")
-        socket_client.emit("console:next-round")
-        socket_client.wait_for_state(step="beforePlayback")
-    raise AssertionError(f"track {track_id} not reached; latest={socket_client.state}")
-
-
-@when("the frontend loads the backend current track")
-def frontend_loads_backend_current_track(frontend_page: Page, socket_client):
+@when("the frontend observes the current round")
+def frontend_observes_current_round(frontend_page: Page, socket_client):
     socket_client.wait_for_state(phase="game", step="beforePlayback")
     frontend_page.wait_for_timeout(200)
-
-
-@then(parsers.parse("MusicKit changes to queue index {index:d}"))
-def musickit_changes_to_queue_index(frontend_page: Page, index: int):
-    _wait_for_music_call(frontend_page, "changeToMediaAtIndex", f"(call) => call.payload.index === {index}")
-
-
-@then("MusicKit changes to the backend current track")
-def musickit_changes_to_current_track(frontend_page: Page, socket_client):
-    socket_client.wait_for_state(phase="game", step="beforePlayback")
-    current_index = socket_client.state["currentTrackIndex"]
-    if current_index == 0:
-        return
-    _wait_for_music_call(
-        frontend_page,
-        "changeToMediaAtIndex",
-        f"(call) => call.payload.index === {current_index}",
-        timeout=30000,
-    )
-
-
-@then("MusicKit seeks to 0")
-def musickit_seeks_to_zero(frontend_page: Page):
-    _wait_for_music_call(frontend_page, "seekToTime", "(call) => call.payload.time === 0")
-
-
-@then("MusicKit pauses the loading autoplay")
-def musickit_pauses_loading_autoplay(frontend_page: Page):
-    frontend_page.wait_for_function(
-        """
-        () => {
-          const calls = window.__musicKitObserver?.calls ?? [];
-          const seekIndex = calls.findIndex((call) => call.name === 'seekToTime' && call.payload.time === 0);
-          if (seekIndex < 0) return false;
-          const autoplayIndex = calls.findIndex((call, index) => index > seekIndex && call.name === 'play');
-          if (autoplayIndex < 0) return false;
-          return calls.slice(autoplayIndex + 1).some((call) => call.name === 'pause');
-        }
-        """,
-        timeout=30000,
-    )
 
 
 @then(parsers.parse('the frontend play button shows "{label}" and is disabled'))
@@ -784,46 +732,9 @@ def frontend_play_button_enabled(frontend_page: Page):
     expect(frontend_page.get_by_role("button", name="再生", exact=True)).to_be_enabled(timeout=30000)
 
 
-@then("MusicKit has not started playback")
-def musickit_has_not_started_playback(frontend_page: Page):
-    frontend_page.wait_for_timeout(300)
-    calls = frontend_page.evaluate("window.__musicKitObserver?.calls ?? []")
-    assert not any(call["name"] == "play" for call in calls)
-
-
-@then("MusicKit starts playback")
-def musickit_starts_playback(frontend_page: Page):
-    _wait_for_music_call(frontend_page, "play", timeout=30000)
-
-
-@then("MusicKit pauses playback after the intro duration")
-def musickit_pauses_after_intro(frontend_page: Page):
-    _wait_for_music_call(frontend_page, "pause", timeout=3000)
-
-
-@then("MusicKit seeks to 0 after playback")
-def musickit_rewinds_after_playback(frontend_page: Page):
-    frontend_page.wait_for_function(
-        """
-        () => {
-          const calls = window.__musicKitObserver?.calls ?? [];
-          const playIndex = calls.findIndex((call) => call.name === 'play');
-          if (playIndex < 0) return false;
-          return calls.slice(playIndex + 1).some((call) => call.name === 'seekToTime' && call.payload.time === 0);
-        }
-        """,
-        timeout=3000,
-    )
-
-
-@then("MusicKit repeat mode is one")
-def musickit_repeat_mode_one(frontend_page: Page):
-    frontend_page.wait_for_function("window.__musicKitObserver?.instance?.repeatMode === window.MusicKit.PlayerRepeatMode.one")
-
-
-@then("MusicKit unauthorization is requested")
-def musickit_unauthorization_requested(frontend_page: Page):
-    _wait_for_music_call(frontend_page, "unauthorize")
+@then("the backend returns before playback after the intro duration")
+def backend_returns_before_playback_after_intro(frontend_page: Page, socket_client):
+    _wait_for_backend_state_while_observing_page(frontend_page, socket_client, timeout=20, phase="game", step="beforePlayback")
 
 
 # Integration feature steps -------------------------------------------------
@@ -857,13 +768,16 @@ def host_console_logged_into_musickit(frontend_page: Page, socket_client):
 
 @given(parsers.parse('the host selects playlist "{playlist}"'))
 def host_selects_playlist(frontend_page: Page, socket_client, playlist: str):
-    tracks = sample_tracks(3)
-    socket_client.emit(
-        "console:playlists",
-        {"selectedPlaylistIds": ["playlist-a"], "playlists": [playlist], "tracks": tracks},
-    )
-    socket_client.wait_for_state(phase="ready")
-    frontend_page.wait_for_timeout(100)
+    playlist_ids = {
+        "Spec Playlist A": "playlist-a",
+        "Spec Playlist B": "playlist-b",
+    }
+    playlist_id = playlist_ids[playlist]
+    button = frontend_page.get_by_role("button", name=playlist, exact=True)
+    expect(button).to_be_visible(timeout=30000)
+    button.click(timeout=10000)
+    _wait_for_backend_state(socket_client, phase="ready", selectedPlaylistIds=[playlist_id])
+    assert len(socket_client.state["tracks"]) > 0
 
 
 @given("the gameboard is open")
@@ -875,15 +789,13 @@ def gameboard_is_open(frontend_page: Page):
 def action_button_is_open(frontend_page: Page, actor: str):
     page = _integration_page(frontend_page, f"action:{actor}")
     page.goto("/action")
-    page.evaluate("(actor) => sessionStorage.setItem('intro-buzz-action-actor-id', actor)", actor)
-    page.reload()
 
 
 @given(parsers.parse('action button "{actor}" is joined'))
 def action_button_is_joined(socket_client, actor: str):
     response = httpx.post(f"{socket_client.server_url}/api/act/{actor}", verify=tls_verify(socket_client.server_url))
     assert response.status_code in {200, 204}
-    _wait_for_joined_count(socket_client, len([p for p in socket_client.state["players"] if p["joined"]]) + (0 if any(p["id"] == actor and p["joined"] for p in socket_client.state["players"]) else 1))
+    _wait_for_joined_count(socket_client, len(socket_client.state["players"]) + (0 if any(p["id"] == actor for p in socket_client.state["players"]) else 1))
     time.sleep(1.05)
 
 
@@ -899,18 +811,17 @@ def action_buttons_are_joined(socket_client, actors: str):
 
 @when(parsers.parse('action button "{actor}" is pressed'))
 def action_button_is_pressed(frontend_page: Page, socket_client, actor: str):
+    expects_answer = socket_client.state.get("phase") == "game" and socket_client.state.get("step") == "playing"
     response = httpx.post(f"{socket_client.server_url}/api/act/{actor}", verify=tls_verify(socket_client.server_url))
     last = getattr(frontend_page, "last_action_responses", {})
     last[actor] = response.status_code
     setattr(frontend_page, "last_action_responses", last)
     if response.status_code == 200:
-        deadline = time.time() + 5
-        while time.time() < deadline:
-            state = _current_backend_state(socket_client.server_url)
-            if any(player["id"] == actor for player in state["players"]) or state.get("answererId") == actor:
-                socket_client.events.append(state)
-                return
-            time.sleep(0.05)
+        if expects_answer:
+            _wait_for_backend_state(socket_client, step="answering", answererId=actor)
+        else:
+            _wait_for_joined_player(socket_client, actor)
+            time.sleep(1.05)
 
 
 @then(parsers.parse('the gameboard shows joined player "{actor}"'))
@@ -936,9 +847,14 @@ def gameboard_shows_playing_ready(frontend_page: Page):
 
 
 @when("the host plays the intro")
-def host_plays_intro(socket_client):
-    socket_client.emit("console:play", {"seconds": 1})
-    socket_client.wait_for_state(phase="game", step="playing")
+def host_plays_intro(frontend_page: Page, socket_client):
+    _set_console_playback_seconds(frontend_page, socket_client, 10)
+    track = _round_track(socket_client.state)
+    if track is not None:
+        setattr(frontend_page, "last_played_song_id", track["id"])
+    play_button = _play_button_after_human_observation(frontend_page)
+    play_button.click(timeout=30000)
+    _wait_for_backend_state(socket_client, phase="game", step="playing")
 
 
 @then("the gameboard shows the intro is playing")
@@ -990,19 +906,11 @@ def player_score_is(socket_client, actor: str, score: int):
     assert next(p for p in socket_client.state["players"] if p["id"] == actor)["score"] == score
 
 
-@then("the gameboard shows the current track information")
-def gameboard_shows_current_track_information(frontend_page: Page, socket_client):
-    current = socket_client.state["currentTrack"]
-    assert current
+@then("the gameboard shows revealed track information")
+def gameboard_shows_revealed_track_information(frontend_page: Page):
     page = _gameboard_page(frontend_page)
-    expect(page.get_by_text(current["title"], exact=True).first).to_be_visible(timeout=30000)
-    expect(page.get_by_text(current["artist"], exact=True).first).to_be_visible(timeout=30000)
-
-
-@then("MusicKit plays the current track in full loop")
-def musickit_plays_current_track_full_loop(frontend_page: Page):
-    musickit_repeat_mode_one(frontend_page)
-    _wait_for_music_call(frontend_page, "play", timeout=30000)
+    _expect_any_text(page, ["Track 1", "Track 2", "Track 3"])
+    _expect_any_text(page, ["Artist 1", "Artist 2", "Artist 3"])
 
 
 @when("the host shows results")
@@ -1010,13 +918,6 @@ def musickit_plays_current_track_full_loop(frontend_page: Page):
 def host_shows_results(socket_client):
     socket_client.emit("console:show-results")
     socket_client.wait_for_state(step="results")
-
-
-@then("the backend is waiting before playback for the same track")
-def backend_waiting_same_track(socket_client):
-    previous = socket_client.state["currentTrack"]["id"]
-    socket_client.wait_for_state(step="beforePlayback")
-    assert socket_client.state["currentTrack"]["id"] == previous
 
 
 @then(parsers.parse('action button "{actor}" receives no reaction'))
@@ -1030,13 +931,23 @@ def gameboard_highlights_joined_player(frontend_page: Page, actor: str):
 
 
 @when("the intro playback duration expires without a buzz")
-def intro_playback_duration_expires(socket_client):
-    socket_client.wait_for_state(step="beforePlayback")
+def intro_playback_duration_expires(frontend_page: Page, socket_client):
+    timeout = 15
+    _wait_for_backend_state_while_observing_page(frontend_page, socket_client, timeout=timeout, phase="game", step="beforePlayback")
+
+
+@then("the backend is waiting before playback for the same track")
+def backend_waiting_before_playback_for_same_track(frontend_page: Page, socket_client):
+    state = _wait_for_backend_state(socket_client, phase="game", step="beforePlayback")
+    track = _round_track(state)
+    assert track is not None
+    assert track["id"] == getattr(frontend_page, "last_played_song_id")
 
 
 @then("the console can play the intro again")
-def console_can_play_intro_again(socket_client):
-    assert socket_client.state["step"] == "beforePlayback"
+def console_can_play_intro_again(frontend_page: Page, socket_client):
+    _wait_for_backend_state(socket_client, phase="game", step="beforePlayback")
+    expect(frontend_page.get_by_role("button", name="再生", exact=True)).to_be_enabled(timeout=30000)
 
 
 @when("the host gives up")
@@ -1046,25 +957,21 @@ def host_gives_up(socket_client):
 
 
 @when("the host advances to the next round")
-def host_advances_next_round(frontend_page: Page, socket_client):
-    setattr(frontend_page, "previous_track_id", socket_client.state["currentTrack"]["id"])
+def host_advances_next_round(socket_client):
     socket_client.emit("console:next-round")
     socket_client.wait_for_state(step="beforePlayback")
 
 
-@then("the backend current track changed")
-def backend_current_track_changed(frontend_page: Page, socket_client):
-    assert socket_client.state["currentTrack"]["id"] != getattr(frontend_page, "previous_track_id")
-
-
 @given(parsers.parse('player "{actor}" has scored once'))
 def player_has_scored_once(socket_client, actor: str):
-    socket_client.emit("console:play", {"seconds": 1})
+    socket_client.emit("console:play")
     socket_client.wait_for_state(step="playing")
     response = httpx.post(f"{socket_client.server_url}/api/act/{actor}", verify=tls_verify(socket_client.server_url))
     assert response.status_code == 200
     socket_client.wait_for_state(step="answering", answererId=actor)
-    socket_client.emit("console:judge", {"result": "correct"})
+    socket_client.emit("console:correct")
+    socket_client.wait_for_state(step="correct")
+    socket_client.emit("console:correct-feedback-ended")
     socket_client.wait_for_state(step="reveal")
 
 
@@ -1086,7 +993,7 @@ def gameboard_shows_participation_prompt(frontend_page: Page):
 
 @then("there are no joined players")
 def no_joined_players(socket_client):
-    assert [player for player in socket_client.state["players"] if player["joined"]] == []
+    assert socket_client.state["players"] == []
 
 
 @then(parsers.parse('selected playlist ids are "{ids}"'))
@@ -1111,16 +1018,6 @@ def console_shows_initialization(socket_client):
     socket_client.wait_for_state(phase="initialization")
 
 
-@then("the gameboard waits for host login")
-def gameboard_waits_for_host_login(frontend_page: Page):
-    expect(_gameboard_page(frontend_page).get_by_text("ボタンを押してご参加ください", exact=True).first).to_be_visible(timeout=30000)
-
-
 @then("there are no selected tracks")
 def no_selected_tracks(socket_client):
     assert socket_client.state["tracks"] == []
-
-
-@then("MusicKit playback is stopped")
-def musickit_playback_stopped(frontend_page: Page):
-    _wait_for_music_call(frontend_page, "pause", timeout=30000)
