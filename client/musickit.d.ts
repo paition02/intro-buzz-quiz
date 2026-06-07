@@ -37,7 +37,7 @@ declare namespace MusicKit {
     authorize(): Promise<string | void>;
     unauthorize(): Promise<void>;
     play(): Promise<void>;
-    pause(): void;
+    pause(): Promise<void>;
     stop(): Promise<void>;
     skipToNextItem(): Promise<void>;
     skipToPreviousItem(): Promise<void>;
@@ -70,10 +70,13 @@ declare namespace MusicKit {
   interface QueueOptions {
     album?: string;
     playlist?: string;
+    repeatMode?: PlayerRepeatMode;
+    shuffleMode?: PlayerShuffleMode;
     song?: string;
     station?: string;
     songs?: string[];
     startPlaying?: boolean;
+    startTime?: number;
     startWith?: number;
   }
 

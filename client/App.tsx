@@ -38,6 +38,12 @@ function roundTrackFromState(state: GameState) {
   return state.tracks.find((track) => track.id === trackId) ?? null
 }
 
+function roundPreparationKeyFromState(state: GameState) {
+  const trackId = roundTrackIdFromState(state)
+  if (state.phase !== 'game' || state.roundIndex < 0 || trackId == null) return null
+  return `${state.shuffledTrackIds.join('\u001f')}#${state.roundIndex}#${trackId}`
+}
+
 function gameStateChange(previous: GameState, next: GameState): Partial<GameState> {
   const change: Partial<GameState> = {}
   for (const key of GAME_STATE_KEYS) {
@@ -512,6 +518,7 @@ function ConsolePage() {
   const [consoleMessage, setConsoleMessage] = useState<string | null>(null)
   const [playbackSeconds, setPlaybackSeconds] = useState(0.5)
   const [isPreparingNext, setIsPreparingNext] = useState(false)
+  const [preparedRoundKey, setPreparedRoundKey] = useState<string | null>(null)
   const [playbackError, setPlaybackError] = useState<Error | null>(null)
   const autoReadyRequestedRef = useRef(false)
   const autoLoadLibraryPlaylistsRequestedRef = useRef(false)
@@ -581,29 +588,47 @@ function ConsolePage() {
       }
     }
 
-    if (change.roundIndex !== undefined && change.roundIndex >= 0) {
-      if (change.shuffledTrackIds !== undefined) {
-        const songIds = change.shuffledTrackIds.slice(change.roundIndex)
-        try {
-          await setSongIds(songIds)
-          setPlaybackError(null)
-        } catch (error) {
-          setPlaybackError(errorFromUnknown(error))
-          return
-        }
+    if (change.roundIndex !== undefined || change.shuffledTrackIds !== undefined) {
+      const nextRoundKey = roundPreparationKeyFromState(latestState)
+      setPreparedRoundKey(null)
+
+      if (latestState.roundIndex < 0 || nextRoundKey === null) {
+        setIsPreparingNext(false)
+        return
       }
 
       setIsPreparingNext(true)
       try {
+        if (change.shuffledTrackIds !== undefined) {
+          const songIds = latestState.shuffledTrackIds.slice(latestState.roundIndex)
+          await setSongIds(songIds)
+        }
         await prepareNext()
+        setPreparedRoundKey(nextRoundKey)
         setPlaybackError(null)
       } catch (error) {
         setPlaybackError(errorFromUnknown(error))
+      } finally {
+        setIsPreparingNext(false)
       }
-      setIsPreparingNext(false)
+    } else if (change.step === 'beforePlayback') {
+      const nextRoundKey = roundPreparationKeyFromState(latestState)
+      if (nextRoundKey !== null && preparedRoundKey !== nextRoundKey) {
+        setPreparedRoundKey(null)
+        setIsPreparingNext(true)
+        try {
+          await prepareNext()
+          setPreparedRoundKey(nextRoundKey)
+          setPlaybackError(null)
+        } catch (error) {
+          setPlaybackError(errorFromUnknown(error))
+        } finally {
+          setIsPreparingNext(false)
+        }
+      }
     }
 
-  }, [clearFeedbackEndedTimeout, clearPlayEndedTimeout, musicKitAuth.authorized, musicKitInstance, playFromStart, prepareNext, setSongIds, stop]))
+  }, [clearFeedbackEndedTimeout, clearPlayEndedTimeout, musicKitAuth.authorized, musicKitInstance, playFromStart, prepareNext, preparedRoundKey, setSongIds, stop]))
 
   useEffect(() => {
     return () => {
@@ -619,9 +644,11 @@ function ConsolePage() {
   const statusMessage = consoleStatusMessage(state, seconds)
   const roundTrackId = roundTrackIdFromState(state)
   const roundTrack = roundTrackFromState(state)
-  const canPlayIntro = state.step === 'beforePlayback' && roundTrackId != null && !isPreparingNext && playbackError === null && musicKitReady && musicKitAuth.authorized
+  const roundPreparationKey = roundPreparationKeyFromState(state)
+  const roundPrepared = roundPreparationKey !== null && preparedRoundKey === roundPreparationKey
+  const canPlayIntro = state.step === 'beforePlayback' && roundTrackId != null && roundPrepared && !isPreparingNext && playbackError === null && musicKitReady && musicKitAuth.authorized
   const canGoNextRound = state.phase === 'game' && state.step === 'reveal' && state.roundIndex >= 0 && state.roundIndex + 1 < state.shuffledTrackIds.length
-  const playButtonLabel = state.step === 'playing' ? '再生中' : '再生'
+  const playButtonLabel = state.step === 'playing' ? '再生中' : state.step === 'beforePlayback' && roundTrackId != null && !roundPrepared ? 'ロード中' : '再生'
 
   const visiblePlaylists = useMemo(() => {
     const query = playlistSearch.trim().toLowerCase()
@@ -896,7 +923,7 @@ function ConsolePage() {
           <div className="grid gap-3.5 mt-4">
             <div className="grid gap-2.5 grid-cols-1 md:grid-cols-2 [&>button]:min-h-14">
               <button className={BTN_PRIMARY} disabled={busy || !canPlayIntro} onClick={handlePlay}>{playButtonLabel}</button>
-              <button className={BTN_GHOST} disabled={busy || state.phase !== 'game' || state.step !== 'beforePlayback'} onClick={handleGiveUp}>ギブアップ</button>
+              <button className={BTN_GHOST} disabled={busy || state.phase !== 'game' || state.step !== 'beforePlayback' || !roundPrepared} onClick={handleGiveUp}>ギブアップ</button>
               <button className={BTN_PRIMARY} disabled={busy || state.step !== 'answering'} onClick={handleCorrect}>正解</button>
               <button className={BTN_PRIMARY} disabled={busy || state.step !== 'answering'} onClick={handleWrong}>不正解</button>
             </div>

@@ -22,7 +22,6 @@ export function useSequentialPlayback(): SequentialPlayback {
     if (mk === null) throw new Error('MusicKit is not initialized')
     if (songIds.length === 0) throw new Error('曲がありません')
 
-    await mk.clearQueue()
     ref.current.songIds = [...songIds]
     ref.current.nextIndex = 0
   }, [mk])
@@ -33,23 +32,39 @@ export function useSequentialPlayback(): SequentialPlayback {
     const nextSongId = ref.current.songIds[ref.current.nextIndex]
     if (nextSongId === undefined) throw new Error('曲がキューにありません')
 
-    mk.shuffleMode = MusicKit.PlayerShuffleMode.off
-    mk.repeatMode = MusicKit.PlayerRepeatMode.one
-    await mk.playNext({ song: nextSongId })
+    await mk.setQueue({
+      song: nextSongId,
+      shuffleMode: MusicKit.PlayerShuffleMode.off,
+      repeatMode: MusicKit.PlayerRepeatMode.one,
+      startPlaying: false,
+      startTime: 0,
+    })
+
+    const previousVolume = mk.volume
+    mk.volume = 0
+    try {
+      await mk.play()
+    } finally {
+      try {
+        if (mk.isPlaying) await mk.pause()
+      } finally {
+        mk.volume = previousVolume
+      }
+    }
 
     ref.current.nextIndex++
   }, [mk])
 
   const playFromStart = useCallback(async () => {
     if (mk === null) throw new Error('MusicKit is not initialized')
-    if (mk.isPlaying) mk.pause()
-    await mk.seekToTime(0)
+    if (mk.isPlaying) await mk.pause()
+    if (mk.nowPlayingItem !== undefined) await mk.seekToTime(0)
     await mk.play()
   }, [mk])
 
   const stop = useCallback(async () => {
     if (mk === null) throw new Error('MusicKit is not initialized')
-    if (mk.isPlaying) mk.pause()
+    if (mk.isPlaying) await mk.pause()
   }, [mk])
 
   return {
