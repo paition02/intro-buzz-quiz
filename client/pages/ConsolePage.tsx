@@ -20,7 +20,7 @@ import {
 } from '../lib/gameClient'
 import { errorFromUnknown, uniqueTracksById } from '../lib/util'
 import { playResultSound, playResultsSound } from '../lib/sounds'
-import { PlaylistLibraryBrowser } from '../components/PlaylistPanel'
+import { PlaylistList } from '../components/PlaylistPanel'
 import { PlayerBadge } from '../components/PlayerBadge'
 import { CircularSecondsSlider } from '../components/CircularSecondsSlider'
 import { Glass } from '../components/Glass'
@@ -37,6 +37,7 @@ export function ConsolePage() {
   const libraryPlaylistsQuery = useLibraryPlaylistsQuery()
   const libraryPlaylists = libraryPlaylistsQuery.data ?? []
   const loadingLibraryPlaylists = libraryPlaylistsQuery.isPending || libraryPlaylistsQuery.isFetching
+  const [playlistSearch, setPlaylistSearch] = useState('')
   const [expandedPlaylistIds, setExpandedPlaylistIds] = useState<Set<string>>(() => new Set())
   const [busy, setBusy] = useState(false)
   const [consoleMessage, setConsoleMessage] = useState<string | null>(null)
@@ -173,6 +174,13 @@ export function ConsolePage() {
   const canPlayIntro = state.step === 'beforePlayback' && roundTrackId != null && roundPrepared && !isPreparingNext && playbackError === null && musicKitReady && musicKitAuth.authorized
   const canGoNextRound = state.phase === 'game' && state.step === 'reveal' && state.roundIndex >= 0 && state.roundIndex + 1 < state.shuffledTrackIds.length
   const playButtonLabel = state.step === 'playing' ? '再生中' : state.step === 'beforePlayback' && roundTrackId != null && !roundPrepared ? 'ロード中' : '再生'
+
+  const normalizedPlaylistSearch = playlistSearch.trim().toLowerCase()
+  const visiblePlaylists = libraryPlaylistsQuery.status === 'success'
+    ? normalizedPlaylistSearch
+      ? libraryPlaylistsQuery.data.filter((playlist) => playlist.name.toLowerCase().includes(normalizedPlaylistSearch))
+      : libraryPlaylistsQuery.data
+    : []
 
   const handlePlaybackSecondsChange = useCallback((value: number) => {
     setPlaybackSeconds(value)
@@ -384,16 +392,31 @@ export function ConsolePage() {
             <span>ライブラリプレイリスト</span>
             <Button variant="ghostSmall" disabled={busy || loadingLibraryPlaylists || !musicKitAuth.authorized} onClick={() => run(async () => { await loadLibraryPlaylists() })}>{loadingLibraryPlaylists ? '読み込み中' : '再読み込み'}</Button>
           </div>
-          <PlaylistLibraryBrowser
-            query={libraryPlaylistsQuery}
-            loading={loadingLibraryPlaylists}
-            authorized={musicKitAuth.authorized}
-            busy={busy}
-            expandedPlaylistIds={expandedPlaylistIds}
-            selectedPlaylistIdSet={selectedPlaylistIdSet}
-            onSelect={togglePlaylistSelected}
-            onToggleExpanded={togglePlaylistExpanded}
+          <input
+            type="search"
+            className="w-full rounded-2xl border border-white/10 bg-black/20 text-white px-4 py-3 disabled:opacity-60"
+            placeholder="プレイリスト名で検索"
+            value={playlistSearch}
+            onChange={(event) => setPlaylistSearch(event.target.value)}
+            disabled={busy || !musicKitAuth.authorized || libraryPlaylists.length === 0}
           />
+          <ul className="list-none m-0 mt-2.5 p-0 grid gap-2 max-h-80 overflow-y-auto">
+            {libraryPlaylistsQuery.status !== 'success' ? (
+              <li className="text-muted">{loadingLibraryPlaylists ? 'ライブラリのプレイリストを読み込み中...' : 'ログイン後にライブラリのプレイリストを取得します'}</li>
+            ) : visiblePlaylists.length === 0 ? (
+              <li className="text-muted">一致するプレイリストがありません</li>
+            ) : (
+              <PlaylistList
+                playlists={visiblePlaylists}
+                authorized={musicKitAuth.authorized}
+                busy={busy}
+                expandedPlaylistIds={expandedPlaylistIds}
+                selectedPlaylistIdSet={selectedPlaylistIdSet}
+                onSelect={togglePlaylistSelected}
+                onToggleExpanded={togglePlaylistExpanded}
+              />
+            )}
+          </ul>
           {selectedPlaylistIds.length > 0 && (
             <p className="mt-3 mb-0 text-subtle leading-relaxed">
               {selectedPlaylistIds.length}件のプレイリスト、{state.tracks.length}曲を選択中
