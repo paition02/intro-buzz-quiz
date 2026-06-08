@@ -5,7 +5,10 @@ import { networkInterfaces } from 'node:os'
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
-import index from '../client/index.html'
+import homeHtml from '../client/index.html'
+import consoleHtml from '../client/console.html'
+import gameboardHtml from '../client/gameboard.html'
+import actionHtml from '../client/action.html'
 import type { GameState, Player, Track } from '../type/game'
 
 // Bun が cwd の .env を読む。HTTP_PORT / HTTPS_PORT は数値として渡す。
@@ -566,11 +569,11 @@ if (httpPort === httpsPort) {
 const httpsCertificate = ensureHttpsCertificate()
 
 const appRoutes = {
-  // SPA は単一の index.html。表示の出し分けはクライアント側が pathname で行う。
-  '/': index,
-  '/console': index,
-  '/gameboard': index,
-  '/action': index,
+  // ルートごとに専用の HTML エントリポイントを持つ MPA 構成。
+  '/': homeHtml,
+  '/console': consoleHtml,
+  '/gameboard': gameboardHtml,
+  '/action': actionHtml,
   '/api/token': { GET: handleToken },
   '/api/act/:actorId': { POST: handleAct },
 }
