@@ -26,12 +26,12 @@ let snapshot: {
   error: null,
 } as const
 const instanceListeners = new Set<() => void>()
-let authListeners = new Set<() => void>()
+const authListeners = new Set<() => void>()
 
 async function initializeMusicKit() {
   // この関数に対する変更にはユーザーの明示的な承認が必要です。
   try {
-    const [_, { token }] =  await Promise.all([ensureMusicKit(), fetchToken()])
+    const [, { token }] =  await Promise.all([ensureMusicKit(), fetchToken()])
     const instance = await MusicKit.configure({
       developerToken: token,
       app: MUSIC_KIT_APP,
@@ -66,6 +66,19 @@ export const musicKitInstanceStore = {
   },
   getSnapshot(): { instance: MusicKit.MusicKitInstance | null, error: Error | null } {
     return snapshot
+  }
+}
+
+export async function muteTemporarily(fn: () => Promise<void>) {
+  const { instance } = snapshot
+  if (instance === null) return
+
+  const previousVolume = instance.volume
+  instance.volume = 0
+  try {
+    await fn()
+  } finally {
+    instance.volume = previousVolume
   }
 }
 
