@@ -83,7 +83,6 @@ export function PlaylistListItem({
 
 export function PlaylistLibraryBrowser({
   playlists,
-  authorized,
   busy,
   expandedPlaylistIds,
   selectedPlaylistIdSet,
@@ -91,7 +90,6 @@ export function PlaylistLibraryBrowser({
   onToggleExpanded,
 }: {
   playlists: MusicPlaylist[]
-  authorized: boolean
   busy: boolean
   expandedPlaylistIds: Set<string>
   selectedPlaylistIdSet: Set<string>
@@ -113,12 +111,12 @@ export function PlaylistLibraryBrowser({
         placeholder="プレイリスト名で検索"
         value={search}
         onChange={(event) => setSearch(event.target.value)}
-        disabled={busy || !authorized}
+        disabled={busy}
       />
       <ul className="list-none m-0 mt-2.5 p-0 grid gap-2 max-h-80 overflow-y-auto">
         {visiblePlaylists.length ? visiblePlaylists.map((playlist) => (
           <PlaylistListItem
-            authorized={authorized}
+            authorized={true}
             busy={busy}
             expanded={expandedPlaylistIds.has(playlist.id)}
             key={playlist.id}
@@ -135,14 +133,12 @@ export function PlaylistLibraryBrowser({
 
 export function LibraryPlaylistsSection({
   busy,
-  authorized,
   expandedPlaylistIds,
   selectedPlaylistIdSet,
   onSelect,
   onToggleExpanded,
 }: {
   busy: boolean
-  authorized: boolean
   expandedPlaylistIds: Set<string>
   selectedPlaylistIdSet: Set<string>
   onSelect: (playlist: MusicPlaylist, allPlaylists: MusicPlaylist[]) => void
@@ -163,7 +159,6 @@ export function LibraryPlaylistsSection({
   return (
     <PlaylistLibraryBrowser
       playlists={query.data}
-      authorized={authorized}
       busy={busy}
       expandedPlaylistIds={expandedPlaylistIds}
       selectedPlaylistIdSet={selectedPlaylistIdSet}

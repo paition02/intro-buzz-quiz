@@ -368,7 +368,6 @@ const playEndedTimeoutIdRef = useRef<number | null>(null)
           {musicKitAuth.authorized ? (
             <LibraryPlaylistsSection
               busy={busy}
-              authorized={musicKitAuth.authorized}
               expandedPlaylistIds={expandedPlaylistIds}
               selectedPlaylistIdSet={selectedPlaylistIdSet}
               onSelect={togglePlaylistSelected}
