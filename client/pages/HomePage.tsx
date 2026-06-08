@@ -1,5 +1,6 @@
 import { QRCodeSVG } from 'qrcode.react'
-import { EYEBROW, GLASS } from '../lib/styles'
+import { Glass } from '../components/Glass'
+import { Eyebrow } from '../components/Eyebrow'
 
 const homeLinks = [
   { path: '/console', label: 'ホストコンソール', eyebrow: 'Host' },
@@ -21,9 +22,9 @@ export function HomePage() {
       </header>
       <section className="grid grid-cols-1 md:grid-cols-3 gap-4" aria-label="各ページへのリンク">
         {links.map((link) => (
-          <article className={`${GLASS} rounded-2xl p-5 min-w-0`} key={link.path}>
+          <Glass as="article" className="rounded-2xl p-5 min-w-0" key={link.path}>
             <div className="min-w-0">
-              <p className={EYEBROW}>{link.eyebrow}</p>
+              <Eyebrow>{link.eyebrow}</Eyebrow>
               <h2 className="m-0 text-2xl font-black leading-tight">
                 <a className="text-cream underline underline-offset-4 decoration-white/45 outline-none transition hover:text-amber hover:decoration-amber focus-visible:text-amber focus-visible:decoration-amber" href={link.path} target="_blank" rel="noreferrer">{link.label}</a>
               </h2>
@@ -41,7 +42,7 @@ export function HomePage() {
               />
             </div>
             <p className="mt-4 mb-0 min-h-10 select-text break-all text-xs leading-relaxed text-muted">{link.url}</p>
-          </article>
+          </Glass>
         ))}
       </section>
     </main>

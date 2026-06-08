@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { roundTrackFromState, useConnected, useGameState } from '../lib/gameClient'
 import { playerColor } from '../lib/util'
-import { GLASS } from '../lib/styles'
+import { Glass } from '../components/Glass'
 import { PersonGlyph } from '../components/Glyphs'
 import { PlayerBadge } from '../components/PlayerBadge'
 import { GameboardPlayers } from '../components/GameboardPlayers'
@@ -20,12 +20,12 @@ export function GameboardPage() {
   // ボード上の共通レイアウトはユーティリティ束を定数化して step ごとに付け替える。
   const TITLE = 'text-5xl sm:text-7xl font-black leading-none tracking-tighter mx-auto'
   const READY_TITLE = 'text-4xl sm:text-6xl font-black leading-none tracking-tighter mx-auto text-center'
-  const CARD = `${GLASS} w-full max-w-5xl rounded-3xl text-center p-6 sm:p-12`
+  const CARD = 'w-full max-w-5xl rounded-3xl text-center p-6 sm:p-12'
   // gameboard のカードは常に親 main の高さへ広げる。STAGE 側を flex-1 で伸ばし、players は下に自然に積む(grid テンプレ不要)。
   const CARD_GB = `${CARD} flex-1 min-h-0 flex flex-col items-center justify-center gap-6`
   const CARD_PLAYERS = CARD_GB
   // ready 盤は親 main の flex-col 内で flex-1 して縦いっぱいに伸びる(明示高さ不要)。
-  const CARD_READY = `${GLASS} text-center w-full max-w-7xl rounded-3xl flex flex-col items-center justify-center gap-6 overflow-hidden p-4 sm:p-8 flex-1 min-h-0`
+  const CARD_READY = 'text-center w-full max-w-7xl rounded-3xl flex flex-col items-center justify-center gap-6 overflow-hidden p-4 sm:p-8 flex-1 min-h-0'
   const STAGE = 'w-full min-h-0 flex-1 grid place-items-center'
   const SYMBOL = 'text-9xl font-black leading-none'
   // glow-icon::before を before: ユーティリティで再現。色は使用箇所で before:bg-... を足す。
@@ -138,9 +138,9 @@ export function GameboardPage() {
   return (
     <main className={`min-h-svh flex flex-col items-center justify-center p-4 sm:p-6 transition-colors duration-300 ${stepBg}`}>
       {!connected && <div className="fixed top-4 left-1/2 -translate-x-1/2 z-10 px-4 py-1.5 rounded-full text-sm font-bold tracking-wide text-amber bg-ink/90 shadow-lg ring-1 ring-amber/40" role="status">再接続中…</div>}
-      <section className={cardClassName}>
+      <Glass as="section" className={cardClassName}>
         {content}
-      </section>
+      </Glass>
     </main>
   )
 }

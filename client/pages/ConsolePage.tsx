@@ -20,20 +20,14 @@ import {
 } from '../lib/gameClient'
 import { errorFromUnknown, uniqueTracksById } from '../lib/util'
 import { playResultSound, playResultsSound } from '../lib/sounds'
-import {
-  BTN_DANGER,
-  BTN_GHOST,
-  BTN_GHOST_SMALL,
-  BTN_PRIMARY,
-  EYEBROW,
-  GLASS,
-  HINT,
-  INPUT_BASE,
-  JUDGE_RESULT_DURATION_MS,
-} from '../lib/styles'
 import { PlaylistListItem } from '../components/PlaylistPanel'
 import { PlayerBadge } from '../components/PlayerBadge'
 import { CircularSecondsSlider } from '../components/CircularSecondsSlider'
+import { Glass } from '../components/Glass'
+import { Button } from '../components/Button'
+import { Eyebrow } from '../components/Eyebrow'
+
+const JUDGE_RESULT_DURATION_MS = 1800
 
 export function ConsolePage() {
   const { instance: musicKitInstance, error: musicKitInitError } = useMusicKitInstance()
@@ -355,27 +349,27 @@ export function ConsolePage() {
 
   return (
     <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
-      <header className={`${GLASS} rounded-3xl p-6 flex flex-col items-stretch justify-between gap-4 mb-4 md:flex-row md:items-center`}>
+      <Glass as="header" className="rounded-3xl p-6 flex flex-col items-stretch justify-between gap-4 mb-4 md:flex-row md:items-center">
         <div>
-          <p className={EYEBROW}>Host Console</p>
+          <Eyebrow>Host Console</Eyebrow>
           <h1 className="m-0 text-4xl sm:text-6xl font-black tracking-tighter">早押しイントロクイズ</h1>
         </div>
-      </header>
+      </Glass>
 
-      <section className={`${GLASS} rounded-3xl p-6 flex flex-col items-stretch justify-between gap-4 mb-4 md:flex-row md:items-center`}>
+      <Glass as="section" className="rounded-3xl p-6 flex flex-col items-stretch justify-between gap-4 mb-4 md:flex-row md:items-center">
         <div>
-          <p className={EYEBROW}>現在</p>
+          <Eyebrow>現在</Eyebrow>
           <h2 className="m-0 mb-2.5 text-2xl font-bold">{phaseLabel(state.phase, state.step)}</h2>
           <p className="mt-0 text-subtle leading-relaxed">{statusMessage}</p>
-          {consoleMessage && <p className={`mt-0 leading-relaxed ${HINT}`}>{consoleMessage}</p>}
+          {consoleMessage && <p className="mt-0 leading-relaxed text-muted">{consoleMessage}</p>}
           {musicKitError && <p className="mt-0 leading-relaxed text-rose font-bold">MusicKit: <span>{musicKitError.message}</span></p>}
         </div>
-        <button className={BTN_DANGER} onClick={handleReset}>リセット</button>
-      </section>
+        <Button variant="danger" onClick={handleReset}>リセット</Button>
+      </Glass>
 
       <section className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
         <div className="flex flex-col gap-4 min-w-0">
-        <div className={`${GLASS} rounded-2xl p-6 min-w-0`}>
+        <Glass className="rounded-2xl p-6 min-w-0">
           <h2 className="m-0 mb-2.5 text-2xl font-bold">1. 初期化</h2>
           <p className="mt-0 text-subtle leading-relaxed">Apple Musicにログインして、MusicKitで実際に再生できる状態にします。</p>
           <div className={`flex items-center gap-3 my-4 p-3.5 rounded-2xl border ${!musicKitReady ? 'bg-white/5 border-white/10' : musicKitAuth.authorized ? 'bg-mint/10 border-mint/30' : 'bg-rose/10 border-rose/30'}`}>
@@ -386,20 +380,20 @@ export function ConsolePage() {
             </div>
           </div>
           <div className="flex flex-wrap gap-2.5 mt-3.5 max-md:[&>button]:flex-1">
-            <button className={BTN_PRIMARY} disabled={busy || !musicKitReady || musicKitAuth.authorized} onClick={handleLogin}>Apple Musicにログイン</button>
-            <button className={BTN_GHOST} disabled={busy || !musicKitAuth.authorized} onClick={() => run(musicKitAuth.unauthorize)}>ログアウト</button>
+            <Button disabled={busy || !musicKitReady || musicKitAuth.authorized} onClick={handleLogin}>Apple Musicにログイン</Button>
+            <Button variant="ghost" disabled={busy || !musicKitAuth.authorized} onClick={() => run(musicKitAuth.unauthorize)}>ログアウト</Button>
           </div>
-        </div>
+        </Glass>
 
-        <div className={`${GLASS} rounded-2xl p-6 min-w-0`}>
+        <Glass className="rounded-2xl p-6 min-w-0">
           <h2 className="m-0 mb-2.5 text-2xl font-bold">2. 準備</h2>
           <div className="flex items-center justify-between gap-3 text-cream font-bold mt-4 mb-3">
             <span>ライブラリプレイリスト</span>
-            <button className={BTN_GHOST_SMALL} disabled={busy || loadingLibraryPlaylists || !musicKitAuth.authorized} onClick={() => run(async () => { await loadLibraryPlaylists() })}>{loadingLibraryPlaylists ? '読み込み中' : '再読み込み'}</button>
+            <Button variant="ghostSmall" disabled={busy || loadingLibraryPlaylists || !musicKitAuth.authorized} onClick={() => run(async () => { await loadLibraryPlaylists() })}>{loadingLibraryPlaylists ? '読み込み中' : '再読み込み'}</Button>
           </div>
           <input
             type="search"
-            className={INPUT_BASE}
+            className="w-full rounded-2xl border border-white/10 bg-black/20 text-white px-4 py-3 disabled:opacity-60"
             placeholder="プレイリスト名で検索"
             value={playlistSearch}
             onChange={(event) => setPlaylistSearch(event.target.value)}
@@ -419,7 +413,7 @@ export function ConsolePage() {
                   selected={selectedPlaylistIdSet.has(playlist.id)}
                 />
               )
-            }) : <li className={HINT}>{loadingLibraryPlaylists ? 'ライブラリのプレイリストを読み込み中...' : libraryPlaylists.length ? '一致するプレイリストがありません' : 'ログイン後にライブラリのプレイリストを取得します'}</li>}
+            }) : <li className="text-muted">{loadingLibraryPlaylists ? 'ライブラリのプレイリストを読み込み中...' : libraryPlaylists.length ? '一致するプレイリストがありません' : 'ログイン後にライブラリのプレイリストを取得します'}</li>}
           </ul>
           {selectedPlaylistIds.length > 0 && (
             <p className="mt-3 mb-0 text-subtle leading-relaxed">
@@ -427,21 +421,21 @@ export function ConsolePage() {
             </p>
           )}
           <div className="flex flex-wrap gap-2.5 mt-3.5 max-md:[&>button]:flex-1">
-            <button className={BTN_PRIMARY} disabled={busy || state.phase !== 'ready' || selectedPlaylistIds.length === 0 || state.tracks.length === 0} onClick={handleStart}>ゲーム開始</button>
+            <Button disabled={busy || state.phase !== 'ready' || selectedPlaylistIds.length === 0 || state.tracks.length === 0} onClick={handleStart}>ゲーム開始</Button>
           </div>
           <div className="flex items-center gap-2 flex-wrap mt-3">
-            <span className={HINT}>参加中:</span>
+            <span className="text-muted">参加中:</span>
             {participatingPlayers.length ? participatingPlayers.map((player) => (
               <PlayerBadge id={player.id} label={false} key={player.id} />
-            )) : <span className={HINT}>まだいません</span>}
+            )) : <span className="text-muted">まだいません</span>}
           </div>
-        </div>
+        </Glass>
 
         </div>
 
         <div className="flex flex-col gap-4 min-w-0">
 
-        <div className={`${GLASS} rounded-2xl p-6 min-w-0`}>
+        <Glass className="rounded-2xl p-6 min-w-0">
           <h2 className="m-0 mb-2.5 text-2xl font-bold">3. 進行</h2>
           <div className="grid justify-items-center gap-2.5">
             <span className="justify-self-start text-cream font-bold">再生秒数</span>
@@ -453,20 +447,20 @@ export function ConsolePage() {
           </div>
           <div className="grid gap-3.5 mt-4">
             <div className="grid gap-2.5 grid-cols-1 md:grid-cols-2 [&>button]:min-h-14">
-              <button className={BTN_PRIMARY} disabled={busy || !canPlayIntro} onClick={handlePlay}>{playButtonLabel}</button>
-              <button className={BTN_GHOST} disabled={busy || state.phase !== 'game' || state.step !== 'beforePlayback' || !roundPrepared} onClick={handleGiveUp}>ギブアップ</button>
-              <button className={BTN_PRIMARY} disabled={busy || state.step !== 'answering'} onClick={handleCorrect}>正解</button>
-              <button className={BTN_PRIMARY} disabled={busy || state.step !== 'answering'} onClick={handleWrong}>不正解</button>
+              <Button disabled={busy || !canPlayIntro} onClick={handlePlay}>{playButtonLabel}</Button>
+              <Button variant="ghost" disabled={busy || state.phase !== 'game' || state.step !== 'beforePlayback' || !roundPrepared} onClick={handleGiveUp}>ギブアップ</Button>
+              <Button disabled={busy || state.step !== 'answering'} onClick={handleCorrect}>正解</Button>
+              <Button disabled={busy || state.step !== 'answering'} onClick={handleWrong}>不正解</Button>
             </div>
             <div className="grid gap-2.5 grid-cols-1 md:grid-cols-3 pt-3.5 border-t border-white/10 [&>button]:min-h-14">
-              <button className={BTN_PRIMARY} disabled={busy || !canGoNextRound} onClick={handleNextRound}>次のラウンドへ</button>
-              <button className={BTN_PRIMARY} disabled={busy || state.step !== 'reveal'} onClick={handleShowResults}>結果発表へ</button>
-              <button className={BTN_PRIMARY} disabled={busy || state.step !== 'results'} onClick={handleNextGame}>次のゲームへ</button>
+              <Button disabled={busy || !canGoNextRound} onClick={handleNextRound}>次のラウンドへ</Button>
+              <Button disabled={busy || state.step !== 'reveal'} onClick={handleShowResults}>結果発表へ</Button>
+              <Button disabled={busy || state.step !== 'results'} onClick={handleNextGame}>次のゲームへ</Button>
             </div>
           </div>
-        </div>
+        </Glass>
 
-        <div className={`${GLASS} rounded-2xl p-6 min-w-0`}>
+        <Glass className="rounded-2xl p-6 min-w-0">
           <h2 className="m-0 mb-2.5 text-2xl font-bold">曲情報</h2>
           {roundTrack ? (
             <div className="flex items-center gap-4 rounded-2xl p-5 bg-linear-to-br from-pink/20 to-sky/20 border border-white/10">
@@ -486,7 +480,7 @@ export function ConsolePage() {
               </div>
             </div>
           ) : <p className="mt-0 text-subtle leading-relaxed">まだ曲は準備されていません。</p>}
-        </div>
+        </Glass>
         </div>
       </section>
     </main>

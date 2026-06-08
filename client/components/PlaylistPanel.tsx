@@ -1,6 +1,5 @@
 import { Activity } from 'react'
 import { usePlaylistTracksQuery, type MusicPlaylist } from '../useMusicKitLibraryQueries'
-import { HINT } from '../lib/styles'
 import { ChevronGlyph, CheckGlyph } from './Glyphs'
 
 export function PlaylistTracksPanel({ playlistId }: { playlistId: string }) {
@@ -11,9 +10,9 @@ export function PlaylistTracksPanel({ playlistId }: { playlistId: string }) {
 
   return (
     <div className="mt-2 p-2.5 rounded-xl bg-black/20 border border-white/10 max-h-72 overflow-y-auto">
-      {loading && <p className={HINT}>曲を読み込み中...</p>}
+      {loading && <p className="text-muted">曲を読み込み中...</p>}
       {!loading && error && <p className="text-rose font-bold">{error instanceof Error ? error.message : String(error)}</p>}
-      {!loading && !error && tracks?.length === 0 && <p className={HINT}>曲がありません</p>}
+      {!loading && !error && tracks?.length === 0 && <p className="text-muted">曲がありません</p>}
       {!loading && !error && tracks && tracks.length > 0 && (
         <ul className="list-none m-0 p-0 grid gap-2">
           {tracks.map((track, index) => (
