@@ -5,6 +5,7 @@ import { useSequentialPlayback } from '../useSequentialPlayback'
 import {
   playlistTracksQueryOptions,
   useLibraryPlaylistsQuery,
+  useInvalidateLibraryPlaylists,
   type MusicPlaylist,
 } from '../useMusicKitLibraryQueries'
 import type { GameState } from '../../type/game'
@@ -36,6 +37,7 @@ export function ConsolePage() {
   const queryClient = useQueryClient()
   const libraryPlaylistsQuery = useLibraryPlaylistsQuery()
   const loadingLibraryPlaylists = libraryPlaylistsQuery.isPending || libraryPlaylistsQuery.isFetching
+  const invalidateLibraryPlaylists = useInvalidateLibraryPlaylists()
   const [expandedPlaylistIds, setExpandedPlaylistIds] = useState<Set<string>>(() => new Set())
   const [busy, setBusy] = useState(false)
   const [consoleMessage, setConsoleMessage] = useState<string | null>(null)
@@ -363,7 +365,7 @@ const playEndedTimeoutIdRef = useRef<number | null>(null)
           <h2 className="m-0 mb-2.5 text-2xl font-bold">2. 準備</h2>
           <div className="flex items-center justify-between gap-3 text-cream font-bold mt-4 mb-3">
             <span>ライブラリプレイリスト</span>
-            <Button variant="ghostSmall" disabled={busy || loadingLibraryPlaylists || !musicKitAuth.authorized} onClick={() => run(async () => { await loadLibraryPlaylists() })}>{loadingLibraryPlaylists ? '読み込み中' : '再読み込み'}</Button>
+            <Button variant="ghostSmall" disabled={busy || loadingLibraryPlaylists} onClick={invalidateLibraryPlaylists}>{loadingLibraryPlaylists ? '読み込み中' : '再読み込み'}</Button>
           </div>
           {musicKitAuth.authorized ? (
             <LibraryPlaylistsSection
