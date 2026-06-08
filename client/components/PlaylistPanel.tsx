@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Activity } from 'react'
-import { usePlaylistTracksQuery, type MusicPlaylist } from '../useMusicKitLibraryQueries'
+import { useLibraryPlaylistsQuery, usePlaylistTracksQuery, type MusicPlaylist } from '../useMusicKitLibraryQueries'
 import { ChevronGlyph, CheckGlyph } from './Glyphs'
 
 export function PlaylistTracksPanel({ playlistId }: { playlistId: string }) {
@@ -130,5 +130,45 @@ export function PlaylistLibraryBrowser({
         )) : <li className="text-muted">一致するプレイリストがありません</li>}
       </ul>
     </>
+  )
+}
+
+export function LibraryPlaylistsSection({
+  busy,
+  authorized,
+  expandedPlaylistIds,
+  selectedPlaylistIdSet,
+  onSelect,
+  onToggleExpanded,
+}: {
+  busy: boolean
+  authorized: boolean
+  expandedPlaylistIds: Set<string>
+  selectedPlaylistIdSet: Set<string>
+  onSelect: (playlist: MusicPlaylist, allPlaylists: MusicPlaylist[]) => void
+  onToggleExpanded: (playlist: MusicPlaylist) => void
+}) {
+  const query = useLibraryPlaylistsQuery()
+
+  if (query.status !== 'success') {
+    return (
+      <ul className="list-none m-0 mt-2.5 p-0 grid gap-2 max-h-80 overflow-y-auto">
+        <li className="text-muted">
+          {query.status === 'pending' ? 'ライブラリのプレイリストを読み込み中...' : String(query.error)}
+        </li>
+      </ul>
+    )
+  }
+
+  return (
+    <PlaylistLibraryBrowser
+      playlists={query.data}
+      authorized={authorized}
+      busy={busy}
+      expandedPlaylistIds={expandedPlaylistIds}
+      selectedPlaylistIdSet={selectedPlaylistIdSet}
+      onSelect={(playlist) => onSelect(playlist, query.data)}
+      onToggleExpanded={onToggleExpanded}
+    />
   )
 }

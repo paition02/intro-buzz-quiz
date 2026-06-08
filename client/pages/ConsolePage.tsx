@@ -20,7 +20,7 @@ import {
 } from '../lib/gameClient'
 import { errorFromUnknown, uniqueTracksById } from '../lib/util'
 import { playResultSound, playResultsSound } from '../lib/sounds'
-import { PlaylistLibraryBrowser } from '../components/PlaylistPanel'
+import { LibraryPlaylistsSection } from '../components/PlaylistPanel'
 import { PlayerBadge } from '../components/PlayerBadge'
 import { CircularSecondsSlider } from '../components/CircularSecondsSlider'
 import { Glass } from '../components/Glass'
@@ -35,7 +35,6 @@ export function ConsolePage() {
   const musicKitAuth = useMusicKitAuth()
   const queryClient = useQueryClient()
   const libraryPlaylistsQuery = useLibraryPlaylistsQuery()
-  const libraryPlaylists = libraryPlaylistsQuery.data ?? []
   const loadingLibraryPlaylists = libraryPlaylistsQuery.isPending || libraryPlaylistsQuery.isFetching
   const [expandedPlaylistIds, setExpandedPlaylistIds] = useState<Set<string>>(() => new Set())
   const [busy, setBusy] = useState(false)
@@ -45,8 +44,7 @@ export function ConsolePage() {
   const [preparedRoundKey, setPreparedRoundKey] = useState<string | null>(null)
   const [playbackError, setPlaybackError] = useState<Error | null>(null)
   const autoReadyRequestedRef = useRef(false)
-  const autoLoadLibraryPlaylistsRequestedRef = useRef(false)
-  const playEndedTimeoutIdRef = useRef<number | null>(null)
+const playEndedTimeoutIdRef = useRef<number | null>(null)
   const feedbackEndedTimeoutIdRef = useRef<number | null>(null)
   const musicKitReady = musicKitInstance !== null
   const musicKitError = musicKitInitError ?? musicKitAuth.error ?? playbackError
@@ -183,7 +181,6 @@ export function ConsolePage() {
   }, [])
 
   useEffect(() => {
-    if (!musicKitAuth.authorized) autoLoadLibraryPlaylistsRequestedRef.current = false
     if (state.phase !== 'initialization') autoReadyRequestedRef.current = false
 
     if (musicKitReady && musicKitAuth.authorized && state.phase === 'initialization' && !autoReadyRequestedRef.current) {
@@ -193,21 +190,7 @@ export function ConsolePage() {
         report(error)
       })
     }
-
-    if (
-      musicKitReady &&
-      musicKitAuth.authorized &&
-      !loadingLibraryPlaylists &&
-      libraryPlaylists.length === 0 &&
-      !autoLoadLibraryPlaylistsRequestedRef.current
-    ) {
-      autoLoadLibraryPlaylistsRequestedRef.current = true
-      void loadLibraryPlaylists().catch(report)
-    }
   }, [
-    libraryPlaylists.length,
-    loadLibraryPlaylists,
-    loadingLibraryPlaylists,
     musicKitAuth.authorized,
     musicKitReady,
     report,
@@ -216,7 +199,6 @@ export function ConsolePage() {
 
   const handleLogin = () => run(async () => {
     autoReadyRequestedRef.current = true
-    autoLoadLibraryPlaylistsRequestedRef.current = true
     try {
       await musicKitAuth.authorize()
       await consoleAction('console:ready')
@@ -224,7 +206,6 @@ export function ConsolePage() {
       setConsoleMessage(`Apple Musicにログインしました。${playlists.length}件のライブラリプレイリストを取得しました`)
     } catch (error) {
       autoReadyRequestedRef.current = false
-      autoLoadLibraryPlaylistsRequestedRef.current = false
       throw error
     }
   })
@@ -233,12 +214,12 @@ export function ConsolePage() {
     return queryClient.ensureQueryData(playlistTracksQueryOptions(musicKitInstance, musicKitAuth.authorized, playlist.id))
   }
 
-  const togglePlaylistSelected = (playlist: MusicPlaylist) => run(async () => {
+  const togglePlaylistSelected = (playlist: MusicPlaylist, allPlaylists: MusicPlaylist[]) => run(async () => {
     const currentSelectedIds = new Set(state.selectedPlaylistIds)
     if (currentSelectedIds.has(playlist.id)) currentSelectedIds.delete(playlist.id)
     else currentSelectedIds.add(playlist.id)
 
-    const selectedPlaylists = libraryPlaylists.filter((libraryPlaylist) => currentSelectedIds.has(libraryPlaylist.id))
+    const selectedPlaylists = allPlaylists.filter((p) => currentSelectedIds.has(p.id))
     const trackGroups = await Promise.all(selectedPlaylists.map((selectedPlaylist) => fetchPlaylistTracks(selectedPlaylist)))
     const tracks = uniqueTracksById(trackGroups.flat())
 
@@ -384,11 +365,10 @@ export function ConsolePage() {
             <span>ライブラリプレイリスト</span>
             <Button variant="ghostSmall" disabled={busy || loadingLibraryPlaylists || !musicKitAuth.authorized} onClick={() => run(async () => { await loadLibraryPlaylists() })}>{loadingLibraryPlaylists ? '読み込み中' : '再読み込み'}</Button>
           </div>
-          {libraryPlaylists.length > 0 ? (
-            <PlaylistLibraryBrowser
-              playlists={libraryPlaylists}
-              authorized={musicKitAuth.authorized}
+          {musicKitAuth.authorized ? (
+            <LibraryPlaylistsSection
               busy={busy}
+              authorized={musicKitAuth.authorized}
               expandedPlaylistIds={expandedPlaylistIds}
               selectedPlaylistIdSet={selectedPlaylistIdSet}
               onSelect={togglePlaylistSelected}
@@ -396,7 +376,7 @@ export function ConsolePage() {
             />
           ) : (
             <ul className="list-none m-0 mt-2.5 p-0 grid gap-2 max-h-80 overflow-y-auto">
-              <li className="text-muted">{loadingLibraryPlaylists ? 'ライブラリのプレイリストを読み込み中...' : 'ログイン後にライブラリのプレイリストを取得します'}</li>
+              <li className="text-muted">ログイン後にライブラリのプレイリストを取得します</li>
             </ul>
           )}
           {selectedPlaylistIds.length > 0 && (
