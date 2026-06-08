@@ -147,7 +147,9 @@ export function LibraryPlaylistsSection({
     return (
       <ul className="list-none m-0 mt-2.5 p-0 grid gap-2 max-h-80 overflow-y-auto">
         <li className="text-muted">
-          {query.status === 'pending' ? 'ライブラリのプレイリストを読み込み中...' : String(query.error)}
+          {query.status === 'pending'
+            ? 'ライブラリのプレイリストを読み込み中...'
+            : <span className="text-rose font-bold">{query.error instanceof Error ? query.error.message : String(query.error)}</span>}
         </li>
       </ul>
     )
