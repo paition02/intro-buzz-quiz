@@ -37,7 +37,6 @@ export function PlaylistListItem({
   selected,
   expanded,
   busy,
-  authorized,
   onSelect,
   onToggleExpanded,
 }: {
@@ -45,7 +44,6 @@ export function PlaylistListItem({
   selected: boolean
   expanded: boolean
   busy: boolean
-  authorized: boolean
   onSelect: (playlist: MusicPlaylist) => void
   onToggleExpanded: (playlist: MusicPlaylist) => void
 }) {
@@ -55,7 +53,7 @@ export function PlaylistListItem({
         <button
           type="button"
           className="flex-1 min-w-0 px-3 py-2.5 bg-transparent text-inherit border-0 flex justify-start items-center gap-2.5 text-left cursor-pointer disabled:cursor-not-allowed"
-          disabled={busy || !authorized}
+          disabled={busy}
           onClick={() => onSelect(playlist)}
           aria-pressed={selected}
         >
@@ -67,7 +65,7 @@ export function PlaylistListItem({
         <button
           type="button"
           className={`w-12 grid place-items-center border-0 border-l border-white/10 cursor-pointer disabled:cursor-not-allowed ${expanded ? 'bg-white/5 text-amber' : 'bg-transparent text-cream'}`}
-          disabled={busy || !authorized}
+          disabled={busy}
           onClick={() => onToggleExpanded(playlist)}
           aria-label={expanded ? 'プレイリストを閉じる' : 'プレイリストを開く'}
         >
@@ -116,7 +114,6 @@ export function PlaylistLibraryBrowser({
       <ul className="list-none m-0 mt-2.5 p-0 grid gap-2 max-h-80 overflow-y-auto">
         {visiblePlaylists.length ? visiblePlaylists.map((playlist) => (
           <PlaylistListItem
-            authorized={true}
             busy={busy}
             expanded={expandedPlaylistIds.has(playlist.id)}
             key={playlist.id}
