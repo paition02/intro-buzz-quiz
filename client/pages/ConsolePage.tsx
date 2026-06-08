@@ -35,6 +35,7 @@ export function ConsolePage() {
   const musicKitAuth = useMusicKitAuth()
   const queryClient = useQueryClient()
   const libraryPlaylistsQuery = useLibraryPlaylistsQuery()
+  const libraryPlaylists = libraryPlaylistsQuery.data ?? []
   const loadingLibraryPlaylists = libraryPlaylistsQuery.isPending || libraryPlaylistsQuery.isFetching
   const [expandedPlaylistIds, setExpandedPlaylistIds] = useState<Set<string>>(() => new Set())
   const [busy, setBusy] = useState(false)
@@ -197,14 +198,14 @@ export function ConsolePage() {
       musicKitReady &&
       musicKitAuth.authorized &&
       !loadingLibraryPlaylists &&
-      (libraryPlaylistsQuery.data === undefined || libraryPlaylistsQuery.data.length === 0) &&
+      libraryPlaylists.length === 0 &&
       !autoLoadLibraryPlaylistsRequestedRef.current
     ) {
       autoLoadLibraryPlaylistsRequestedRef.current = true
       void loadLibraryPlaylists().catch(report)
     }
   }, [
-    libraryPlaylistsQuery.data,
+    libraryPlaylists.length,
     loadLibraryPlaylists,
     loadingLibraryPlaylists,
     musicKitAuth.authorized,
@@ -237,8 +238,7 @@ export function ConsolePage() {
     if (currentSelectedIds.has(playlist.id)) currentSelectedIds.delete(playlist.id)
     else currentSelectedIds.add(playlist.id)
 
-    if (!libraryPlaylistsQuery.data) return
-    const selectedPlaylists = libraryPlaylistsQuery.data.filter((libraryPlaylist) => currentSelectedIds.has(libraryPlaylist.id))
+    const selectedPlaylists = libraryPlaylists.filter((libraryPlaylist) => currentSelectedIds.has(libraryPlaylist.id))
     const trackGroups = await Promise.all(selectedPlaylists.map((selectedPlaylist) => fetchPlaylistTracks(selectedPlaylist)))
     const tracks = uniqueTracksById(trackGroups.flat())
 
@@ -384,7 +384,7 @@ export function ConsolePage() {
             <span>ライブラリプレイリスト</span>
             <Button variant="ghostSmall" disabled={busy || loadingLibraryPlaylists || !musicKitAuth.authorized} onClick={() => run(async () => { await loadLibraryPlaylists() })}>{loadingLibraryPlaylists ? '読み込み中' : '再読み込み'}</Button>
           </div>
-          {libraryPlaylistsQuery.status === 'success' && libraryPlaylistsQuery.data.length > 0 ? (
+          {libraryPlaylists.length > 0 ? (
             <PlaylistLibraryBrowser
               playlists={libraryPlaylists}
               authorized={musicKitAuth.authorized}
