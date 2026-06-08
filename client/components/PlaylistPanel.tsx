@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Activity } from 'react'
 import { usePlaylistTracksQuery, type MusicPlaylist } from '../useMusicKitLibraryQueries'
 import { ChevronGlyph, CheckGlyph } from './Glyphs'
@@ -80,8 +81,9 @@ export function PlaylistListItem({
   )
 }
 
-export function PlaylistList({
+export function PlaylistLibraryBrowser({
   playlists,
+  loading,
   authorized,
   busy,
   expandedPlaylistIds,
@@ -90,6 +92,7 @@ export function PlaylistList({
   onToggleExpanded,
 }: {
   playlists: MusicPlaylist[]
+  loading: boolean
   authorized: boolean
   busy: boolean
   expandedPlaylistIds: Set<string>
@@ -97,20 +100,37 @@ export function PlaylistList({
   onSelect: (playlist: MusicPlaylist) => void
   onToggleExpanded: (playlist: MusicPlaylist) => void
 }) {
+  const [search, setSearch] = useState('')
+
+  const normalizedSearch = search.trim().toLowerCase()
+  const visiblePlaylists = normalizedSearch
+    ? playlists.filter((playlist) => playlist.name.toLowerCase().includes(normalizedSearch))
+    : playlists
+
   return (
     <>
-      {playlists.map((playlist) => (
-        <PlaylistListItem
-          authorized={authorized}
-          busy={busy}
-          expanded={expandedPlaylistIds.has(playlist.id)}
-          key={playlist.id}
-          onSelect={onSelect}
-          onToggleExpanded={onToggleExpanded}
-          playlist={playlist}
-          selected={selectedPlaylistIdSet.has(playlist.id)}
-        />
-      ))}
+      <input
+        type="search"
+        className="w-full rounded-2xl border border-white/10 bg-black/20 text-white px-4 py-3 disabled:opacity-60"
+        placeholder="プレイリスト名で検索"
+        value={search}
+        onChange={(event) => setSearch(event.target.value)}
+        disabled={busy || !authorized || playlists.length === 0}
+      />
+      <ul className="list-none m-0 mt-2.5 p-0 grid gap-2 max-h-80 overflow-y-auto">
+        {visiblePlaylists.length ? visiblePlaylists.map((playlist) => (
+          <PlaylistListItem
+            authorized={authorized}
+            busy={busy}
+            expanded={expandedPlaylistIds.has(playlist.id)}
+            key={playlist.id}
+            onSelect={onSelect}
+            onToggleExpanded={onToggleExpanded}
+            playlist={playlist}
+            selected={selectedPlaylistIdSet.has(playlist.id)}
+          />
+        )) : <li className="text-muted">{loading ? 'ライブラリのプレイリストを読み込み中...' : playlists.length ? '一致するプレイリストがありません' : 'ログイン後にライブラリのプレイリストを取得します'}</li>}
+      </ul>
     </>
   )
 }
