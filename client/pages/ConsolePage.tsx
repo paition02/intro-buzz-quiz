@@ -384,16 +384,21 @@ export function ConsolePage() {
             <span>ライブラリプレイリスト</span>
             <Button variant="ghostSmall" disabled={busy || loadingLibraryPlaylists || !musicKitAuth.authorized} onClick={() => run(async () => { await loadLibraryPlaylists() })}>{loadingLibraryPlaylists ? '読み込み中' : '再読み込み'}</Button>
           </div>
-          <PlaylistLibraryBrowser
-            playlists={libraryPlaylists}
-            loading={loadingLibraryPlaylists}
-            authorized={musicKitAuth.authorized}
-            busy={busy}
-            expandedPlaylistIds={expandedPlaylistIds}
-            selectedPlaylistIdSet={selectedPlaylistIdSet}
-            onSelect={togglePlaylistSelected}
-            onToggleExpanded={togglePlaylistExpanded}
-          />
+          {libraryPlaylists.length > 0 ? (
+            <PlaylistLibraryBrowser
+              playlists={libraryPlaylists}
+              authorized={musicKitAuth.authorized}
+              busy={busy}
+              expandedPlaylistIds={expandedPlaylistIds}
+              selectedPlaylistIdSet={selectedPlaylistIdSet}
+              onSelect={togglePlaylistSelected}
+              onToggleExpanded={togglePlaylistExpanded}
+            />
+          ) : (
+            <ul className="list-none m-0 mt-2.5 p-0 grid gap-2 max-h-80 overflow-y-auto">
+              <li className="text-muted">{loadingLibraryPlaylists ? 'ライブラリのプレイリストを読み込み中...' : 'ログイン後にライブラリのプレイリストを取得します'}</li>
+            </ul>
+          )}
           {selectedPlaylistIds.length > 0 && (
             <p className="mt-3 mb-0 text-subtle leading-relaxed">
               {selectedPlaylistIds.length}件のプレイリスト、{state.tracks.length}曲を選択中

@@ -83,7 +83,6 @@ export function PlaylistListItem({
 
 export function PlaylistLibraryBrowser({
   playlists,
-  loading,
   authorized,
   busy,
   expandedPlaylistIds,
@@ -92,7 +91,6 @@ export function PlaylistLibraryBrowser({
   onToggleExpanded,
 }: {
   playlists: MusicPlaylist[]
-  loading: boolean
   authorized: boolean
   busy: boolean
   expandedPlaylistIds: Set<string>
@@ -115,7 +113,7 @@ export function PlaylistLibraryBrowser({
         placeholder="プレイリスト名で検索"
         value={search}
         onChange={(event) => setSearch(event.target.value)}
-        disabled={busy || !authorized || playlists.length === 0}
+        disabled={busy || !authorized}
       />
       <ul className="list-none m-0 mt-2.5 p-0 grid gap-2 max-h-80 overflow-y-auto">
         {visiblePlaylists.length ? visiblePlaylists.map((playlist) => (
@@ -129,7 +127,7 @@ export function PlaylistLibraryBrowser({
             playlist={playlist}
             selected={selectedPlaylistIdSet.has(playlist.id)}
           />
-        )) : <li className="text-muted">{loading ? 'ライブラリのプレイリストを読み込み中...' : playlists.length ? '一致するプレイリストがありません' : 'ログイン後にライブラリのプレイリストを取得します'}</li>}
+        )) : <li className="text-muted">一致するプレイリストがありません</li>}
       </ul>
     </>
   )
