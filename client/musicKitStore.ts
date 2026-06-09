@@ -46,7 +46,6 @@ async function initializeMusicKit() {
       instance: null,
       error,
     } as const
-    return
   }
 
   instanceListeners.forEach(listener => listener())
