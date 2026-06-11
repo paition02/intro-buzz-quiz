@@ -3,13 +3,6 @@
 Apple Music の楽曲を使った、リアルタイム同期型の早押しイントロクイズアプリです。
 1 台の PC でゲームサーバーを起動し、ホストはスマホの**ホストコンソール**で進行、観客は**ゲームボード**を大画面で観戦、プレイヤーはスマホや物理ボタンを**早押しボタン**として使います。すべての画面・ボタンは WebSocket でサーバーの 1 つのゲーム状態を共有します。
 
-## 特徴
-
-- **サーバーが唯一の真実 (single source of truth)** — ゲーム状態はサーバーが保持し、Socket.IO で全クライアントへ broadcast します。各画面は状態を表示し、操作は「意図」をサーバーへ送るだけです。
-- **実音源での再生** — ホストが Apple Music にログインし、自分のライブラリのプレイリストから曲を選んで MusicKit JS で実際に再生します。
-- **物理ボタン対応** — スマホの `/action` ページだけでなく、`POST /api/act/:actorId` を直接叩く自作の物理早押しボタンも使えます。
-- **Bun ネイティブ** — ランタイム・HTTP サーバー・WebSocket をすべて Bun（`Bun.serve` + `@socket.io/bun-engine`）で動かします。SPA、API、Socket.IO を 1 つの Bun サーバーで配信します。
-
 ## 構成
 
 | 画面 / API | パス | 役割 |
@@ -40,7 +33,7 @@ bun install
 
 ### 2. 環境変数を設定
 
-`.env.example` をコピーして `.env` を作成し、各値を記入します（必要な変数とその説明は `.env.example` を参照してください）。Bun は cwd の `.env` を自動で読み込みます。
+`.env.example` をコピーして `.env` を作成し、各値を記入します（必要な変数とその説明は `.env.example` を参照してください）。
 
 ```bash
 cp .env.example .env
@@ -55,14 +48,6 @@ bun dev
 ```
 
 `bun --hot` で Bun サーバーをホットリロード付きで起動します。HTTP と HTTPS を同時に `0.0.0.0` で待ち受けるため LAN 内の端末からアクセスできます。実際の URL は起動時のログに表示されます。
-
-| 用途 | URL |
-| --- | --- |
-| ホスト操作（PC / スマホ） | `http://localhost:<HTTP_PORT>/console` / `https://localhost:<HTTPS_PORT>/console` |
-| 大画面表示 | `http://localhost:<HTTP_PORT>/gameboard` / `https://localhost:<HTTPS_PORT>/gameboard` |
-| 早押しボタン（各プレイヤーのスマホ） | `http://localhost:<HTTP_PORT>/action` / `https://localhost:<HTTPS_PORT>/action` |
-
-`.env` の例では `HTTP_PORT=1199`、`HTTPS_PORT=2199` です。LAN 内の別端末から使う場合は `localhost` を PC の IP アドレスに置き換えます（例: `http://192.168.x.x:<HTTP_PORT>/action` または `https://192.168.x.x:<HTTPS_PORT>/action`）。物理ボタンは `POST http://<PCのIP>:<HTTP_PORT>/api/act/<任意のID>` または `POST https://<PCのIP>:<HTTPS_PORT>/api/act/<任意のID>` を叩きます。
 
 ## 遊び方
 
@@ -153,22 +138,15 @@ MusicKit JS 用の Apple Music developer token を返します。`jose` で ES25
 | `console:next-game` | 次のゲームへ（参加者クリア） |
 | `console:reset` | 初期状態へリセット |
 
-## 音源再生 (MusicKit)
-
-- `index.html` で MusicKit JS v3 を CDN から読み込みます。
-- 再生を行うのは**ホストコンソール (`/console`) のみ**です。ゲームボードは正解 / 不正解の効果音（Web Audio で合成）のみ鳴らします。
-- ホストコンソールはゲーム状態を駆動源として再生を制御します（`playing` ステップで指定秒数だけイントロ再生、`reveal` ステップで曲をフルループ再生）。再生の開始 / 停止 / MusicKit キュー準備はすべて状態の変化に追従して行われます。
-- プレイリストの曲はライブラリ版からカタログ版へ解決し、MusicKit キューには 50 曲単位のロットで投入します。再生対象の曲が別ロットにある場合は、そのロットへキューを張り替えてリピートモードを「1 曲」に設定します。
-
 ## スクリプト
 
 | コマンド | 内容 |
 | --- | --- |
-| `bun dev` | 開発サーバー（`bun --hot`） |
-| `bun run typecheck` | 型チェック（`tsc -b`） |
-| `bun start` | 本番起動（`NODE_ENV=production`） |
+| `bun dev` | 開発サーバー |
+| `bun start` | 本番起動 |
+| `bun run typecheck` | 型チェック |
 | `bun run lint` | ESLint |
-| `bun run test:spec` | backend + frontend の feature / step defs 回帰テスト |
+| `bun run test` | feature / step defs 回帰テスト |
 
 ## 技術スタック
 

@@ -5,11 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "bun --hot server/index.ts",
-    "typecheck": "tsc -b",
     "start": "NODE_ENV=production bun server/index.ts",
+    "typecheck": "tsc -b",
     "lint": "eslint .",
-    "test:spec": "cd spec/step_defs && uv run pytest",
-    "test": "bun run test:spec"
+    "test": "cd spec/step_defs && uv run pytest"
   },
   "dependencies": {
     "@socket.io/bun-engine": "^0.1.1",
