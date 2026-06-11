@@ -216,6 +216,25 @@ def _expect_any_text(page: Page, values: list[str], timeout: float = 30.0):
         page.wait_for_timeout(100)
 
 
+def _fullscreen_button(page: Page):
+    return page.get_by_role("button", name="フルスクリーンにする", exact=True)
+
+
+def _wait_for_fullscreen_button_style(page: Page, *, opacity: str, pointer_events: str, timeout: int = 30000):
+    page.wait_for_function(
+        """
+        ({ opacity, pointerEvents }) => {
+          const button = document.querySelector('button[aria-label="フルスクリーンにする"]');
+          if (!button) return false;
+          const style = getComputedStyle(button);
+          return style.opacity === opacity && style.pointerEvents === pointerEvents;
+        }
+        """,
+        arg={"opacity": opacity, "pointerEvents": pointer_events},
+        timeout=timeout,
+    )
+
+
 def _prepare_game(socket_client, actor: str = "player-front"):
     _set_ready_tracks(socket_client, 3)
     response = httpx.post(f"{socket_client.server_url}/api/act/{actor}", verify=tls_verify(socket_client.server_url))
@@ -410,6 +429,28 @@ def backend_ready_with_tracks(socket_client, count: int):
     _set_ready_tracks(socket_client, count)
 
 
+@given("the gameboard fullscreen API is mocked")
+def gameboard_fullscreen_api_is_mocked(frontend_page: Page):
+    frontend_page.add_init_script(
+        """
+        (() => {
+          window.__introBuzzFullscreenRequests = [];
+          Object.defineProperty(HTMLElement.prototype, 'requestFullscreen', {
+            configurable: true,
+            value(options) {
+              window.__introBuzzFullscreenRequests.push({
+                className: this.className,
+                navigationUI: options?.navigationUI ?? null,
+                tagName: this.tagName,
+              });
+              return Promise.resolve();
+            },
+          });
+        })();
+        """
+    )
+
+
 @given(parsers.parse('a backend game is before playback with actor "{actor}"'))
 def backend_game_before_playback(socket_client, actor: str):
     _prepare_game(socket_client, actor)
@@ -496,6 +537,47 @@ def backend_host_gives_up(socket_client):
 def frontend_shows_revealed_track(frontend_page: Page):
     _expect_any_text(frontend_page, ["Track 1", "Track 2", "Track 3"])
     _expect_any_text(frontend_page, ["Artist 1", "Artist 2", "Artist 3"])
+
+
+@then("the gameboard fullscreen button is hidden")
+def gameboard_fullscreen_button_hidden(frontend_page: Page):
+    expect(_fullscreen_button(frontend_page)).to_have_count(1, timeout=30000)
+    _wait_for_fullscreen_button_style(frontend_page, opacity="0", pointer_events="none")
+
+
+@when("the pointer moves over the gameboard")
+def pointer_moves_over_gameboard(frontend_page: Page):
+    box = frontend_page.locator("main").bounding_box()
+    assert box is not None
+    frontend_page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+
+
+@then("the gameboard fullscreen button is shown")
+def gameboard_fullscreen_button_shown(frontend_page: Page):
+    _wait_for_fullscreen_button_style(frontend_page, opacity="0.8", pointer_events="auto")
+
+
+@when("the gameboard fullscreen button is clicked")
+def gameboard_fullscreen_button_clicked(frontend_page: Page):
+    _fullscreen_button(frontend_page).click(timeout=10000)
+
+
+@then("the gameboard requests fullscreen with hidden navigation UI")
+def gameboard_requests_fullscreen_with_hidden_navigation(frontend_page: Page):
+    request = frontend_page.wait_for_function(
+        """
+        () => window.__introBuzzFullscreenRequests?.[0] ?? null
+        """,
+        timeout=30000,
+    ).json_value()
+    assert request["tagName"] == "MAIN"
+    assert request["navigationUI"] == "hide"
+    assert "gameboard-screen" in request["className"]
+
+
+@then("the gameboard fullscreen button hides after the pointer stops")
+def gameboard_fullscreen_button_hides_after_pointer_stops(frontend_page: Page):
+    _wait_for_fullscreen_button_style(frontend_page, opacity="0", pointer_events="none", timeout=5000)
 
 
 @then("the console round track information is hidden")

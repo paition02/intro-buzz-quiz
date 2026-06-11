@@ -30,6 +30,16 @@ Feature: Gameboard page
     When the frontend socket reconnects
     Then the frontend shows "ボタンを押してご参加ください"
 
+  Scenario: Gameboard shows a discreet fullscreen button on pointer movement
+    Given the gameboard fullscreen API is mocked
+    When the frontend opens "/gameboard"
+    Then the gameboard fullscreen button is hidden
+    When the pointer moves over the gameboard
+    Then the gameboard fullscreen button is shown
+    When the gameboard fullscreen button is clicked
+    Then the gameboard requests fullscreen with hidden navigation UI
+    And the gameboard fullscreen button hides after the pointer stops
+
   Scenario: Gameboard playing view shows only the music symbol stage
     Given a backend game is before playback with actor "player-front"
     When the frontend opens "/gameboard"

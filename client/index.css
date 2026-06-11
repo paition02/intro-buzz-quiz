@@ -50,6 +50,9 @@
     color-scheme: dark;
     color: var(--color-cream);
     font-family: var(--font-sans);
+    --app-background-glows:
+      radial-gradient(circle at 20% 10%, rgba(255, 78, 119, 0.25), transparent 28rem),
+      radial-gradient(circle at 85% 20%, rgba(88, 185, 255, 0.18), transparent 26rem);
   }
 
   *,
@@ -65,14 +68,36 @@
     min-width: 320px;
     min-height: 100vh;
     overflow-x: hidden;
-    background:
-      radial-gradient(circle at 20% 10%, rgba(255, 78, 119, 0.25), transparent 28rem),
-      radial-gradient(circle at 85% 20%, rgba(88, 185, 255, 0.18), transparent 26rem),
-      var(--color-ink);
+    background-color: var(--color-ink);
+    background-image: var(--app-background-glows);
   }
 }
 
 @layer components {
+  .gameboard-screen,
+  .gameboard-screen::backdrop {
+    background-color: var(--color-ink);
+    background-image: var(--app-background-glows);
+  }
+
+  .gameboard-screen[data-board-tone='playing'],
+  .gameboard-screen[data-board-tone='playing']::backdrop {
+    background-color: var(--color-ink);
+    background-image: none;
+  }
+
+  .gameboard-screen[data-board-tone='correct'],
+  .gameboard-screen[data-board-tone='correct']::backdrop {
+    background-color: var(--color-board-correct);
+    background-image: none;
+  }
+
+  .gameboard-screen[data-board-tone='wrong'],
+  .gameboard-screen[data-board-tone='wrong']::backdrop {
+    background-color: var(--color-board-wrong);
+    background-image: none;
+  }
+
   .track-lane-strip {
     animation-duration: var(--track-lane-duration, 5s);
     animation-fill-mode: forwards;
