@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, useSyncExternalStore, type CSSProperties } from 'react'
+import { memo, useCallback, useMemo, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import type { Track } from '../../type/game'
 
 export function TrackArtwork({ track }: { track: Track }) {
@@ -123,8 +123,12 @@ function TrackLaneGroup({ tracks, ariaHidden = false }: { tracks: Track[]; ariaH
   )
 }
 
+function trackChipArtworkUrl(track: Track) {
+  return track.artworkChipUrl ?? track.artworkInfoUrl ?? track.artworkRevealUrl
+}
+
 function TrackChip({ track }: { track: Track }) {
-  const artworkUrl = track.artworkChipUrl ?? track.artworkInfoUrl ?? track.artworkRevealUrl
+  const artworkUrl = trackChipArtworkUrl(track)
   return (
     <div
       className="w-max h-12 flex shrink-0 items-center gap-2.5 py-1.5 pr-3.5 pl-2 overflow-hidden rounded-xl bg-black/70 border border-white/10 shadow-lg whitespace-nowrap"
@@ -173,7 +177,19 @@ function useViewportSize() {
   return useSyncExternalStore(subscribeViewportSize, getViewportSizeSnapshot)
 }
 
-export function ReadyTrackLanes({ tracks }: { tracks: Track[] }) {
+function sameTrackChipAreaTracks(previous: Track[], next: Track[]) {
+  if (previous === next) return true
+  if (previous.length !== next.length) return false
+
+  return previous.every((track, index) => {
+    const nextTrack = next[index]
+    return track.id === nextTrack.id
+      && track.title === nextTrack.title
+      && trackChipArtworkUrl(track) === trackChipArtworkUrl(nextTrack)
+  })
+}
+
+function ReadyTrackLanesComponent({ tracks }: { tracks: Track[] }) {
   const viewportSize = useViewportSize()
   const laneHeight = 72
   const reservedHeight = 300
@@ -204,3 +220,8 @@ export function ReadyTrackLanes({ tracks }: { tracks: Track[] }) {
     </div>
   )
 }
+
+// Socket.IO delivers fresh object references on every state event; compare the rendered chip data instead.
+export const ReadyTrackLanes = memo(ReadyTrackLanesComponent, (previous, next) => (
+  sameTrackChipAreaTracks(previous.tracks, next.tracks)
+))
