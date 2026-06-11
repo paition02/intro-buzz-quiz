@@ -498,6 +498,24 @@ def frontend_shows_revealed_track(frontend_page: Page):
     _expect_any_text(frontend_page, ["Artist 1", "Artist 2", "Artist 3"])
 
 
+@then("the console round track information is hidden")
+def console_round_track_information_hidden(frontend_page: Page, socket_client):
+    track = _round_track(socket_client.state)
+    assert track is not None
+    track_info = frontend_page.get_by_role("region", name="曲情報", exact=True)
+    expect(track_info.get_by_text(track["title"], exact=True)).to_have_count(0, timeout=30000)
+    expect(track_info.get_by_text(track["artist"], exact=True)).to_have_count(0, timeout=30000)
+
+
+@then("the console round track information is visible")
+def console_round_track_information_visible(frontend_page: Page, socket_client):
+    track = _round_track(socket_client.state)
+    assert track is not None
+    track_info = frontend_page.get_by_role("region", name="曲情報", exact=True)
+    expect(track_info.get_by_text(track["title"], exact=True)).to_be_visible(timeout=30000)
+    expect(track_info.get_by_text(track["artist"], exact=True)).to_be_visible(timeout=30000)
+
+
 @when("the judging animation expires")
 def frontend_judging_animation_expires(socket_client):
     if socket_client.state["step"] == "correct":

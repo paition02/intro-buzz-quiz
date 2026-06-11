@@ -27,6 +27,7 @@ import { CircularSecondsSlider } from '../components/CircularSecondsSlider'
 import { Glass } from '../components/Glass'
 import { Button } from '../components/Button'
 import { Eyebrow } from '../components/Eyebrow'
+import { RoundTrackDisclosure } from '../components/RoundTrackDisclosure'
 
 const JUDGE_RESULT_DURATION_MS = 1800
 
@@ -44,9 +45,10 @@ export function ConsolePage() {
   const [playbackSeconds, setPlaybackSeconds] = useState(0.5)
   const [isPreparingNext, setIsPreparingNext] = useState(false)
   const [preparedRoundKey, setPreparedRoundKey] = useState<string | null>(null)
+  const [expandedRoundKey, setExpandedRoundKey] = useState<string | null>(null)
   const [playbackError, setPlaybackError] = useState<Error | null>(null)
   const autoReadyRequestedRef = useRef(false)
-const playEndedTimeoutIdRef = useRef<number | null>(null)
+  const playEndedTimeoutIdRef = useRef<number | null>(null)
   const feedbackEndedTimeoutIdRef = useRef<number | null>(null)
   const musicKitReady = musicKitInstance !== null
   const musicKitError = musicKitInitError ?? musicKitAuth.error ?? playbackError
@@ -170,6 +172,7 @@ const playEndedTimeoutIdRef = useRef<number | null>(null)
   const roundTrack = roundTrackFromState(state)
   const roundPreparationKey = roundPreparationKeyFromState(state)
   const roundPrepared = roundPreparationKey !== null && preparedRoundKey === roundPreparationKey
+  const trackInfoExpanded = roundPreparationKey !== null && expandedRoundKey === roundPreparationKey
   const canPlayIntro = state.step === 'beforePlayback' && roundTrackId != null && roundPrepared && !isPreparingNext && playbackError === null && musicKitReady && musicKitAuth.authorized
   const canGoNextRound = state.phase === 'game' && state.step === 'reveal' && state.roundIndex >= 0 && state.roundIndex + 1 < state.shuffledTrackIds.length
   const playButtonLabel = state.step === 'playing' ? '再生中' : state.step === 'beforePlayback' && roundTrackId != null && !roundPrepared ? 'ロード中' : '再生'
@@ -181,6 +184,11 @@ const playEndedTimeoutIdRef = useRef<number | null>(null)
   const handlePlaybackSecondsCommit = useCallback((value: number) => {
     setPlaybackSeconds(value)
   }, [])
+
+  const handleToggleTrackInfo = useCallback(() => {
+    if (roundPreparationKey === null) return
+    setExpandedRoundKey((current) => current === roundPreparationKey ? null : roundPreparationKey)
+  }, [roundPreparationKey])
 
   useEffect(() => {
     if (state.phase !== 'initialization') autoReadyRequestedRef.current = false
@@ -425,26 +433,12 @@ const playEndedTimeoutIdRef = useRef<number | null>(null)
           </div>
         </Glass>
 
-        <Glass className="rounded-2xl p-6 min-w-0">
-          <h2 className="m-0 mb-2.5 text-2xl font-bold">曲情報</h2>
-          {roundTrack ? (
-            <div className="flex items-center gap-4 rounded-2xl p-5 bg-linear-to-br from-pink/20 to-sky/20 border border-white/10">
-              {(roundTrack.artworkThumbUrl ?? roundTrack.artworkUrl) ? (
-                <img
-                  className="size-24 rounded-xl shrink-0 object-cover bg-linear-to-br from-pink to-amber"
-                  src={roundTrack.artworkThumbUrl ?? roundTrack.artworkUrl}
-                  alt=""
-                  loading="lazy"
-                />
-              ) : (
-                <span className="size-24 rounded-xl shrink-0 grid place-items-center bg-linear-to-br from-pink to-amber text-cocoa text-4xl font-black" aria-hidden="true">♪</span>
-              )}
-              <div className="min-w-0">
-                <strong className="block text-2xl font-bold leading-tight">{roundTrack.title}</strong>
-                <span className="block mt-2.5 text-subtle">{roundTrack.artist}</span>
-              </div>
-            </div>
-          ) : <p className="mt-0 text-subtle leading-relaxed">まだ曲は準備されていません。</p>}
+        <Glass as="section" className="rounded-2xl p-6 min-w-0" aria-label="曲情報">
+          <RoundTrackDisclosure
+            expanded={trackInfoExpanded}
+            onToggle={handleToggleTrackInfo}
+            track={roundTrack}
+          />
         </Glass>
         </div>
       </section>

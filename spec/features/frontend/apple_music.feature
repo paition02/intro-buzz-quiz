@@ -89,7 +89,8 @@ Feature: MusicKit integration
     When the frontend clicks "ゲーム開始"
     And the frontend clicks "ギブアップ"
     Then backend phase is "game" and step is "reveal"
-    And the frontend shows revealed track information
+    When the frontend clicks "曲情報を開く"
+    Then the frontend shows revealed track information
 
   Scenario: Logging out of Apple Music returns the console to the unauthenticated state
     Given the frontend console is logged into mocked MusicKit

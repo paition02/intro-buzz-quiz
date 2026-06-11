@@ -38,3 +38,13 @@ Feature: Host console page
     Then backend phase is "game" and step is "beforePlayback"
     When the frontend clicks "再生"
     Then backend phase is "game" and step is "playing"
+
+  Scenario: Console round track info starts closed and can be reopened per round
+    Given the frontend console selected playlist "Spec Playlist A"
+    When the frontend clicks "ゲーム開始"
+    Then the console round track information is hidden
+    When the frontend clicks "曲情報を開く"
+    Then the console round track information is visible
+    When the frontend clicks "ギブアップ"
+    And the frontend clicks "次のラウンドへ"
+    Then the console round track information is hidden
