@@ -53,17 +53,17 @@ export function useSequentialPlayback(): SequentialPlayback {
     ref.current.nextIndex++
   }, [mk])
 
-  const playFromStart = useCallback(async () => {
-    if (mk === null) throw new Error('MusicKit is not initialized')
-    if (mk.isPlaying) await mk.pause()
-    if (mk.nowPlayingItem !== undefined) await mk.seekToTime(0)
-    await mk.play()
-  }, [mk])
-
   const stop = useCallback(async () => {
     if (mk === null) throw new Error('MusicKit is not initialized')
     if (mk.isPlaying) await mk.pause()
+    if (mk.nowPlayingItem !== undefined) await mk.seekToTime(0)
   }, [mk])
+
+  const playFromStart = useCallback(async () => {
+    if (mk === null) throw new Error('MusicKit is not initialized')
+    await stop()
+    await mk.play()
+  }, [mk, stop])
 
   return {
     setSongIds,
