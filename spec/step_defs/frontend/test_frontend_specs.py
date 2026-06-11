@@ -205,11 +205,15 @@ def _wait_for_response(frontend_page: Page, predicate, timeout: float = 30):
         ) from exc
 
 
-def _expect_any_text(page: Page, values: list[str]):
-    for value in values:
-        if page.get_by_text(value, exact=True).first.is_visible(timeout=500):
-            return value
-    raise AssertionError(f"none of {values} was visible")
+def _expect_any_text(page: Page, values: list[str], timeout: float = 30.0):
+    deadline = time.monotonic() + timeout
+    while True:
+        for value in values:
+            if page.get_by_text(value, exact=True).first.is_visible():
+                return value
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"none of {values} was visible")
+        page.wait_for_timeout(100)
 
 
 def _prepare_game(socket_client, actor: str = "player-front"):

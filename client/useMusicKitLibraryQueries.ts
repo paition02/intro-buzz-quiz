@@ -1,4 +1,5 @@
-import { queryOptions, useQuery } from '@tanstack/react-query'
+import { queryOptions, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useCallback } from 'react'
 import { useMusicKitAuth, useMusicKitInstance } from './useMusicKit'
 import type { Track } from '../type/game'
 
@@ -132,4 +133,12 @@ export function usePlaylistTracksQuery(playlistId: string) {
   const { instance: mk } = useMusicKitInstance()
   const { authorized } = useMusicKitAuth()
   return useQuery(playlistTracksQueryOptions(mk, authorized, playlistId))
+}
+
+export function useInvalidateLibraryPlaylists() {
+  const queryClient = useQueryClient()
+  return useCallback(
+    () => queryClient.invalidateQueries({ queryKey: ['musicKit', 'libraryPlaylists'] }),
+    [queryClient],
+  )
 }

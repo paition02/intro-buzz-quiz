@@ -2,6 +2,7 @@
 
 import { useCallback, useRef } from 'react'
 import { useMusicKitInstance } from './useMusicKit'
+import { musicKitInstanceStore } from './musicKitStore'
 
 type SequentialPlayback = {
   setSongIds(songIds: string[]): Promise<void>
@@ -40,16 +41,14 @@ export function useSequentialPlayback(): SequentialPlayback {
       startTime: 0,
     })
 
-    const previousVolume = mk.volume
-    mk.volume = 0
-
-    try {
-      await mk.play()
-      await new Promise<void>((resolve) => setTimeout(resolve))
-    } finally {
-      if (mk.isPlaying) await mk.pause()
-      mk.volume = previousVolume
-    }
+    await musicKitInstanceStore.muteTemporarily(async () => {
+      try {
+        await mk.play()
+        await new Promise<void>((resolve) => setTimeout(resolve))
+      } finally {
+        if (mk.isPlaying) await mk.pause()
+      }
+    })
 
     ref.current.nextIndex++
   }, [mk])
