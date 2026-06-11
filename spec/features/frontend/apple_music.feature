@@ -26,7 +26,7 @@ Feature: MusicKit integration
 
   Scenario: Authorizing MusicKit loads the library playlists
     When the frontend opens "/console" with mocked MusicKit
-    And the frontend clicks "Apple Musicにログイン"
+    And the frontend clicks "ログイン"
     Then the frontend shows "Apple Music ログイン済み"
     And MusicKit library playlists are requested
     And the frontend shows "Spec Playlist A"
@@ -104,7 +104,7 @@ Feature: MusicKit integration
   Scenario: Library playlist loading failure is shown on the console
     Given mocked MusicKit library playlist loading fails with "Library unavailable"
     When the frontend opens "/console" with mocked MusicKit
-    And the frontend clicks "Apple Musicにログイン"
+    And the frontend clicks "ログイン"
     Then the frontend shows "Library unavailable"
 
   Scenario: Playlist track loading failure is shown on the console

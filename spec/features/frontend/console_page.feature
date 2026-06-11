@@ -5,7 +5,7 @@ Feature: Host console page
     When the frontend opens "/console" with mocked MusicKit
     Then the document title is "ホストコンソール | 早押しイントロクイズ"
     And the frontend shows "Apple Music 未ログイン"
-    When the frontend clicks "Apple Musicにログイン"
+    When the frontend clicks "ログイン"
     Then the frontend shows "Apple Music ログイン済み"
     And the frontend shows "Spec Playlist A"
     And the frontend shows "Spec Playlist B"

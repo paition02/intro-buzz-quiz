@@ -300,7 +300,7 @@ def frontend_console_logged_in_with_paginated_tracks(frontend_page: Page, socket
         song_titles={"track-101": "Track Page 2"},
     )
     frontend_page.goto("/console")
-    frontend_page.get_by_role("button", name="Apple Musicにログイン", exact=True).click()
+    frontend_page.get_by_role("button", name="ログイン", exact=True).click()
     expect(frontend_page.get_by_text(playlist, exact=True)).to_be_visible()
 
 
@@ -314,7 +314,7 @@ def frontend_console_logged_in_with_long_playlist(frontend_page: Page, socket_cl
         playlist_names={playlist_id: playlist},
     )
     frontend_page.goto("/console")
-    frontend_page.get_by_role("button", name="Apple Musicにログイン", exact=True).click()
+    frontend_page.get_by_role("button", name="ログイン", exact=True).click()
     expect(frontend_page.get_by_text(playlist, exact=True)).to_be_visible()
 
 
@@ -336,7 +336,7 @@ def frontend_console_logged_in_with_overlapping_playlists(frontend_page: Page, s
         },
     )
     frontend_page.goto("/console")
-    frontend_page.get_by_role("button", name="Apple Musicにログイン", exact=True).click()
+    frontend_page.get_by_role("button", name="ログイン", exact=True).click()
     expect(frontend_page.get_by_text("Spec Playlist A", exact=True)).to_be_visible()
     expect(frontend_page.get_by_text("Spec Playlist B", exact=True)).to_be_visible()
 
@@ -363,7 +363,7 @@ def frontend_console_logged_in_with_track_loading_failure(frontend_page: Page, s
     _ = socket_client
     _install_playlist_track_error(frontend_page, "playlist-a", message)
     frontend_page.goto("/console")
-    frontend_page.get_by_role("button", name="Apple Musicにログイン", exact=True).click()
+    frontend_page.get_by_role("button", name="ログイン", exact=True).click()
     expect(frontend_page.get_by_text("Spec Playlist A", exact=True)).to_be_visible()
 
 
@@ -695,7 +695,7 @@ def frontend_clicks(frontend_page: Page, socket_client, label: str):
 @given("the frontend console is logged into mocked MusicKit")
 def frontend_console_logged_in(frontend_page: Page, socket_client):
     frontend_page.goto("/console")
-    frontend_page.get_by_role("button", name="Apple Musicにログイン", exact=True).click()
+    frontend_page.get_by_role("button", name="ログイン", exact=True).click()
     expect(frontend_page.get_by_text("Spec Playlist A", exact=True)).to_be_visible()
 
 
@@ -725,7 +725,7 @@ def backend_selected_playlist_ids(socket_client, ids: str):
 @given(parsers.parse('the frontend console selected playlist "{playlist}"'))
 def frontend_console_selected_playlist(frontend_page: Page, socket_client, playlist: str):
     frontend_page.goto("/console")
-    frontend_page.get_by_role("button", name="Apple Musicにログイン", exact=True).click()
+    frontend_page.get_by_role("button", name="ログイン", exact=True).click()
     expect(frontend_page.get_by_text(playlist, exact=True)).to_be_visible()
     frontend_page.get_by_role("button", name=playlist, exact=True).click()
     expect(frontend_page.get_by_text("1件のプレイリスト、3曲を選択中", exact=True)).to_be_visible()

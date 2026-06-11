@@ -364,7 +364,7 @@ export function ConsolePage() {
             </div>
           </div>
           <div className="flex flex-wrap gap-2.5 mt-3.5 max-md:[&>button]:flex-1">
-            <Button disabled={busy || !musicKitReady || musicKitAuth.authorized} onClick={handleLogin}>Apple Musicにログイン</Button>
+            <Button disabled={busy || !musicKitReady || musicKitAuth.authorized} onClick={handleLogin}>ログイン</Button>
             <Button variant="ghost" disabled={busy || !musicKitAuth.authorized} onClick={() => run(musicKitAuth.unauthorize)}>ログアウト</Button>
           </div>
         </Glass>
@@ -425,7 +425,7 @@ export function ConsolePage() {
               <Button disabled={busy || state.step !== 'answering'} onClick={handleCorrect}>正解</Button>
               <Button disabled={busy || state.step !== 'answering'} onClick={handleWrong}>不正解</Button>
             </div>
-            <div className="grid gap-2.5 grid-cols-1 md:grid-cols-3 pt-3.5 border-t border-white/10 [&>button]:min-h-14">
+            <div className="grid gap-2.5 grid-cols-1 pt-3.5 border-t border-white/10 [&>button]:min-h-14">
               <Button disabled={busy || !canGoNextRound} onClick={handleNextRound}>次のラウンドへ</Button>
               <Button disabled={busy || state.step !== 'reveal'} onClick={handleShowResults}>結果発表へ</Button>
               <Button disabled={busy || state.step !== 'results'} onClick={handleNextGame}>次のゲームへ</Button>
