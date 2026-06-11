@@ -20,11 +20,15 @@ export function useSequentialPlayback(): SequentialPlayback {
   })
 
   const setSongIds = useCallback(async (songIds: string[]) => {
-    if (mk === null) throw new Error('MusicKit is not initialized')
     if (songIds.length === 0) throw new Error('曲がありません')
-
     ref.current.songIds = [...songIds]
     ref.current.nextIndex = 0
+  }, [])
+
+  const stop = useCallback(async () => {
+    if (mk === null) throw new Error('MusicKit is not initialized')
+    if (mk.isPlaying) await mk.pause()
+    if (mk.nowPlayingItem !== undefined) await mk.seekToTime(0)
   }, [mk])
 
   const prepareNext = useCallback(async () => {
@@ -46,18 +50,12 @@ export function useSequentialPlayback(): SequentialPlayback {
         await mk.play()
         await new Promise<void>((resolve) => setTimeout(resolve))
       } finally {
-        if (mk.isPlaying) await mk.pause()
+        await stop()
       }
     })
 
     ref.current.nextIndex++
-  }, [mk])
-
-  const stop = useCallback(async () => {
-    if (mk === null) throw new Error('MusicKit is not initialized')
-    if (mk.isPlaying) await mk.pause()
-    if (mk.nowPlayingItem !== undefined) await mk.seekToTime(0)
-  }, [mk])
+  }, [mk, stop])
 
   const playFromStart = useCallback(async () => {
     if (mk === null) throw new Error('MusicKit is not initialized')
