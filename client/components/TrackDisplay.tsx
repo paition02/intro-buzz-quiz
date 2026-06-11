@@ -10,19 +10,45 @@ export function TrackArtwork({ track }: { track: Track }) {
     : <span className={`${base} grid place-items-center text-cocoa font-black`} aria-hidden="true">♪</span>
 }
 
-const TRACK_CHIP_FONT = '900 16px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-
 // canvas / 2d コンテキストは 1 個だけ生成して使い回す(計測ごとに作らない)。
 // `undefined` = 未初期化、`null` = 取得失敗(以後 fallback)。
 let trackChipMeasureContext: CanvasRenderingContext2D | null | undefined
 
-// タイトル → 実測幅のキャッシュ。同じタイトルは二度測らない(幅はタイトルの純関数)。
+// font-family とタイトル → 実測幅のキャッシュ。同じ条件では二度測らない。
 const trackChipWidthCache = new Map<string, number>()
+const fontMetricListeners = new Set<() => void>()
+let fontMetricVersion = 0
+let fontMetricReadyNotificationScheduled = false
+
+function getTrackChipMeasureFont() {
+  return `900 16px ${getComputedStyle(document.documentElement).fontFamily}`
+}
+
+function notifyFontMetricsChanged() {
+  trackChipWidthCache.clear()
+  fontMetricVersion += 1
+  fontMetricListeners.forEach((listener) => listener())
+}
+
+function scheduleFontMetricReadyNotification() {
+  if (fontMetricReadyNotificationScheduled || typeof document === 'undefined' || !document.fonts) return
+  fontMetricReadyNotificationScheduled = true
+  void document.fonts.ready.then(notifyFontMetricsChanged)
+}
+
+function useFontMetricVersion() {
+  const subscribe = useCallback((notify: () => void) => {
+    fontMetricListeners.add(notify)
+    scheduleFontMetricReadyNotification()
+    return () => {
+      fontMetricListeners.delete(notify)
+    }
+  }, [])
+
+  return useSyncExternalStore(subscribe, () => fontMetricVersion)
+}
 
 function measureTrackChipWidth(track: Track) {
-  const cached = trackChipWidthCache.get(track.title)
-  if (cached !== undefined) return cached
-
   const artworkWidth = 36
   const contentGap = 10
   const horizontalPadding = 22
@@ -31,15 +57,20 @@ function measureTrackChipWidth(track: Track) {
 
   if (typeof document === 'undefined') return fallback
 
+  const measureFont = getTrackChipMeasureFont()
+  const cacheKey = `${measureFont}\n${track.title}`
+  const cached = trackChipWidthCache.get(cacheKey)
+  if (cached !== undefined) return cached
+
   if (trackChipMeasureContext === undefined) {
     trackChipMeasureContext = document.createElement('canvas').getContext('2d')
-    if (trackChipMeasureContext) trackChipMeasureContext.font = TRACK_CHIP_FONT
   }
   if (!trackChipMeasureContext) return fallback
 
+  trackChipMeasureContext.font = measureFont
   const textWidth = trackChipMeasureContext.measureText(track.title).width
   const width = Math.max(170, Math.ceil(fixedWidth + textWidth))
-  trackChipWidthCache.set(track.title, width) // 測ったら保持
+  trackChipWidthCache.set(cacheKey, width) // 測ったら保持
   return width
 }
 
@@ -64,10 +95,11 @@ function TrackLane({ tracks, laneIndex, direction }: {
   const [setLaneElement, laneWidth] = useElementClientWidth<HTMLDivElement>()
   const [startIndex, setStartIndex] = useState(0)
   const [animationRun, setAnimationRun] = useState(0)
+  useFontMetricVersion()
   const chipGap = 12
   const speed = 34 + (laneIndex % 3) * 7
 
-  const slotWidths = useMemo(() => tracks.map((track) => measureTrackChipWidth(track) + chipGap), [tracks])
+  const slotWidths = tracks.map((track) => measureTrackChipWidth(track) + chipGap)
   const minSlotWidth = Math.max(1, slotWidths.length > 0 ? Math.min(...slotWidths) : 170 + chipGap)
   const visibleSlotCount = Math.max(2, Math.ceil(laneWidth / minSlotWidth) + 2)
   const normalizedStart = tracks.length > 0 ? ((startIndex % tracks.length) + tracks.length) % tracks.length
