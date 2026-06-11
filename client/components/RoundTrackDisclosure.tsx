@@ -14,7 +14,7 @@ export function RoundTrackDisclosure({
 }) {
   return (
     <>
-      <div className="flex items-center justify-between gap-3 mb-2.5">
+      <div className="flex items-center justify-between gap-3">
         <h2 className="m-0 text-2xl font-bold">曲情報</h2>
         {track && (
           <button
@@ -32,11 +32,11 @@ export function RoundTrackDisclosure({
       </div>
       {track ? (
         expanded && (
-          <div id={PANEL_ID} className="flex items-center gap-4 rounded-2xl p-5 bg-linear-to-br from-pink/20 to-sky/20 border border-white/10">
-            {(track.artworkThumbUrl ?? track.artworkUrl) ? (
+          <div id={PANEL_ID} className="flex items-center gap-4 mt-2.5 rounded-2xl p-5 bg-linear-to-br from-pink/20 to-sky/20 border border-white/10">
+            {(track.artworkInfoUrl ?? track.artworkRevealUrl ?? track.artworkChipUrl) ? (
               <img
                 className="size-24 rounded-xl shrink-0 object-cover bg-linear-to-br from-pink to-amber"
-                src={track.artworkThumbUrl ?? track.artworkUrl}
+                src={track.artworkInfoUrl ?? track.artworkRevealUrl ?? track.artworkChipUrl}
                 alt=""
                 loading="lazy"
               />
@@ -49,7 +49,7 @@ export function RoundTrackDisclosure({
             </div>
           </div>
         )
-      ) : <p className="mt-0 text-subtle leading-relaxed">まだ曲は準備されていません。</p>}
+      ) : <p className="mt-2.5 text-subtle leading-relaxed">まだ曲は準備されていません。</p>}
     </>
   )
 }

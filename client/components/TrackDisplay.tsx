@@ -4,8 +4,9 @@ import type { Track } from '../../type/game'
 export function TrackArtwork({ track }: { track: Track }) {
   // 正解発表カードの大きいアートワーク。チップ内の小さいものとは別サイズ。
   const base = 'size-64 sm:size-72 rounded-3xl shrink-0 object-cover bg-linear-to-br from-pink to-amber'
-  return track.artworkUrl
-    ? <img className={base} src={track.artworkUrl} alt="" loading="lazy" />
+  const artworkUrl = track.artworkRevealUrl ?? track.artworkInfoUrl ?? track.artworkChipUrl
+  return artworkUrl
+    ? <img className={base} src={artworkUrl} alt="" loading="lazy" />
     : <span className={`${base} grid place-items-center text-cocoa font-black`} aria-hidden="true">♪</span>
 }
 
@@ -123,7 +124,7 @@ function TrackLaneGroup({ tracks, ariaHidden = false }: { tracks: Track[]; ariaH
 }
 
 function TrackChip({ track }: { track: Track }) {
-  const artworkUrl = track.artworkThumbUrl ?? track.artworkUrl
+  const artworkUrl = track.artworkChipUrl ?? track.artworkInfoUrl ?? track.artworkRevealUrl
   return (
     <div
       className="w-max h-12 flex shrink-0 items-center gap-2.5 py-1.5 pr-3.5 pl-2 overflow-hidden rounded-xl bg-black/70 border border-white/10 shadow-lg whitespace-nowrap"

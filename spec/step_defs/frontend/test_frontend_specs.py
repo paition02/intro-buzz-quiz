@@ -803,21 +803,17 @@ def musickit_library_tracks_page_2_requested(frontend_page: Page, playlist_id: s
     )
 
 
-@then(parsers.parse('the frontend shows artwork thumbnail URL "{url}"'))
-def frontend_shows_artwork_thumbnail_url(frontend_page: Page, url: str):
-    expect(frontend_page.locator(f'img[src="{url}"]').first).to_be_visible(timeout=30000)
+@then("the frontend shows track chip artwork")
+def frontend_shows_track_chip_artwork(frontend_page: Page):
+    expect(frontend_page.locator('img[src*="/48x48.jpg"]').first).to_be_visible(timeout=30000)
 
 
-@then(parsers.parse('the selected round artwork uses size "{size}"'))
-def selected_round_artwork_uses_size(socket_client, size: str):
+@then("the selected round artwork URLs are sized for their display contexts")
+def selected_round_artwork_urls_are_sized_for_their_display_contexts(socket_client):
     state = _current_backend_state(socket_client.server_url)
-    assert any(f"/{size}.jpg" in (track.get("artworkUrl") or "") for track in state["tracks"])
-
-
-@then(parsers.parse('the selected round artwork thumbnail uses size "{size}"'))
-def selected_round_artwork_thumb_uses_size(socket_client, size: str):
-    state = _current_backend_state(socket_client.server_url)
-    assert any(f"/{size}.jpg" in (track.get("artworkThumbUrl") or "") for track in state["tracks"])
+    assert any("/1024x1024.jpg" in (track.get("artworkRevealUrl") or "") for track in state["tracks"])
+    assert any("/256x256.jpg" in (track.get("artworkInfoUrl") or "") for track in state["tracks"])
+    assert any("/48x48.jpg" in (track.get("artworkChipUrl") or "") for track in state["tracks"])
 
 
 @when("the frontend observes the current round")

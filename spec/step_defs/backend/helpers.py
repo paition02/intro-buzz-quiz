@@ -9,8 +9,9 @@ def make_tracks(count: int, offset: int = 1) -> list[dict[str, Any]]:
             "id": f"track-{offset + index}",
             "title": f"Song {offset + index}",
             "artist": f"Artist {offset + index}",
-            "artworkUrl": f"https://example.test/artwork/{offset + index}.jpg",
-            "artworkThumbUrl": f"https://example.test/artwork/{offset + index}-thumb.jpg",
+            "artworkChipUrl": f"https://example.test/artwork/{offset + index}-chip.jpg",
+            "artworkInfoUrl": f"https://example.test/artwork/{offset + index}-info.jpg",
+            "artworkRevealUrl": f"https://example.test/artwork/{offset + index}-reveal.jpg",
         }
         for index in range(count)
     ]

@@ -19,7 +19,9 @@ export function PlaylistTracksPanel({ playlistId }: { playlistId: string }) {
           {tracks.map((track, index) => (
             <li className="flex items-center gap-2.5 min-w-0 text-cream" key={`${track.id}-${index}`}>
               <span className="w-7 shrink-0 text-right text-muted tabular-nums">{index + 1}</span>
-              {(track.artworkThumbUrl ?? track.artworkUrl) && <img className="size-9 rounded-lg shrink-0" src={track.artworkThumbUrl ?? track.artworkUrl} alt="" />}
+              {(track.artworkChipUrl ?? track.artworkInfoUrl ?? track.artworkRevealUrl) && (
+                <img className="size-9 rounded-lg shrink-0" src={track.artworkChipUrl ?? track.artworkInfoUrl ?? track.artworkRevealUrl} alt="" />
+              )}
               <span className="min-w-0 grid">
                 <span className="overflow-hidden text-ellipsis whitespace-nowrap font-bold">{track.title}</span>
                 <span className="overflow-hidden text-ellipsis whitespace-nowrap text-muted text-sm">{track.artist}</span>

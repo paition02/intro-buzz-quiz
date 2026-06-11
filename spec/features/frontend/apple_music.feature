@@ -45,14 +45,13 @@ Feature: MusicKit integration
     And the frontend shows "Track 1"
     And the frontend shows "Track Page 2"
 
-  Scenario: Library playlist tracks expose full-size artwork and thumbnails
+  Scenario: Library playlist tracks expose purpose-sized artwork
     Given the frontend console is logged into mocked MusicKit
     When the frontend opens playlist "Spec Playlist A"
-    Then the frontend shows artwork thumbnail URL "https://example.test/artwork/1/80x80.jpg"
+    Then the frontend shows track chip artwork
     When the frontend clicks "Spec Playlist A"
     And the frontend clicks "ゲーム開始"
-    Then the selected round artwork uses size "1000x1000"
-    And the selected round artwork thumbnail uses size "80x80"
+    Then the selected round artwork URLs are sized for their display contexts
 
   Scenario: Selecting a playlist sends the selected tracks to the backend
     Given the frontend console is logged into mocked MusicKit

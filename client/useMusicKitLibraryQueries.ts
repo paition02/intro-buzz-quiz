@@ -48,8 +48,9 @@ type MusicApiTrack = {
 
 type MusicApiParams = Record<string, string | number | string[]>
 
-const ARTWORK_THUMB_SIZE = '80x80'
-const ARTWORK_FULL_SIZE = '1000x1000'
+const ARTWORK_CHIP_SIZE = '48x48'
+const ARTWORK_INFO_SIZE = '256x256'
+const ARTWORK_REVEAL_SIZE = '1024x1024'
 
 function artworkUrlForSize(template: string | undefined, size: string) {
   if (!template) return undefined
@@ -103,8 +104,9 @@ async function fetchPlaylistTracks(mk: MusicKit.MusicKitInstance, playlistId: st
       id: catalog?.id ?? track.id,
       title: track.attributes?.name ?? catalog?.attributes?.name ?? track.id,
       artist: track.attributes?.artistName ?? catalog?.attributes?.artistName ?? '',
-      artworkUrl: artworkUrlForSize(artworkTemplate, ARTWORK_FULL_SIZE),
-      artworkThumbUrl: artworkUrlForSize(artworkTemplate, ARTWORK_THUMB_SIZE),
+      artworkChipUrl: artworkUrlForSize(artworkTemplate, ARTWORK_CHIP_SIZE),
+      artworkInfoUrl: artworkUrlForSize(artworkTemplate, ARTWORK_INFO_SIZE),
+      artworkRevealUrl: artworkUrlForSize(artworkTemplate, ARTWORK_REVEAL_SIZE),
     }
   }).filter((track: Track) => track.id)
 }

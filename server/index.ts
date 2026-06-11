@@ -292,8 +292,9 @@ function consoleSelectPlaylists(payload: ConsoleSelectPlaylistsPayload = {}): Co
       id: String(track.id ?? ''),
       title: String(track.title ?? ''),
       artist: String(track.artist ?? ''),
-      artworkUrl: typeof track.artworkUrl === 'string' ? track.artworkUrl : undefined,
-      artworkThumbUrl: typeof track.artworkThumbUrl === 'string' ? track.artworkThumbUrl : undefined,
+      artworkChipUrl: typeof track.artworkChipUrl === 'string' ? track.artworkChipUrl : undefined,
+      artworkInfoUrl: typeof track.artworkInfoUrl === 'string' ? track.artworkInfoUrl : undefined,
+      artworkRevealUrl: typeof track.artworkRevealUrl === 'string' ? track.artworkRevealUrl : undefined,
     })).filter((track: Track) => track.id && track.title)
     : []
   const uniqueTracks = uniqueTracksById(tracks)
