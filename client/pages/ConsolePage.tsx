@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useMusicKitAuth, useMusicKitInstance } from '../useMusicKit'
 import { useSequentialPlayback } from '../useSequentialPlayback'
+import { useScreenWakeLock } from '../useScreenWakeLock'
 import {
   playlistTracksQueryOptions,
   useLibraryPlaylistsQuery,
@@ -32,6 +33,8 @@ import { RoundTrackDisclosure } from '../components/RoundTrackDisclosure'
 const JUDGE_RESULT_DURATION_MS = 1800
 
 export function ConsolePage() {
+  useScreenWakeLock()
+
   const { instance: musicKitInstance, error: musicKitInitError } = useMusicKitInstance()
   const { setSongIds, prepareNext, playFromStart, stop } = useSequentialPlayback()
   const musicKitAuth = useMusicKitAuth()

@@ -1,5 +1,6 @@
 import { useRef, useState, type CSSProperties } from 'react'
 import { loadSessionString, playerColor, saveSessionString } from '../lib/util'
+import { useScreenWakeLock } from '../useScreenWakeLock'
 
 type ActionVisualState = 'idle' | 'pressed' | 'muted' | 'error'
 
@@ -13,6 +14,8 @@ function getActionActorId() {
 }
 
 export function ActionPage() {
+  useScreenWakeLock()
+
   const [actorId] = useState(getActionActorId)
   const [busy, setBusy] = useState(false)
   const [visualState, setVisualState] = useState<ActionVisualState>('idle')
