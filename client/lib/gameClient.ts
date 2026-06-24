@@ -6,12 +6,16 @@ import type { GameState, GameStep, Phase } from '../../type/game'
 export const initialState: GameState = {
   phase: 'initialization',
   step: 'idle',
+  quizMode: null,
   selectedPlaylistIds: [],
   players: [],
   tracks: [],
   shuffledTrackIds: [],
   roundIndex: -1,
   answererId: null,
+  jacketMode: 'pixelated',
+  jacketGrayscale: false,
+  jacketHintPercent: 1,
 }
 
 const GAME_STATE_KEYS = Object.keys(initialState) as Array<keyof GameState>
@@ -49,7 +53,10 @@ export function consoleStatusMessage(state: GameState, playbackSeconds: number) 
     return 'プレイリストを選んで、プレイヤーの参加を待っています'
   }
   if (state.step === 'loading') return '曲を準備しています'
-  if (state.step === 'beforePlayback') return '再生秒数を指定して、再生ボタンを押してください'
+  if (state.step === 'beforePlayback') {
+    if (state.quizMode === 'jacket') return 'ジャケットのヒントを調整できます。早押し待ちです'
+    return '再生秒数を指定して、再生ボタンを押してください'
+  }
   if (state.step === 'playing') return `${playbackSeconds}秒再生中。早押し待ちです`
   if (state.step === 'answering') return '解答権が取られました'
   if (state.step === 'correct') return '正解！'
@@ -65,7 +72,7 @@ export function phaseLabel(phase: Phase, step: GameStep) {
   const labels: Record<GameStep, string> = {
     idle: '待機中',
     loading: '初期化ステップ',
-    beforePlayback: '再生前ステップ',
+    beforePlayback: 'ラウンド待機ステップ',
     playing: '再生中ステップ',
     answering: '解答ステップ',
     judging: '正誤判定ステップ',

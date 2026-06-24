@@ -6,6 +6,7 @@ import { Glass } from '../components/Glass'
 import { PersonGlyph } from '../components/Glyphs'
 import { PlayerBadge } from '../components/PlayerBadge'
 import { GameboardPlayers } from '../components/GameboardPlayers'
+import { JacketCanvas } from '../components/JacketCanvas'
 import { ReadyTrackLanes, TrackArtwork } from '../components/TrackDisplay'
 
 export function GameboardPage() {
@@ -90,6 +91,28 @@ export function GameboardPage() {
     )
   } else if (state.step === 'loading') {
     content = <h1 className={TITLE}>曲を準備中</h1>
+  } else if (state.step === 'beforePlayback' && state.quizMode === 'jacket' && roundTrack) {
+    cardClassName = CARD_PLAYERS
+    const jacketUrl = roundTrack.artworkRevealUrl ?? roundTrack.artworkInfoUrl ?? roundTrack.artworkChipUrl
+    content = (
+      <>
+        <div className={STAGE}>
+          {jacketUrl ? (
+            <JacketCanvas
+              className="w-[min(72svh,78vw)] max-w-[720px] aspect-square rounded-3xl shadow-2xl shadow-black/30 bg-ink"
+              src={jacketUrl}
+              mode={state.jacketMode}
+              grayscale={state.jacketGrayscale}
+              hintPercent={state.jacketHintPercent}
+              seed={`${roundTrack.id}:${state.roundIndex}`}
+            />
+          ) : (
+            <div className={`${SYMBOL} text-cream/30`}>□</div>
+          )}
+        </div>
+        {players}
+      </>
+    )
   } else if (state.step === 'beforePlayback') {
     cardClassName = CARD_PLAYERS
     content = (
@@ -142,10 +165,12 @@ export function GameboardPage() {
       </>
     )
   } else if (state.step === 'reveal' && roundTrack) {
+    const primaryAnswer = state.quizMode === 'jacket' ? (roundTrack.albumName || 'アルバム名不明') : roundTrack.title
     content = (
       <div className="rounded-3xl p-7 sm:p-10 bg-linear-to-br from-pink/20 to-sky/20 border border-white/10 grid justify-items-center gap-4">
         <TrackArtwork track={roundTrack} />
-        <strong className="block text-3xl sm:text-5xl font-bold leading-tight">{roundTrack.title}</strong>
+        <strong className="block text-3xl sm:text-5xl font-bold leading-tight">{primaryAnswer}</strong>
+        {state.quizMode === 'jacket' && <span className="block text-lg sm:text-2xl text-cream/80 font-bold">{roundTrack.title}</span>}
         <span className="block mt-2.5 text-subtle">{roundTrack.artist}</span>
       </div>
     )

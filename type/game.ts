@@ -1,5 +1,15 @@
 export type Phase = 'initialization' | 'ready' | 'game'
 
+export type QuizMode = 'intro' | 'jacket'
+
+export type JacketMode =
+  | 'pixelated'
+  | 'missingBlocks'
+  | 'tileShuffle'
+  | 'circleReveal'
+  | 'zoomRotateCrop'
+  | 'edgeReveal'
+
 export type GameStep =
   | 'idle'
   | 'loading'
@@ -21,6 +31,7 @@ export type Track = {
   id: string
   title: string
   artist: string
+  albumName: string
   artworkChipUrl?: string
   artworkInfoUrl?: string
   artworkRevealUrl?: string
@@ -29,10 +40,14 @@ export type Track = {
 export type GameState = {
   phase: Phase
   step: GameStep
+  quizMode: QuizMode | null
   selectedPlaylistIds: string[]
   players: Player[]
   tracks: Track[]
   shuffledTrackIds: string[]
   roundIndex: number
   answererId: string | null
+  jacketMode: JacketMode
+  jacketGrayscale: boolean
+  jacketHintPercent: number
 }

@@ -47,6 +47,13 @@ Feature: Gameboard page
     Then the frontend shows "♪"
     And the frontend does not show "解答をどうぞ！"
 
+  Scenario: Gameboard jacket view shows an obfuscated jacket
+    Given the backend is ready with 3 tracks
+    And action button "player-front" is joined
+    And the host starts a jacket game
+    When the frontend opens "/gameboard"
+    Then the gameboard shows a jacket hint
+
   Scenario: Gameboard answering view shows the answer prompt
     Given a backend game is before playback with actor "player-front"
     When the frontend opens "/gameboard"
@@ -74,6 +81,14 @@ Feature: Gameboard page
     When the frontend opens "/gameboard"
     And the backend host gives up
     Then the frontend shows revealed track information
+
+  Scenario: Gameboard jacket reveal view shows revealed album information
+    Given the backend is ready with 3 tracks
+    And action button "player-front" is joined
+    And the host starts a jacket game
+    When the frontend opens "/gameboard"
+    And the backend host gives up
+    Then the gameboard shows revealed album information
 
   Scenario: Gameboard results view shows sorted scores
     Given a backend game has results with actor "player-front" scoring once

@@ -1,17 +1,26 @@
 import { useEffect, useRef } from 'react'
 
-export function CircularSecondsSlider({
+function CircularValueSlider({
   value,
+  min,
+  max,
+  step,
+  label,
+  unit,
+  formatValue,
   onChange,
   onCommit,
 }: {
   value: number
+  min: number
+  max: number
+  step: number
+  label: string
+  unit: string
+  formatValue: (value: number) => string
   onChange: (value: number) => void
   onCommit?: (value: number) => void
 }) {
-  const min = 0.1
-  const max = 30
-  const step = 0.1
   const radius = 78
   const center = 96
   const activePointerIdRef = useRef<number | null>(null)
@@ -35,7 +44,8 @@ export function CircularSecondsSlider({
     if (degrees < 0) degrees += 360
     const raw = min + (degrees / 360) * (max - min)
     const stepped = Math.round(raw / step) * step
-    const nextValue = Number(Math.min(max, Math.max(min, stepped)).toFixed(1))
+    const precision = step < 1 ? 1 : 0
+    const nextValue = Number(Math.min(max, Math.max(min, stepped)).toFixed(precision))
     latestValueRef.current = nextValue
     onChange(nextValue)
     return nextValue
@@ -47,7 +57,7 @@ export function CircularSecondsSlider({
         className="group w-56 max-w-full touch-none outline-none overflow-visible"
         viewBox="0 0 192 192"
         role="slider"
-        aria-label="再生秒数"
+        aria-label={label}
         aria-valuemin={min}
         aria-valuemax={max}
         aria-valuenow={value}
@@ -79,8 +89,9 @@ export function CircularSecondsSlider({
         }}
         onKeyDown={(event) => {
           let nextValue: number | null = null
-          if (event.key === 'ArrowRight' || event.key === 'ArrowUp') nextValue = Number(Math.min(max, value + step).toFixed(1))
-          if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') nextValue = Number(Math.max(min, value - step).toFixed(1))
+          const precision = step < 1 ? 1 : 0
+          if (event.key === 'ArrowRight' || event.key === 'ArrowUp') nextValue = Number(Math.min(max, value + step).toFixed(precision))
+          if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') nextValue = Number(Math.max(min, value - step).toFixed(precision))
           if (nextValue == null) return
           event.preventDefault()
           latestValueRef.current = nextValue
@@ -101,9 +112,59 @@ export function CircularSecondsSlider({
           strokeDashoffset={dashOffset}
         />
         <circle className="fill-pink stroke-cream group-focus-visible:stroke-white" strokeWidth={4} cx={knobX} cy={knobY} r="15" />
-        <text className="fill-cream text-3xl font-black pointer-events-none" dominantBaseline="middle" x={center} y={center - 4} textAnchor="middle">{value.toFixed(1)}</text>
-        <text className="fill-subtle text-sm font-bold pointer-events-none" dominantBaseline="middle" x={center} y={center + 22} textAnchor="middle">秒</text>
+        <text className="fill-cream text-3xl font-black pointer-events-none" dominantBaseline="middle" x={center} y={center - 4} textAnchor="middle">{formatValue(value)}</text>
+        <text className="fill-subtle text-sm font-bold pointer-events-none" dominantBaseline="middle" x={center} y={center + 22} textAnchor="middle">{unit}</text>
       </svg>
     </div>
+  )
+}
+
+export function CircularSecondsSlider({
+  value,
+  onChange,
+  onCommit,
+}: {
+  value: number
+  onChange: (value: number) => void
+  onCommit?: (value: number) => void
+}) {
+  return (
+    <CircularValueSlider
+      value={value}
+      min={0.1}
+      max={30}
+      step={0.1}
+      label="再生秒数"
+      unit="秒"
+      formatValue={(nextValue) => nextValue.toFixed(1)}
+      onChange={onChange}
+      onCommit={onCommit}
+    />
+  )
+}
+
+export function CircularPercentSlider({
+  value,
+  label,
+  onChange,
+  onCommit,
+}: {
+  value: number
+  label: string
+  onChange: (value: number) => void
+  onCommit?: (value: number) => void
+}) {
+  return (
+    <CircularValueSlider
+      value={value}
+      min={1}
+      max={100}
+      step={1}
+      label={label}
+      unit="%"
+      formatValue={(nextValue) => String(Math.round(nextValue))}
+      onChange={onChange}
+      onCommit={onCommit}
+    />
   )
 }

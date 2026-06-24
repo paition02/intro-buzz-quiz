@@ -27,6 +27,26 @@ Feature: Full game session
     When the host shows results
     Then the gameboard shows backend scores in descending order
 
+  Scenario: Host runs a complete jacket game and shows results
+    Given the host console is logged into mocked MusicKit
+    And the host selects playlist "Spec Playlist A"
+    And the gameboard is open
+    And action button "player-1" is open
+    When action button "player-1" is pressed
+    Then the gameboard shows joined player "player-1"
+    When the host starts a jacket game
+    Then the gameboard shows a jacket hint
+    When action button "player-1" is pressed
+    Then backend answerer is "player-1"
+    And the gameboard asks for an answer
+    When the host judges the answer as "correct"
+    Then the gameboard shows "正解"
+    And player "player-1" score is 1
+    When the judging animation expires
+    Then the gameboard shows revealed album information
+    When the host shows results
+    Then the gameboard shows backend scores in descending order
+
   Scenario: Wrong answer returns to the same round and accepts another buzz
     Given the host console is logged into mocked MusicKit
     And the host selects playlist "Spec Playlist A"
