@@ -1090,7 +1090,6 @@ def gameboard_shows_jacket_hint(frontend_page: Page):
 def gameboard_shows_revealed_album_information(frontend_page: Page):
     page = _gameboard_page(frontend_page)
     _expect_any_text(page, ["Album 1", "Album 2", "Album 3"])
-    _expect_any_text(page, ["Track 1", "Track 2", "Track 3"])
 
 
 @when("the host shows results")

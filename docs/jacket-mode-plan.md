@@ -54,7 +54,7 @@ Jacket mode replaces the playback controls with jacket controls:
 
 The gameboard should reflect jacket control changes immediately through shared state. The action button should be accepted during a jacket round once the current round is ready, without requiring audio playback.
 
-The correct answer is the album name. Reveal should show the original jacket image, album name as the primary answer, and supporting track/artist details.
+The correct answer is the album name. Reveal should show the original jacket image, album name as the primary answer, and album artist as supporting detail when available.
 
 ## Jacket Data Model
 
@@ -90,6 +90,19 @@ export type Track = {
 }
 ```
 
+Add an album candidate type for jacket mode. Jacket rounds must use this album list, not the selected track list, so albums with multiple selected songs appear once.
+
+```ts
+export type Album = {
+  id: string
+  name: string
+  artist: string
+  artworkChipUrl?: string
+  artworkInfoUrl?: string
+  artworkRevealUrl?: string
+}
+```
+
 Extend `GameState`:
 
 ```ts
@@ -100,8 +113,11 @@ export type GameState = {
   selectedPlaylistIds: string[]
   players: Player[]
   tracks: Track[]
+  albums: Album[]
   shuffledTrackIds: string[]
+  shuffledAlbumIds: string[]
   roundIndex: number
+  roundAlbumIndex: number
   answererId: string | null
   jacketMode: JacketMode
   jacketGrayscale: boolean
@@ -152,9 +168,9 @@ let roundIntroPlayed = false
 
 Keep it intro-only. Do not let jacket mode depend on it.
 
-### Track Intake
+### Track and Album Intake
 
-Update `consoleSelectPlaylists` to preserve `albumName`. Filter selected tracks by `id` and `title` as today; do not require album name to keep compatibility with mocks and unusual MusicKit data. Use a fallback such as `track.albumName ?? ''`.
+Update `consoleSelectPlaylists` to preserve `albumName`. Filter selected tracks by `id` and `title` as today, then derive a de-duplicated `albums` list from selected tracks with album names. Jacket mode starts from `albums`; intro mode starts from `tracks`.
 
 ### Start Event
 
@@ -171,6 +187,7 @@ Validation:
 - Only `'intro'` and `'jacket'` are accepted.
 - Missing or invalid mode returns an error.
 - Starting without tracks remains rejected.
+- Starting jacket mode without album candidates is rejected.
 
 Socket handler shape:
 
@@ -210,7 +227,7 @@ const canAnswerIntro = state.quizMode === 'intro'
 
 const canAnswerJacket = state.quizMode === 'jacket'
   && state.step === 'beforePlayback'
-  && state.roundIndex >= 0
+  && state.roundAlbumIndex >= 0
 
 const canAnswer = canAnswerIntro || canAnswerJacket
 ```
@@ -316,14 +333,14 @@ Jacket examples:
 Current `RoundTrackDisclosure` exposes track title. For jacket mode:
 
 - Before reveal, avoid exposing album name.
-- It may still show track title/artist if that is acceptable, but this can leak clues. Prefer hiding detailed round info during jacket mode before reveal or showing only operational status.
-- After reveal, show album name, track title, and artist.
+- Avoid exposing track title/artist before reveal because that can leak clues.
+- After reveal, show album name and album artist when available.
 
 ## Gameboard UI Changes
 
 ### Shared Round Data
 
-Use `roundTrackFromState(state)` as today. Add album name where needed.
+Use `roundTrackFromState(state)` for intro rounds and `roundAlbumFromState(state)` for jacket rounds.
 
 ### Intro Rendering
 
@@ -344,7 +361,7 @@ When `state.quizMode === 'jacket'` and step is `reveal`, show:
 
 - Original jacket image
 - Album name as the main answer
-- Track title and artist as supporting detail
+- Album artist as supporting detail when available
 
 ### Jacket Canvas Renderer
 
@@ -366,7 +383,7 @@ Important implementation rules:
 - Use CORS-compatible image loading if needed: `image.crossOrigin = 'anonymous'`.
 - Set canvas backing size with `devicePixelRatio`.
 - Draw into a square canvas with `object-fit: cover` behavior.
-- Memoize deterministic randomness per round. Use a seed based on `track.id`, `roundIndex`, and `mode` so rendering is stable across clients and re-renders.
+- Memoize deterministic randomness per round. Use a seed based on `album.id`, `roundAlbumIndex`, and `mode` so rendering is stable across clients and re-renders.
 - Do not re-randomize when `hintPercent` changes.
 
 ## Jacket Obfuscation Modes

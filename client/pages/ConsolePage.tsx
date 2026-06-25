@@ -106,6 +106,7 @@ export function ConsolePage() {
 
     if (change.step !== undefined && change.step !== 'playing') clearPlayEndedTimeout()
     if (change.step !== undefined && change.step !== 'correct' && change.step !== 'wrong') clearFeedbackEndedTimeout()
+    if (latestState.quizMode === 'jacket') return
 
     if (change.step !== undefined && change.step !== 'playing' && change.step !== 'reveal') {
       try {
@@ -182,10 +183,16 @@ export function ConsolePage() {
   const roundTrackId = roundTrackIdFromState(state)
   const roundTrack = roundTrackFromState(state)
   const roundPreparationKey = roundPreparationKeyFromState(state)
-  const roundPrepared = roundPreparationKey !== null && preparedRoundKey === roundPreparationKey
+  const roundPrepared = state.quizMode === 'jacket'
+    ? roundPreparationKey !== null
+    : roundPreparationKey !== null && preparedRoundKey === roundPreparationKey
   const trackInfoExpanded = roundPreparationKey !== null && expandedRoundKey === roundPreparationKey
   const canPlayIntro = state.quizMode === 'intro' && state.step === 'beforePlayback' && roundTrackId != null && roundPrepared && !isPreparingNext && playbackError === null && musicKitReady && musicKitAuth.authorized
-  const canGoNextRound = state.phase === 'game' && state.step === 'reveal' && state.roundIndex >= 0 && state.roundIndex + 1 < state.shuffledTrackIds.length
+  const canGoNextRound = state.phase === 'game' && state.step === 'reveal' && (
+    state.quizMode === 'jacket'
+      ? state.roundAlbumIndex >= 0 && state.roundAlbumIndex + 1 < state.shuffledAlbumIds.length
+      : state.roundIndex >= 0 && state.roundIndex + 1 < state.shuffledTrackIds.length
+  )
   const playButtonLabel = state.step === 'playing' ? '再生中' : state.step === 'beforePlayback' && roundTrackId != null && !roundPrepared ? 'ロード中' : '再生'
 
   const handlePlaybackSecondsChange = useCallback((value: number) => {

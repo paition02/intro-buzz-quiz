@@ -193,6 +193,22 @@ def when_host_sends_invalid_tracks(ctx, socket_client):
     )
 
 
+@when("the host selects multiple tracks from one album")
+def when_host_selects_tracks_from_one_album(ctx, socket_client):
+    tracks = make_tracks(3)
+    for track in tracks:
+        track["albumName"] = "Shared Album"
+        track["artist"] = "Shared Artist"
+        track["artworkRevealUrl"] = "https://example.test/artwork/shared-reveal.jpg"
+        track["artworkInfoUrl"] = "https://example.test/artwork/shared-info.jpg"
+        track["artworkChipUrl"] = "https://example.test/artwork/shared-chip.jpg"
+    ctx.tracks = tracks
+    ctx.state = socket_client.emit(
+        "console:select-playlists",
+        {"selectedPlaylistIds": ["playlist-a"], "tracks": tracks},
+    )
+
+
 @when("the host starts the game")
 def when_host_starts_game(ctx, socket_client):
     ctx.state = socket_client.emit("console:start", {"quizMode": "intro"})
@@ -428,6 +444,12 @@ def then_selected_playlist_ids(ctx, socket_client, ids: str):
 def then_track_count(ctx, socket_client, count: int):
     state = ctx.state or socket_client.state
     assert len(state["tracks"]) == count
+
+
+@then(parsers.parse("the album count is {count:d}"))
+def then_album_count(ctx, socket_client, count: int):
+    state = ctx.state or socket_client.state
+    assert len(state["albums"]) == count
 
 
 @then("the current track is cleared")

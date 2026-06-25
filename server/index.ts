@@ -9,7 +9,7 @@ import homeHtml from '../client/index.html'
 import consoleHtml from '../client/console.html'
 import gameboardHtml from '../client/gameboard.html'
 import actionHtml from '../client/action.html'
-import type { GameState, JacketMode, Player, QuizMode, Track } from '../type/game'
+import type { Album, GameState, JacketMode, Player, QuizMode, Track } from '../type/game'
 
 // Bun が cwd の .env を読む。HTTP_PORT / HTTPS_PORT は数値として渡す。
 const isDevelopment = process.env.NODE_ENV !== 'production'
@@ -25,8 +25,11 @@ let state: InternalGameState = {
   selectedPlaylistIds: [],
   players: {},
   tracks: [],
+  albums: [],
   shuffledTrackIds: [],
+  shuffledAlbumIds: [],
   roundIndex: -1,
+  roundAlbumIndex: -1,
   answererId: null,
   jacketMode: 'pixelated',
   jacketGrayscale: false,
@@ -238,6 +241,38 @@ function uniqueTracksById(tracks: Track[]) {
   })
 }
 
+function uniqueAlbumsById(albums: Album[]) {
+  const seenAlbumIds = new Set<string>()
+  return albums.filter((album) => {
+    if (seenAlbumIds.has(album.id)) return false
+    seenAlbumIds.add(album.id)
+    return true
+  })
+}
+
+function albumIdFromTrack(track: Track) {
+  return [
+    track.albumName.trim().toLowerCase(),
+    track.artist.trim().toLowerCase(),
+    track.artworkRevealUrl ?? track.artworkInfoUrl ?? track.artworkChipUrl ?? '',
+  ].join('\u001f')
+}
+
+function albumsFromTracks(tracks: Track[]) {
+  return uniqueAlbumsById(
+    tracks
+      .filter((track) => track.albumName.trim())
+      .map((track): Album => ({
+        id: albumIdFromTrack(track),
+        name: track.albumName,
+        artist: track.artist,
+        artworkChipUrl: track.artworkChipUrl,
+        artworkInfoUrl: track.artworkInfoUrl,
+        artworkRevealUrl: track.artworkRevealUrl,
+      })),
+  )
+}
+
 function shuffledValues<T>(values: T[]) {
   const shuffled = [...values]
   for (let i = shuffled.length - 1; i > 0; i -= 1) {
@@ -253,9 +288,20 @@ function hasSameSongIds(left: string[], right: string[]) {
   return left.every((songId) => rightIds.has(songId))
 }
 
+function hasSameIds(left: string[], right: string[]) {
+  if (left.length !== right.length) return false
+  const rightIds = new Set(right)
+  return left.every((id) => rightIds.has(id))
+}
+
 function resetShuffledTrackIds() {
   state.shuffledTrackIds = shuffledValues(state.tracks.map((track) => track.id))
   state.roundIndex = -1
+}
+
+function resetShuffledAlbumIds() {
+  state.shuffledAlbumIds = shuffledValues(state.albums.map((album) => album.id))
+  state.roundAlbumIndex = -1
 }
 
 function loadCurrentTrack() {
@@ -270,6 +316,25 @@ function loadCurrentTrack() {
   roundIntroPlayed = false
   state.step = 'beforePlayback'
   state.answererId = null
+}
+
+function loadCurrentAlbum() {
+  if (state.albums.length === 0) {
+    state.step = 'idle'
+    state.roundAlbumIndex = -1
+    return
+  }
+  const selectedAlbumIds = state.albums.map((album) => album.id)
+  if (!hasSameIds(state.shuffledAlbumIds, selectedAlbumIds)) resetShuffledAlbumIds()
+  state.roundAlbumIndex = state.roundAlbumIndex + 1 >= state.shuffledAlbumIds.length ? 0 : state.roundAlbumIndex + 1
+  roundIntroPlayed = false
+  state.step = 'beforePlayback'
+  state.answererId = null
+}
+
+function loadCurrentRound() {
+  if (state.quizMode === 'jacket') loadCurrentAlbum()
+  else loadCurrentTrack()
 }
 
 function isQuizMode(value: unknown): value is QuizMode {
@@ -329,13 +394,17 @@ function consoleSelectPlaylists(payload: ConsoleSelectPlaylistsPayload = {}): Co
     })).filter((track: Track) => track.id && track.title)
     : []
   const uniqueTracks = uniqueTracksById(tracks)
+  const uniqueAlbums = albumsFromTracks(uniqueTracks)
   update(() => {
     state.selectedPlaylistIds = selectedPlaylistIds
     state.tracks = uniqueTracks.length > 0
       ? uniqueTracks
       : []
+    state.albums = uniqueAlbums
     state.shuffledTrackIds = []
+    state.shuffledAlbumIds = []
     state.roundIndex = -1
+    state.roundAlbumIndex = -1
     state.quizMode = null
     roundIntroPlayed = false
   })
@@ -347,6 +416,7 @@ function consoleStart(payload: ConsoleStartPayload | null = {}): ConsoleActionRe
   const quizMode = payload?.quizMode
   if (!isQuizMode(quizMode)) return '開始するゲームモードを選択してください'
   if (state.tracks.length === 0) return '曲を選択してから開始してください'
+  if (quizMode === 'jacket' && state.albums.length === 0) return 'アルバム名のある曲を選択してから開始してください'
 
   update(() => {
     state.phase = 'game'
@@ -354,7 +424,8 @@ function consoleStart(payload: ConsoleStartPayload | null = {}): ConsoleActionRe
     state.quizMode = quizMode
     Object.values(state.players).forEach((player) => { player.score = 0 })
     resetShuffledTrackIds()
-    loadCurrentTrack()
+    resetShuffledAlbumIds()
+    loadCurrentRound()
   })
   return true
 }
@@ -471,6 +542,7 @@ function consoleShowResults(): ConsoleActionResult {
   update(() => {
     state.step = 'results'
     state.roundIndex = -1
+    state.roundAlbumIndex = -1
     roundIntroPlayed = false
     state.answererId = null
   })
@@ -479,11 +551,13 @@ function consoleShowResults(): ConsoleActionResult {
 
 function consoleNextRound(): ConsoleActionResult {
   if (state.phase !== 'game' || state.step !== 'reveal') return invalidStateError
-  if (state.roundIndex < 0 || state.roundIndex + 1 >= state.shuffledTrackIds.length) return invalidStateError
+  if (state.quizMode === 'jacket') {
+    if (state.roundAlbumIndex < 0 || state.roundAlbumIndex + 1 >= state.shuffledAlbumIds.length) return invalidStateError
+  } else if (state.roundIndex < 0 || state.roundIndex + 1 >= state.shuffledTrackIds.length) return invalidStateError
 
   update(() => {
     state.step = 'loading'
-    loadCurrentTrack()
+    loadCurrentRound()
   })
   return true
 }
@@ -496,7 +570,9 @@ function consoleNextGame(): ConsoleActionResult {
     state.step = 'idle'
     state.quizMode = null
     state.shuffledTrackIds = []
+    state.shuffledAlbumIds = []
     state.roundIndex = -1
+    state.roundAlbumIndex = -1
     roundIntroPlayed = false
     state.answererId = null
     state.jacketMode = 'pixelated'
@@ -518,8 +594,11 @@ function consoleReset(): ConsoleActionResult {
       selectedPlaylistIds: [],
       players: {},
       tracks: [],
+      albums: [],
       shuffledTrackIds: [],
+      shuffledAlbumIds: [],
       roundIndex: -1,
+      roundAlbumIndex: -1,
       answererId: null,
       jacketMode: 'pixelated',
       jacketGrayscale: false,
@@ -623,7 +702,7 @@ function handleAct(req: Bun.BunRequest<'/api/act/:actorId'>) {
   }
 
   const canAnswerIntro = state.quizMode === 'intro' && (state.step === 'playing' || (state.step === 'beforePlayback' && roundIntroPlayed))
-  const canAnswerJacket = state.quizMode === 'jacket' && state.step === 'beforePlayback' && state.roundIndex >= 0
+  const canAnswerJacket = state.quizMode === 'jacket' && state.step === 'beforePlayback' && state.roundAlbumIndex >= 0
   const canAnswer = canAnswerIntro || canAnswerJacket
 
   if (state.phase === 'game' && canAnswer) {

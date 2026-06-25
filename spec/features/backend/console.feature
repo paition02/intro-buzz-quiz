@@ -24,6 +24,12 @@ Feature: Host console state transitions
     When the host sends tracks with missing id or title
     Then the track count is 1
 
+  Scenario: Jacket album candidates are deduplicated from selected tracks
+    Given the host console is ready
+    When the host selects multiple tracks from one album
+    Then the track count is 3
+    And the album count is 1
+
   Scenario: Starting without tracks does not enter game
     Given the host console is ready
     When the host starts the game

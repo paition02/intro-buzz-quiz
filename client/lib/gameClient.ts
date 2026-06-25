@@ -10,8 +10,11 @@ export const initialState: GameState = {
   selectedPlaylistIds: [],
   players: [],
   tracks: [],
+  albums: [],
   shuffledTrackIds: [],
+  shuffledAlbumIds: [],
   roundIndex: -1,
+  roundAlbumIndex: -1,
   answererId: null,
   jacketMode: 'pixelated',
   jacketGrayscale: false,
@@ -30,9 +33,25 @@ export function roundTrackFromState(state: GameState) {
   return state.tracks.find((track) => track.id === trackId) ?? null
 }
 
+export function roundAlbumIdFromState(state: GameState) {
+  return state.roundAlbumIndex >= 0 ? state.shuffledAlbumIds[state.roundAlbumIndex] ?? null : null
+}
+
+export function roundAlbumFromState(state: GameState) {
+  const albumId = roundAlbumIdFromState(state)
+  if (albumId == null) return null
+  return state.albums.find((album) => album.id === albumId) ?? null
+}
+
 export function roundPreparationKeyFromState(state: GameState) {
+  if (state.phase !== 'game') return null
+  if (state.quizMode === 'jacket') {
+    const albumId = roundAlbumIdFromState(state)
+    if (state.roundAlbumIndex < 0 || albumId == null) return null
+    return `${state.shuffledAlbumIds.join('')}#${state.roundAlbumIndex}#${albumId}`
+  }
   const trackId = roundTrackIdFromState(state)
-  if (state.phase !== 'game' || state.roundIndex < 0 || trackId == null) return null
+  if (state.roundIndex < 0 || trackId == null) return null
   return `${state.shuffledTrackIds.join('')}#${state.roundIndex}#${trackId}`
 }
 

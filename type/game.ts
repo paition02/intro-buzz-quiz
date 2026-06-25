@@ -37,6 +37,15 @@ export type Track = {
   artworkRevealUrl?: string
 }
 
+export type Album = {
+  id: string
+  name: string
+  artist: string
+  artworkChipUrl?: string
+  artworkInfoUrl?: string
+  artworkRevealUrl?: string
+}
+
 export type GameState = {
   phase: Phase
   step: GameStep
@@ -44,8 +53,11 @@ export type GameState = {
   selectedPlaylistIds: string[]
   players: Player[]
   tracks: Track[]
+  albums: Album[]
   shuffledTrackIds: string[]
+  shuffledAlbumIds: string[]
   roundIndex: number
+  roundAlbumIndex: number
   answererId: string | null
   jacketMode: JacketMode
   jacketGrayscale: boolean
