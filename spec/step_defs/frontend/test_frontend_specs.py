@@ -1083,12 +1083,12 @@ def gameboard_shows_revealed_track_information(frontend_page: Page):
 
 @then("the gameboard shows a jacket hint")
 def gameboard_shows_jacket_hint(frontend_page: Page):
-    expect(_gameboard_page(frontend_page).get_by_label("ジャケットヒント")).to_be_visible(timeout=30000)
+    expect(_visible_gameboard_page(frontend_page).get_by_label("ジャケットヒント")).to_be_visible(timeout=30000)
 
 
 @then("the gameboard shows revealed album information")
 def gameboard_shows_revealed_album_information(frontend_page: Page):
-    page = _gameboard_page(frontend_page)
+    page = _visible_gameboard_page(frontend_page)
     _expect_any_text(page, ["Album 1", "Album 2", "Album 3"])
 
 

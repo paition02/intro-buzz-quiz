@@ -145,7 +145,7 @@ def _make_song(song_id: str, *, title: str | None = None) -> Song:
     return Song(
         title=title or f"Track {n}",
         artist=f"Artist {n}",
-        album=base.album,
+        album=f"Album {n}",
         duration_ms=base.duration_ms,
         artwork=Artwork(url=f"https://example.test/artwork/{n}/{{w}}x{{h}}.jpg", width=1000, height=1000),
         genres=list(base.genres),
@@ -193,7 +193,7 @@ def _make_library_song(song_id: str, *, name: str | None = None) -> LibrarySong:
         duration_ms=2000,
         genre_names=["Test"],
         has_lyrics=False,
-        album_name="Test Album",
+        album_name=f"Album {n}",
         catalog_id=song_id,
     )
 

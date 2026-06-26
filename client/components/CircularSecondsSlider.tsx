@@ -90,8 +90,9 @@ function CircularValueSlider({
         onKeyDown={(event) => {
           let nextValue: number | null = null
           const precision = step < 1 ? 1 : 0
-          if (event.key === 'ArrowRight' || event.key === 'ArrowUp') nextValue = Number(Math.min(max, value + step).toFixed(precision))
-          if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') nextValue = Number(Math.max(min, value - step).toFixed(precision))
+          const currentValue = latestValueRef.current
+          if (event.key === 'ArrowRight' || event.key === 'ArrowUp') nextValue = Number(Math.min(max, currentValue + step).toFixed(precision))
+          if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') nextValue = Number(Math.max(min, currentValue - step).toFixed(precision))
           if (nextValue == null) return
           event.preventDefault()
           latestValueRef.current = nextValue
