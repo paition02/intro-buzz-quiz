@@ -6,12 +6,19 @@ import type { GameState, GameStep, Phase } from '../../type/game'
 export const initialState: GameState = {
   phase: 'initialization',
   step: 'idle',
+  quizMode: null,
   selectedPlaylistIds: [],
   players: [],
   tracks: [],
+  albums: [],
   shuffledTrackIds: [],
+  shuffledAlbumIds: [],
   roundIndex: -1,
+  roundAlbumIndex: -1,
   answererId: null,
+  jacketMode: 'pixelated',
+  jacketGrayscale: false,
+  jacketHintPercent: 1,
 }
 
 const GAME_STATE_KEYS = Object.keys(initialState) as Array<keyof GameState>
@@ -26,9 +33,25 @@ export function roundTrackFromState(state: GameState) {
   return state.tracks.find((track) => track.id === trackId) ?? null
 }
 
+export function roundAlbumIdFromState(state: GameState) {
+  return state.roundAlbumIndex >= 0 ? state.shuffledAlbumIds[state.roundAlbumIndex] ?? null : null
+}
+
+export function roundAlbumFromState(state: GameState) {
+  const albumId = roundAlbumIdFromState(state)
+  if (albumId == null) return null
+  return state.albums.find((album) => album.id === albumId) ?? null
+}
+
 export function roundPreparationKeyFromState(state: GameState) {
+  if (state.phase !== 'game') return null
+  if (state.quizMode === 'jacket') {
+    const albumId = roundAlbumIdFromState(state)
+    if (state.roundAlbumIndex < 0 || albumId == null) return null
+    return `${state.shuffledAlbumIds.join('')}#${state.roundAlbumIndex}#${albumId}`
+  }
   const trackId = roundTrackIdFromState(state)
-  if (state.phase !== 'game' || state.roundIndex < 0 || trackId == null) return null
+  if (state.roundIndex < 0 || trackId == null) return null
   return `${state.shuffledTrackIds.join('')}#${state.roundIndex}#${trackId}`
 }
 
@@ -49,7 +72,10 @@ export function consoleStatusMessage(state: GameState, playbackSeconds: number) 
     return 'プレイリストを選んで、プレイヤーの参加を待っています'
   }
   if (state.step === 'loading') return '曲を準備しています'
-  if (state.step === 'beforePlayback') return '再生秒数を指定して、再生ボタンを押してください'
+  if (state.step === 'beforePlayback') {
+    if (state.quizMode === 'jacket') return 'ジャケットのヒントを調整できます。早押し待ちです'
+    return '再生秒数を指定して、再生ボタンを押してください'
+  }
   if (state.step === 'playing') return `${playbackSeconds}秒再生中。早押し待ちです`
   if (state.step === 'answering') return '解答権が取られました'
   if (state.step === 'correct') return '正解！'
@@ -65,7 +91,7 @@ export function phaseLabel(phase: Phase, step: GameStep) {
   const labels: Record<GameStep, string> = {
     idle: '待機中',
     loading: '初期化ステップ',
-    beforePlayback: '再生前ステップ',
+    beforePlayback: 'ラウンド待機ステップ',
     playing: '再生中ステップ',
     answering: '解答ステップ',
     judging: '正誤判定ステップ',

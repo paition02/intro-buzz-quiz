@@ -27,6 +27,17 @@ Feature: Game flow
     Then the step is "beforePlayback"
     And there is no answerer
 
+  Scenario: Wrong answer in jacket mode returns to a buzzable round
+    Given a jacket game is before playback with joined players "player-1,player-2"
+    When actor "player-1" presses the action API
+    And the host judges the answer as "wrong"
+    Then the step is "wrong"
+    When the judging animation expires
+    And actor "player-2" presses the action API
+    Then the HTTP status is 200
+    And the step is "answering"
+    And answerer is "player-2"
+
   Scenario: Unknown judge result is ignored
     Given player "player-1" has answer rights
     When the host judges the answer as "unexpected"

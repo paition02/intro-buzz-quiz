@@ -28,6 +28,7 @@ type MusicApiArtwork = {
 type MusicApiAttributes = {
   name?: string
   artistName?: string
+  albumName?: string
   artwork?: MusicApiArtwork
 }
 
@@ -104,6 +105,7 @@ async function fetchPlaylistTracks(mk: MusicKit.MusicKitInstance, playlistId: st
       id: catalog?.id ?? track.id,
       title: track.attributes?.name ?? catalog?.attributes?.name ?? track.id,
       artist: track.attributes?.artistName ?? catalog?.attributes?.artistName ?? '',
+      albumName: catalog?.attributes?.albumName ?? track.attributes?.albumName ?? '',
       artworkChipUrl: artworkUrlForSize(artworkTemplate, ARTWORK_CHIP_SIZE),
       artworkInfoUrl: artworkUrlForSize(artworkTemplate, ARTWORK_INFO_SIZE),
       artworkRevealUrl: artworkUrlForSize(artworkTemplate, ARTWORK_REVEAL_SIZE),

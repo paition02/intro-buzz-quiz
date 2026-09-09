@@ -9,7 +9,7 @@ import {
   useInvalidateLibraryPlaylists,
   type MusicPlaylist,
 } from '../useMusicKitLibraryQueries'
-import type { GameState } from '../../type/game'
+import type { GameState, JacketMode, QuizMode } from '../../type/game'
 import {
   consoleAction,
   consoleStatusMessage,
@@ -24,13 +24,21 @@ import { errorFromUnknown, uniqueTracksById } from '../lib/util'
 import { playResultSound, playResultsSound } from '../lib/sounds'
 import { LibraryPlaylistsSection } from '../components/PlaylistPanel'
 import { PlayerBadge } from '../components/PlayerBadge'
-import { CircularSecondsSlider } from '../components/CircularSecondsSlider'
+import { CircularPercentSlider, CircularSecondsSlider } from '../components/CircularSecondsSlider'
 import { Glass } from '../components/Glass'
 import { Button } from '../components/Button'
 import { Eyebrow } from '../components/Eyebrow'
 import { RoundTrackDisclosure } from '../components/RoundTrackDisclosure'
 
 const JUDGE_RESULT_DURATION_MS = 1800
+const jacketModeOptions: Array<{ value: JacketMode; label: string }> = [
+  { value: 'pixelated', label: '粗解像度' },
+  { value: 'missingBlocks', label: 'ブロック欠落' },
+  { value: 'tileShuffle', label: 'タイルシャッフル' },
+  { value: 'circleReveal', label: '円形スポット開示' },
+  { value: 'zoomRotateCrop', label: '拡大回転クロップ' },
+  { value: 'edgeReveal', label: '外周開示' },
+]
 
 export function ConsolePage() {
   useScreenWakeLock()
@@ -98,6 +106,7 @@ export function ConsolePage() {
 
     if (change.step !== undefined && change.step !== 'playing') clearPlayEndedTimeout()
     if (change.step !== undefined && change.step !== 'correct' && change.step !== 'wrong') clearFeedbackEndedTimeout()
+    if (latestState.quizMode === 'jacket') return
 
     if (change.step !== undefined && change.step !== 'playing' && change.step !== 'reveal') {
       try {
@@ -174,10 +183,16 @@ export function ConsolePage() {
   const roundTrackId = roundTrackIdFromState(state)
   const roundTrack = roundTrackFromState(state)
   const roundPreparationKey = roundPreparationKeyFromState(state)
-  const roundPrepared = roundPreparationKey !== null && preparedRoundKey === roundPreparationKey
+  const roundPrepared = state.quizMode === 'jacket'
+    ? roundPreparationKey !== null
+    : roundPreparationKey !== null && preparedRoundKey === roundPreparationKey
   const trackInfoExpanded = roundPreparationKey !== null && expandedRoundKey === roundPreparationKey
-  const canPlayIntro = state.step === 'beforePlayback' && roundTrackId != null && roundPrepared && !isPreparingNext && playbackError === null && musicKitReady && musicKitAuth.authorized
-  const canGoNextRound = state.phase === 'game' && state.step === 'reveal' && state.roundIndex >= 0 && state.roundIndex + 1 < state.shuffledTrackIds.length
+  const canPlayIntro = state.quizMode === 'intro' && state.step === 'beforePlayback' && roundTrackId != null && roundPrepared && !isPreparingNext && playbackError === null && musicKitReady && musicKitAuth.authorized
+  const canGoNextRound = state.phase === 'game' && state.step === 'reveal' && (
+    state.quizMode === 'jacket'
+      ? state.roundAlbumIndex >= 0 && state.roundAlbumIndex + 1 < state.shuffledAlbumIds.length
+      : state.roundIndex >= 0 && state.roundIndex + 1 < state.shuffledTrackIds.length
+  )
   const playButtonLabel = state.step === 'playing' ? '再生中' : state.step === 'beforePlayback' && roundTrackId != null && !roundPrepared ? 'ロード中' : '再生'
 
   const handlePlaybackSecondsChange = useCallback((value: number) => {
@@ -258,12 +273,12 @@ export function ConsolePage() {
   })
 
   // 再生操作はボタンと useGameState(onChange) からだけ useSequentialPlayback へ渡す。
-  const handleStart = () => run(async () => {
+  const handleStart = (quizMode: QuizMode) => run(async () => {
     if (state.tracks.length === 0) {
       setConsoleMessage('曲を選択してから開始してください')
       return
     }
-    await consoleAction('console:start')
+    await consoleAction('console:start', { quizMode })
   })
 
   const handlePlay = () => run(async () => {
@@ -334,6 +349,85 @@ export function ConsolePage() {
     await consoleAction('console:reset')
   })
 
+  const handleJacketModeChange = (jacketMode: JacketMode) => run(async () => {
+    await consoleAction('console:set-jacket-mode', { jacketMode })
+  })
+
+  const handleJacketGrayscaleChange = (jacketGrayscale: boolean) => run(async () => {
+    await consoleAction('console:set-jacket-grayscale', { jacketGrayscale })
+  })
+
+  const handleJacketHintPercentChange = (jacketHintPercent: number) => {
+    void consoleAction('console:set-jacket-hint-percent', { jacketHintPercent }).catch(report)
+  }
+
+  const handleJacketHintPercentCommit = handleJacketHintPercentChange
+
+  const progressControls = state.quizMode === 'jacket' ? (
+    <>
+      <div className="grid gap-4">
+        <label className="grid gap-2">
+          <span className="text-cream font-bold">難読化モード</span>
+          <select
+            className="min-h-12 rounded-xl border border-white/10 bg-black/40 px-3.5 text-cream font-bold outline-none focus:border-amber"
+            value={state.jacketMode}
+            onChange={(event) => void handleJacketModeChange(event.currentTarget.value as JacketMode)}
+            disabled={busy || state.phase !== 'game' || state.step !== 'beforePlayback'}
+            aria-label="難読化モード"
+          >
+            {jacketModeOptions.map((option) => (
+              <option className="bg-ink text-cream" value={option.value} key={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+        <label className="flex min-h-12 items-center justify-between gap-3 rounded-xl border border-white/10 bg-black/30 px-3.5">
+          <span className="text-cream font-bold">グレースケール</span>
+          <input
+            className="size-6 accent-amber"
+            type="checkbox"
+            checked={state.jacketGrayscale}
+            onChange={(event) => void handleJacketGrayscaleChange(event.currentTarget.checked)}
+            disabled={busy || state.phase !== 'game' || state.step !== 'beforePlayback'}
+            aria-label="グレースケール"
+          />
+        </label>
+      </div>
+      <div className="grid justify-items-center gap-2.5 mt-4">
+        <span className="justify-self-start text-cream font-bold">ヒントレベル</span>
+        <CircularPercentSlider
+          value={state.jacketHintPercent}
+          label="ヒントレベル"
+          onChange={handleJacketHintPercentChange}
+          onCommit={handleJacketHintPercentCommit}
+        />
+      </div>
+    </>
+  ) : (
+    <div className="grid justify-items-center gap-2.5">
+      <span className="justify-self-start text-cream font-bold">再生秒数</span>
+      <CircularSecondsSlider
+        value={seconds}
+        onChange={handlePlaybackSecondsChange}
+        onCommit={handlePlaybackSecondsCommit}
+      />
+    </div>
+  )
+
+  const primaryProgressButtons = state.quizMode === 'jacket' ? (
+    <div className="grid gap-2.5 grid-cols-1 md:grid-cols-2 [&>button]:min-h-14">
+      <Button variant="ghost" disabled={busy || state.phase !== 'game' || state.step !== 'beforePlayback' || !roundPrepared} onClick={handleGiveUp}>ギブアップ</Button>
+      <Button disabled={busy || state.step !== 'answering'} onClick={handleCorrect}>正解</Button>
+      <Button disabled={busy || state.step !== 'answering'} onClick={handleWrong}>不正解</Button>
+    </div>
+  ) : (
+    <div className="grid gap-2.5 grid-cols-1 md:grid-cols-2 [&>button]:min-h-14">
+      <Button disabled={busy || !canPlayIntro} onClick={handlePlay}>{playButtonLabel}</Button>
+      <Button variant="ghost" disabled={busy || state.phase !== 'game' || state.step !== 'beforePlayback' || !roundPrepared} onClick={handleGiveUp}>ギブアップ</Button>
+      <Button disabled={busy || state.step !== 'answering'} onClick={handleCorrect}>正解</Button>
+      <Button disabled={busy || state.step !== 'answering'} onClick={handleWrong}>不正解</Button>
+    </div>
+  )
+
   return (
     <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
       <Glass as="header" className="rounded-3xl p-6 flex flex-col items-stretch justify-between gap-4 mb-4 md:flex-row md:items-center">
@@ -397,7 +491,8 @@ export function ConsolePage() {
             </p>
           )}
           <div className="flex flex-wrap gap-2.5 mt-3.5 max-md:[&>button]:flex-1">
-            <Button disabled={busy || state.phase !== 'ready' || selectedPlaylistIds.length === 0 || state.tracks.length === 0} onClick={handleStart}>ゲーム開始</Button>
+            <Button disabled={busy || state.phase !== 'ready' || selectedPlaylistIds.length === 0 || state.tracks.length === 0} onClick={() => handleStart('intro')}>イントロで開始</Button>
+            <Button disabled={busy || state.phase !== 'ready' || selectedPlaylistIds.length === 0 || state.tracks.length === 0} onClick={() => handleStart('jacket')}>ジャケットで開始</Button>
           </div>
           <div className="flex items-center gap-2 flex-wrap mt-3">
             <span className="text-muted">参加中:</span>
@@ -413,21 +508,9 @@ export function ConsolePage() {
 
         <Glass className="rounded-2xl p-6 min-w-0">
           <h2 className="m-0 mb-2.5 text-2xl font-bold">3. 進行</h2>
-          <div className="grid justify-items-center gap-2.5">
-            <span className="justify-self-start text-cream font-bold">再生秒数</span>
-            <CircularSecondsSlider
-              value={seconds}
-              onChange={handlePlaybackSecondsChange}
-              onCommit={handlePlaybackSecondsCommit}
-            />
-          </div>
+          {progressControls}
           <div className="grid gap-3.5 mt-4">
-            <div className="grid gap-2.5 grid-cols-1 md:grid-cols-2 [&>button]:min-h-14">
-              <Button disabled={busy || !canPlayIntro} onClick={handlePlay}>{playButtonLabel}</Button>
-              <Button variant="ghost" disabled={busy || state.phase !== 'game' || state.step !== 'beforePlayback' || !roundPrepared} onClick={handleGiveUp}>ギブアップ</Button>
-              <Button disabled={busy || state.step !== 'answering'} onClick={handleCorrect}>正解</Button>
-              <Button disabled={busy || state.step !== 'answering'} onClick={handleWrong}>不正解</Button>
-            </div>
+            {primaryProgressButtons}
             <div className="grid gap-2.5 grid-cols-1 pt-3.5 border-t border-white/10 [&>button]:min-h-14">
               <Button disabled={busy || !canGoNextRound} onClick={handleNextRound}>次のラウンドへ</Button>
               <Button disabled={busy || state.step !== 'reveal'} onClick={handleShowResults}>結果発表へ</Button>

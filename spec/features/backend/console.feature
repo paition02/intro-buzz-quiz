@@ -24,9 +24,22 @@ Feature: Host console state transitions
     When the host sends tracks with missing id or title
     Then the track count is 1
 
+  Scenario: Jacket album candidates are deduplicated from selected tracks
+    Given the host console is ready
+    When the host selects multiple tracks from one album
+    Then the track count is 3
+    And the album count is 1
+
   Scenario: Starting without tracks does not enter game
     Given the host console is ready
     When the host starts the game
+    Then the phase is "ready"
+    And the step is "idle"
+
+  Scenario: Starting without a mode does not enter game
+    Given the host console is ready
+    And the host has selected 3 tracks
+    When the host starts the game without choosing a mode
     Then the phase is "ready"
     And the step is "idle"
 
@@ -37,8 +50,31 @@ Feature: Host console state transitions
     When the host starts the game
     Then the phase is "game"
     And the step is "beforePlayback"
+    And the quiz mode is "intro"
     And the current track is one of the selected tracks
     And all player scores are 0
+
+  Scenario: Starting a jacket game stores the selected mode
+    Given the host console is ready
+    And the host has selected 3 tracks
+    When the host starts a jacket game
+    Then the phase is "game"
+    And the step is "beforePlayback"
+    And the quiz mode is "jacket"
+
+  Scenario: Jacket settings update during a jacket round
+    Given a jacket game is before playback with joined players "player-1"
+    When the host sets jacket mode to "tileShuffle"
+    Then the jacket mode is "tileShuffle"
+    When the host sets jacket grayscale to true
+    Then jacket grayscale is true
+    When the host sets jacket hint percent to 47
+    Then the jacket hint percent is 47
+
+  Scenario: Jacket settings are ignored during an intro round
+    Given a game is before playback with joined players "player-1"
+    When the host sets jacket mode to "tileShuffle"
+    Then the jacket mode is "pixelated"
 
   Scenario: Play is ignored until a round is ready
     Given the host console is ready

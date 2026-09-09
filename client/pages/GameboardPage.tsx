@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { roundTrackFromState, useConnected, useGameState } from '../lib/gameClient'
+import { roundAlbumFromState, roundTrackFromState, useConnected, useGameState } from '../lib/gameClient'
 import { useScreenWakeLock } from '../useScreenWakeLock'
 import { playerColor } from '../lib/util'
 import { Glass } from '../components/Glass'
 import { PersonGlyph } from '../components/Glyphs'
 import { PlayerBadge } from '../components/PlayerBadge'
 import { GameboardPlayers } from '../components/GameboardPlayers'
+import { JacketCanvas } from '../components/JacketCanvas'
 import { ReadyTrackLanes, TrackArtwork } from '../components/TrackDisplay'
 
 export function GameboardPage() {
@@ -19,6 +20,7 @@ export function GameboardPage() {
   const [isFullscreen, setIsFullscreen] = useState(false)
   const participatingPlayers = state.players
   const roundTrack = roundTrackFromState(state)
+  const roundAlbum = roundAlbumFromState(state)
 
   useEffect(() => {
     const handleFullscreenChange = () => setIsFullscreen(Boolean(document.fullscreenElement))
@@ -90,6 +92,28 @@ export function GameboardPage() {
     )
   } else if (state.step === 'loading') {
     content = <h1 className={TITLE}>曲を準備中</h1>
+  } else if (state.step === 'beforePlayback' && state.quizMode === 'jacket' && roundAlbum) {
+    cardClassName = CARD_PLAYERS
+    const jacketUrl = roundAlbum.artworkRevealUrl ?? roundAlbum.artworkInfoUrl ?? roundAlbum.artworkChipUrl
+    content = (
+      <>
+        <div className={STAGE}>
+          {jacketUrl ? (
+            <JacketCanvas
+              className="max-w-full max-h-[60svh] aspect-square rounded-3xl shadow-2xl shadow-black/30 bg-ink"
+              src={jacketUrl}
+              mode={state.jacketMode}
+              grayscale={state.jacketGrayscale}
+              hintPercent={state.jacketHintPercent}
+              seed={`${roundAlbum.id}:${state.roundAlbumIndex}`}
+            />
+          ) : (
+            <div className={`${SYMBOL} text-cream/30`}>□</div>
+          )}
+        </div>
+        {players}
+      </>
+    )
   } else if (state.step === 'beforePlayback') {
     cardClassName = CARD_PLAYERS
     content = (
@@ -141,12 +165,21 @@ export function GameboardPage() {
         {players}
       </>
     )
-  } else if (state.step === 'reveal' && roundTrack) {
+  } else if (state.step === 'reveal' && (roundTrack || roundAlbum)) {
+    const primaryAnswer = state.quizMode === 'jacket' ? (roundAlbum?.name || 'アルバム名不明') : roundTrack?.title
+    const artworkUrl = state.quizMode === 'jacket'
+      ? roundAlbum?.artworkRevealUrl ?? roundAlbum?.artworkInfoUrl ?? roundAlbum?.artworkChipUrl
+      : null
     content = (
       <div className="rounded-3xl p-7 sm:p-10 bg-linear-to-br from-pink/20 to-sky/20 border border-white/10 grid justify-items-center gap-4">
-        <TrackArtwork track={roundTrack} />
-        <strong className="block text-3xl sm:text-5xl font-bold leading-tight">{roundTrack.title}</strong>
-        <span className="block mt-2.5 text-subtle">{roundTrack.artist}</span>
+        {state.quizMode === 'jacket' ? (
+          artworkUrl
+            ? <img className="size-64 sm:size-72 rounded-3xl shrink-0 object-cover bg-linear-to-br from-pink to-amber" src={artworkUrl} alt="" loading="lazy" />
+            : <span className="size-64 sm:size-72 rounded-3xl shrink-0 grid place-items-center bg-linear-to-br from-pink to-amber text-cocoa text-7xl font-black" aria-hidden="true">□</span>
+        ) : roundTrack ? <TrackArtwork track={roundTrack} /> : null}
+        <strong className="block text-3xl sm:text-5xl font-bold leading-tight">{primaryAnswer}</strong>
+        {state.quizMode === 'intro' && roundTrack && <span className="block mt-2.5 text-subtle">{roundTrack.artist}</span>}
+        {state.quizMode === 'jacket' && roundAlbum?.artist && <span className="block mt-2.5 text-subtle">{roundAlbum.artist}</span>}
       </div>
     )
   } else if (state.step === 'results') {

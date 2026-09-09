@@ -14,6 +14,7 @@ def sample_tracks(count: int = 3) -> list[dict[str, Any]]:
             "id": f"track-{index}",
             "title": f"Track {index}",
             "artist": f"Artist {index}",
+            "albumName": f"Album {index}",
             "artworkChipUrl": f"https://example.test/artwork/{index}-chip.jpg",
             "artworkInfoUrl": f"https://example.test/artwork/{index}-info.jpg",
             "artworkRevealUrl": f"https://example.test/artwork/{index}-reveal.jpg",

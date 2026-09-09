@@ -40,12 +40,12 @@ def _join_actor(http, actor_id: str):
     return response
 
 
-def _start_game(socket_client, http, joined: list[str] | None = None, count: int = 3):
+def _start_game(socket_client, http, joined: list[str] | None = None, count: int = 3, quiz_mode: str = "intro"):
     _login(socket_client)
     for actor_id in joined or []:
         _join_actor(http, actor_id)
     state, tracks = _select_tracks(socket_client, count)
-    state = socket_client.emit("console:start")
+    state = socket_client.emit("console:start", {"quizMode": quiz_mode})
     socket_client.wait_for_state(phase="game", step="beforePlayback")
     return state, tracks
 
@@ -100,6 +100,12 @@ def host_selected_tracks(ctx, socket_client, count: int):
 def game_before_playback(ctx, socket_client, http, actor_ids: str):
     joined = [item.strip() for item in actor_ids.split(",") if item.strip()]
     ctx.state, ctx.tracks = _start_game(socket_client, http, joined=joined, count=3)
+
+
+@given(parsers.parse('a jacket game is before playback with joined players "{actor_ids}"'))
+def jacket_game_before_playback(ctx, socket_client, http, actor_ids: str):
+    joined = [item.strip() for item in actor_ids.split(",") if item.strip()]
+    ctx.state, ctx.tracks = _start_game(socket_client, http, joined=joined, count=3, quiz_mode="jacket")
 
 
 @given(parsers.parse('player "{actor_id}" has answer rights'))
@@ -187,8 +193,34 @@ def when_host_sends_invalid_tracks(ctx, socket_client):
     )
 
 
+@when("the host selects multiple tracks from one album")
+def when_host_selects_tracks_from_one_album(ctx, socket_client):
+    tracks = make_tracks(3)
+    for track in tracks:
+        track["albumName"] = "Shared Album"
+        track["artist"] = "Shared Artist"
+        track["artworkRevealUrl"] = "https://example.test/artwork/shared-reveal.jpg"
+        track["artworkInfoUrl"] = "https://example.test/artwork/shared-info.jpg"
+        track["artworkChipUrl"] = "https://example.test/artwork/shared-chip.jpg"
+    ctx.tracks = tracks
+    ctx.state = socket_client.emit(
+        "console:select-playlists",
+        {"selectedPlaylistIds": ["playlist-a"], "tracks": tracks},
+    )
+
+
 @when("the host starts the game")
 def when_host_starts_game(ctx, socket_client):
+    ctx.state = socket_client.emit("console:start", {"quizMode": "intro"})
+
+
+@when("the host starts a jacket game")
+def when_host_starts_jacket_game(ctx, socket_client):
+    ctx.state = socket_client.emit("console:start", {"quizMode": "jacket"})
+
+
+@when("the host starts the game without choosing a mode")
+def when_host_starts_without_mode(ctx, socket_client):
     ctx.state = socket_client.emit("console:start")
 
 
@@ -231,6 +263,21 @@ def host_plays_intro(ctx, socket_client, seconds: float):
 @when(parsers.parse("the host plays the intro for {seconds:g} seconds without starting the game"))
 def host_plays_intro_without_starting(ctx, socket_client, seconds: float):
     ctx.state = socket_client.emit("console:play")
+
+
+@when(parsers.parse('the host sets jacket mode to "{jacket_mode}"'))
+def host_sets_jacket_mode(ctx, socket_client, jacket_mode: str):
+    ctx.state = socket_client.emit("console:set-jacket-mode", {"jacketMode": jacket_mode})
+
+
+@when(parsers.parse("the host sets jacket grayscale to {enabled}"))
+def host_sets_jacket_grayscale(ctx, socket_client, enabled: str):
+    ctx.state = socket_client.emit("console:set-jacket-grayscale", {"jacketGrayscale": enabled == "true"})
+
+
+@when(parsers.parse("the host sets jacket hint percent to {percent:d}"))
+def host_sets_jacket_hint_percent(ctx, socket_client, percent: int):
+    ctx.state = socket_client.emit("console:set-jacket-hint-percent", {"jacketHintPercent": percent})
 
 
 @when("the playback timeout expires")
@@ -296,6 +343,30 @@ def then_phase(ctx, socket_client, phase: str):
 def then_step(ctx, socket_client, step: str):
     state = ctx.state or socket_client.state
     assert state["step"] == step
+
+
+@then(parsers.parse('the quiz mode is "{quiz_mode}"'))
+def then_quiz_mode(ctx, socket_client, quiz_mode: str):
+    state = ctx.state or socket_client.state
+    assert state["quizMode"] == quiz_mode
+
+
+@then(parsers.parse('the jacket mode is "{jacket_mode}"'))
+def then_jacket_mode(ctx, socket_client, jacket_mode: str):
+    state = ctx.state or socket_client.state
+    assert state["jacketMode"] == jacket_mode
+
+
+@then(parsers.parse("jacket grayscale is {enabled}"))
+def then_jacket_grayscale(ctx, socket_client, enabled: str):
+    state = ctx.state or socket_client.state
+    assert state["jacketGrayscale"] == (enabled == "true")
+
+
+@then(parsers.parse("the jacket hint percent is {percent:d}"))
+def then_jacket_hint_percent(ctx, socket_client, percent: int):
+    state = ctx.state or socket_client.state
+    assert state["jacketHintPercent"] == percent
 
 
 @then("there are no players")
@@ -373,6 +444,12 @@ def then_selected_playlist_ids(ctx, socket_client, ids: str):
 def then_track_count(ctx, socket_client, count: int):
     state = ctx.state or socket_client.state
     assert len(state["tracks"]) == count
+
+
+@then(parsers.parse("the album count is {count:d}"))
+def then_album_count(ctx, socket_client, count: int):
+    state = ctx.state or socket_client.state
+    assert len(state["albums"]) == count
 
 
 @then("the current track is cleared")

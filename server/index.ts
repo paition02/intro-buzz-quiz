@@ -9,7 +9,7 @@ import homeHtml from '../client/index.html'
 import consoleHtml from '../client/console.html'
 import gameboardHtml from '../client/gameboard.html'
 import actionHtml from '../client/action.html'
-import type { GameState, Player, Track } from '../type/game'
+import type { Album, GameState, JacketMode, Player, QuizMode, Track } from '../type/game'
 
 // Bun が cwd の .env を読む。HTTP_PORT / HTTPS_PORT は数値として渡す。
 const isDevelopment = process.env.NODE_ENV !== 'production'
@@ -21,12 +21,19 @@ type InternalGameState = Omit<GameState, 'players'> & {
 let state: InternalGameState = {
   phase: 'initialization',
   step: 'idle',
+  quizMode: null,
   selectedPlaylistIds: [],
   players: {},
   tracks: [],
+  albums: [],
   shuffledTrackIds: [],
+  shuffledAlbumIds: [],
   roundIndex: -1,
+  roundAlbumIndex: -1,
   answererId: null,
+  jacketMode: 'pixelated',
+  jacketGrayscale: false,
+  jacketHintPercent: 1,
 }
 
 const actionCooldownMs = 250
@@ -34,6 +41,8 @@ let lastAcceptedActionAtByActorId: Record<string, number> = {}
 let roundIntroPlayed = false
 const invalidStateError = 'この操作は現在の状態では実行できません'
 type ConsoleActionResult = true | string
+const quizModes = ['intro', 'jacket'] as const satisfies readonly QuizMode[]
+const jacketModes = ['pixelated', 'missingBlocks', 'tileShuffle', 'circleReveal', 'zoomRotateCrop', 'edgeReveal'] as const satisfies readonly JacketMode[]
 
 const appleTeamId = process.env.APPLE_TEAM_ID ?? ''
 const appleKeyId = process.env.APPLE_KEY_ID ?? ''
@@ -232,6 +241,38 @@ function uniqueTracksById(tracks: Track[]) {
   })
 }
 
+function uniqueAlbumsById(albums: Album[]) {
+  const seenAlbumIds = new Set<string>()
+  return albums.filter((album) => {
+    if (seenAlbumIds.has(album.id)) return false
+    seenAlbumIds.add(album.id)
+    return true
+  })
+}
+
+function albumIdFromTrack(track: Track) {
+  return [
+    track.albumName.trim().toLowerCase(),
+    track.artist.trim().toLowerCase(),
+    track.artworkRevealUrl ?? track.artworkInfoUrl ?? track.artworkChipUrl ?? '',
+  ].join('\u001f')
+}
+
+function albumsFromTracks(tracks: Track[]) {
+  return uniqueAlbumsById(
+    tracks
+      .filter((track) => track.albumName.trim())
+      .map((track): Album => ({
+        id: albumIdFromTrack(track),
+        name: track.albumName,
+        artist: track.artist,
+        artworkChipUrl: track.artworkChipUrl,
+        artworkInfoUrl: track.artworkInfoUrl,
+        artworkRevealUrl: track.artworkRevealUrl,
+      })),
+  )
+}
+
 function shuffledValues<T>(values: T[]) {
   const shuffled = [...values]
   for (let i = shuffled.length - 1; i > 0; i -= 1) {
@@ -247,9 +288,20 @@ function hasSameSongIds(left: string[], right: string[]) {
   return left.every((songId) => rightIds.has(songId))
 }
 
+function hasSameIds(left: string[], right: string[]) {
+  if (left.length !== right.length) return false
+  const rightIds = new Set(right)
+  return left.every((id) => rightIds.has(id))
+}
+
 function resetShuffledTrackIds() {
   state.shuffledTrackIds = shuffledValues(state.tracks.map((track) => track.id))
   state.roundIndex = -1
+}
+
+function resetShuffledAlbumIds() {
+  state.shuffledAlbumIds = shuffledValues(state.albums.map((album) => album.id))
+  state.roundAlbumIndex = -1
 }
 
 function loadCurrentTrack() {
@@ -266,10 +318,53 @@ function loadCurrentTrack() {
   state.answererId = null
 }
 
+function loadCurrentAlbum() {
+  if (state.albums.length === 0) {
+    state.step = 'idle'
+    state.roundAlbumIndex = -1
+    return
+  }
+  const selectedAlbumIds = state.albums.map((album) => album.id)
+  if (!hasSameIds(state.shuffledAlbumIds, selectedAlbumIds)) resetShuffledAlbumIds()
+  state.roundAlbumIndex = state.roundAlbumIndex + 1 >= state.shuffledAlbumIds.length ? 0 : state.roundAlbumIndex + 1
+  roundIntroPlayed = false
+  state.step = 'beforePlayback'
+  state.answererId = null
+}
+
+function loadCurrentRound() {
+  if (state.quizMode === 'jacket') loadCurrentAlbum()
+  else loadCurrentTrack()
+}
+
+function isQuizMode(value: unknown): value is QuizMode {
+  return typeof value === 'string' && quizModes.includes(value as QuizMode)
+}
+
+function isJacketMode(value: unknown): value is JacketMode {
+  return typeof value === 'string' && jacketModes.includes(value as JacketMode)
+}
+
 
 type ConsoleSelectPlaylistsPayload = {
   selectedPlaylistIds?: unknown
   tracks?: Partial<Track>[]
+}
+
+type ConsoleStartPayload = {
+  quizMode?: unknown
+}
+
+type ConsoleSetJacketModePayload = {
+  jacketMode?: unknown
+}
+
+type ConsoleSetJacketGrayscalePayload = {
+  jacketGrayscale?: unknown
+}
+
+type ConsoleSetJacketHintPercentPayload = {
+  jacketHintPercent?: unknown
 }
 
 function consoleReady(): ConsoleActionResult {
@@ -292,40 +387,52 @@ function consoleSelectPlaylists(payload: ConsoleSelectPlaylistsPayload = {}): Co
       id: String(track.id ?? ''),
       title: String(track.title ?? ''),
       artist: String(track.artist ?? ''),
+      albumName: String(track.albumName ?? ''),
       artworkChipUrl: typeof track.artworkChipUrl === 'string' ? track.artworkChipUrl : undefined,
       artworkInfoUrl: typeof track.artworkInfoUrl === 'string' ? track.artworkInfoUrl : undefined,
       artworkRevealUrl: typeof track.artworkRevealUrl === 'string' ? track.artworkRevealUrl : undefined,
     })).filter((track: Track) => track.id && track.title)
     : []
   const uniqueTracks = uniqueTracksById(tracks)
+  const uniqueAlbums = albumsFromTracks(uniqueTracks)
   update(() => {
     state.selectedPlaylistIds = selectedPlaylistIds
     state.tracks = uniqueTracks.length > 0
       ? uniqueTracks
       : []
+    state.albums = uniqueAlbums
     state.shuffledTrackIds = []
+    state.shuffledAlbumIds = []
     state.roundIndex = -1
+    state.roundAlbumIndex = -1
+    state.quizMode = null
     roundIntroPlayed = false
   })
   return true
 }
 
-function consoleStart(): ConsoleActionResult {
+function consoleStart(payload: ConsoleStartPayload | null = {}): ConsoleActionResult {
   if (state.phase !== 'ready') return invalidStateError
+  const quizMode = payload?.quizMode
+  if (!isQuizMode(quizMode)) return '開始するゲームモードを選択してください'
   if (state.tracks.length === 0) return '曲を選択してから開始してください'
+  if (quizMode === 'jacket' && state.albums.length === 0) return 'アルバム名のある曲を選択してから開始してください'
 
   update(() => {
     state.phase = 'game'
     state.step = 'loading'
+    state.quizMode = quizMode
     Object.values(state.players).forEach((player) => { player.score = 0 })
     resetShuffledTrackIds()
-    loadCurrentTrack()
+    resetShuffledAlbumIds()
+    loadCurrentRound()
   })
   return true
 }
 
 function consolePlay(): ConsoleActionResult {
   if (state.phase !== 'game' || state.step !== 'beforePlayback') return invalidStateError
+  if (state.quizMode !== 'intro') return invalidStateError
 
   update(() => {
     state.step = 'playing'
@@ -338,6 +445,7 @@ function consolePlay(): ConsoleActionResult {
 
 function consolePlayEnded(): ConsoleActionResult {
   if (state.phase !== 'game' || state.step !== 'playing') return invalidStateError
+  if (state.quizMode !== 'intro') return invalidStateError
 
   update(() => {
     state.step = 'beforePlayback'
@@ -384,6 +492,40 @@ function consoleGiveUp(): ConsoleActionResult {
   return true
 }
 
+function consoleSetJacketMode(payload: ConsoleSetJacketModePayload | null = {}): ConsoleActionResult {
+  if (state.phase !== 'game' || state.quizMode !== 'jacket' || state.step !== 'beforePlayback') return invalidStateError
+  const jacketMode = payload?.jacketMode
+  if (!isJacketMode(jacketMode)) return 'ジャケット難読化モードを選択してください'
+
+  update(() => {
+    state.jacketMode = jacketMode
+  })
+  return true
+}
+
+function consoleSetJacketGrayscale(payload: ConsoleSetJacketGrayscalePayload | null = {}): ConsoleActionResult {
+  if (state.phase !== 'game' || state.quizMode !== 'jacket' || state.step !== 'beforePlayback') return invalidStateError
+  const jacketGrayscale = payload?.jacketGrayscale
+  if (typeof jacketGrayscale !== 'boolean') return 'グレースケール設定が不正です'
+
+  update(() => {
+    state.jacketGrayscale = jacketGrayscale
+  })
+  return true
+}
+
+function consoleSetJacketHintPercent(payload: ConsoleSetJacketHintPercentPayload | null = {}): ConsoleActionResult {
+  if (state.phase !== 'game' || state.quizMode !== 'jacket' || state.step !== 'beforePlayback') return invalidStateError
+  if (typeof payload?.jacketHintPercent !== 'number' || !Number.isFinite(payload.jacketHintPercent)) return 'ヒントレベルが不正です'
+  const nextPercent = Math.round(payload.jacketHintPercent)
+  if (nextPercent < 1 || nextPercent > 100) return 'ヒントレベルは1〜100%で指定してください'
+
+  update(() => {
+    state.jacketHintPercent = nextPercent
+  })
+  return true
+}
+
 function consoleWrongFeedbackEnded(): ConsoleActionResult {
   if (state.phase !== 'game' || state.step !== 'wrong') return invalidStateError
 
@@ -400,6 +542,7 @@ function consoleShowResults(): ConsoleActionResult {
   update(() => {
     state.step = 'results'
     state.roundIndex = -1
+    state.roundAlbumIndex = -1
     roundIntroPlayed = false
     state.answererId = null
   })
@@ -408,11 +551,13 @@ function consoleShowResults(): ConsoleActionResult {
 
 function consoleNextRound(): ConsoleActionResult {
   if (state.phase !== 'game' || state.step !== 'reveal') return invalidStateError
-  if (state.roundIndex < 0 || state.roundIndex + 1 >= state.shuffledTrackIds.length) return invalidStateError
+  if (state.quizMode === 'jacket') {
+    if (state.roundAlbumIndex < 0 || state.roundAlbumIndex + 1 >= state.shuffledAlbumIds.length) return invalidStateError
+  } else if (state.roundIndex < 0 || state.roundIndex + 1 >= state.shuffledTrackIds.length) return invalidStateError
 
   update(() => {
     state.step = 'loading'
-    loadCurrentTrack()
+    loadCurrentRound()
   })
   return true
 }
@@ -423,10 +568,16 @@ function consoleNextGame(): ConsoleActionResult {
   update(() => {
     state.phase = 'ready'
     state.step = 'idle'
+    state.quizMode = null
     state.shuffledTrackIds = []
+    state.shuffledAlbumIds = []
     state.roundIndex = -1
+    state.roundAlbumIndex = -1
     roundIntroPlayed = false
     state.answererId = null
+    state.jacketMode = 'pixelated'
+    state.jacketGrayscale = false
+    state.jacketHintPercent = 1
     state.players = {}
     lastAcceptedActionAtByActorId = {}
   })
@@ -439,12 +590,19 @@ function consoleReset(): ConsoleActionResult {
     state = {
       phase: 'initialization',
       step: 'idle',
+      quizMode: null,
       selectedPlaylistIds: [],
       players: {},
       tracks: [],
+      albums: [],
       shuffledTrackIds: [],
+      shuffledAlbumIds: [],
       roundIndex: -1,
+      roundAlbumIndex: -1,
       answererId: null,
+      jacketMode: 'pixelated',
+      jacketGrayscale: false,
+      jacketHintPercent: 1,
     }
   })
   return true
@@ -462,6 +620,11 @@ function acknowledge(callback: unknown, action: () => ConsoleActionResult) {
   }
 }
 
+function eventPayloadAndCallback(first: unknown, second: unknown) {
+  if (typeof first === 'function') return { payload: null, callback: first }
+  return { payload: first, callback: second }
+}
+
 // socket.io を Bun ネイティブの engine に bind する。
 // engine.handler() が Bun.serve 用の websocket / idleTimeout 等を返し、
 // /socket.io/ への HTTP・WS アップグレードは engine.handleRequest が一手に引き受ける。
@@ -476,7 +639,10 @@ io.on('connection', (socket) => {
   socket.emit('state', publicState())
   socket.on('console:ready', (callback) => acknowledge(callback, consoleReady))
   socket.on('console:select-playlists', (payload, callback) => acknowledge(callback, () => consoleSelectPlaylists(payload)))
-  socket.on('console:start', (callback) => acknowledge(callback, consoleStart))
+  socket.on('console:start', (payloadOrCallback, maybeCallback) => {
+    const { payload, callback } = eventPayloadAndCallback(payloadOrCallback, maybeCallback)
+    acknowledge(callback, () => consoleStart(payload as ConsoleStartPayload | null))
+  })
   socket.on('console:play', (callback) => acknowledge(callback, consolePlay))
   socket.on('console:play-ended', (callback) => acknowledge(callback, consolePlayEnded))
   socket.on('console:correct', (callback) => acknowledge(callback, consoleCorrect))
@@ -484,6 +650,9 @@ io.on('connection', (socket) => {
   socket.on('console:correct-feedback-ended', (callback) => acknowledge(callback, consoleCorrectFeedbackEnded))
   socket.on('console:wrong-feedback-ended', (callback) => acknowledge(callback, consoleWrongFeedbackEnded))
   socket.on('console:give-up', (callback) => acknowledge(callback, consoleGiveUp))
+  socket.on('console:set-jacket-mode', (payload, callback) => acknowledge(callback, () => consoleSetJacketMode(payload)))
+  socket.on('console:set-jacket-grayscale', (payload, callback) => acknowledge(callback, () => consoleSetJacketGrayscale(payload)))
+  socket.on('console:set-jacket-hint-percent', (payload, callback) => acknowledge(callback, () => consoleSetJacketHintPercent(payload)))
   socket.on('console:next-round', (callback) => acknowledge(callback, consoleNextRound))
   socket.on('console:show-results', (callback) => acknowledge(callback, consoleShowResults))
   socket.on('console:next-game', (callback) => acknowledge(callback, consoleNextGame))
@@ -532,7 +701,9 @@ function handleAct(req: Bun.BunRequest<'/api/act/:actorId'>) {
     return new Response(null, { status: 204 })
   }
 
-  const canAnswer = state.step === 'playing' || (state.step === 'beforePlayback' && roundIntroPlayed)
+  const canAnswerIntro = state.quizMode === 'intro' && (state.step === 'playing' || (state.step === 'beforePlayback' && roundIntroPlayed))
+  const canAnswerJacket = state.quizMode === 'jacket' && state.step === 'beforePlayback' && state.roundAlbumIndex >= 0
+  const canAnswer = canAnswerIntro || canAnswerJacket
 
   if (state.phase === 'game' && canAnswer) {
     if (!player) return new Response(null, { status: 409 })

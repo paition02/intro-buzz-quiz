@@ -91,3 +91,17 @@ Feature: Action API
     And the response body is empty
     And the step is "answering"
     And answerer is "player-1"
+
+  Scenario: Joined player can buzz during a jacket round without playback
+    Given a jacket game is before playback with joined players "player-1"
+    When actor "player-1" presses the action API
+    Then the HTTP status is 200
+    And the response body is empty
+    And the step is "answering"
+    And answerer is "player-1"
+
+  Scenario: Unjoined player cannot buzz during a jacket round
+    Given a jacket game is before playback with joined players "player-1"
+    When actor "stranger" presses the action API
+    Then the HTTP status is 409
+    And the response body is empty
