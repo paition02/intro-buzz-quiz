@@ -21,7 +21,7 @@ type Rect = {
   dh: number
 }
 
-const DISPLAY_SIZE = 720
+const CANVAS_SIZE = 720
 
 export function JacketCanvas({ src, mode, grayscale, hintPercent, seed, className }: JacketCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -49,8 +49,6 @@ export function JacketCanvas({ src, mode, grayscale, hintPercent, seed, classNam
     <canvas
       ref={canvasRef}
       className={className}
-      width={DISPLAY_SIZE}
-      height={DISPLAY_SIZE}
       aria-label="ジャケットヒント"
       role="img"
     />
@@ -66,12 +64,9 @@ function renderJacket(
   seed: string,
 ) {
   const dpr = window.devicePixelRatio || 1
-  const cssSize = DISPLAY_SIZE
-  const size = Math.round(cssSize * dpr)
+  const size = Math.round(CANVAS_SIZE * dpr)
   canvas.width = size
   canvas.height = size
-  canvas.style.width = `${cssSize}px`
-  canvas.style.height = `${cssSize}px`
 
   const ctx = canvas.getContext('2d')
   if (!ctx) return

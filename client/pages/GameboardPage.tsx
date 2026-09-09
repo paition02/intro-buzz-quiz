@@ -100,7 +100,7 @@ export function GameboardPage() {
         <div className={STAGE}>
           {jacketUrl ? (
             <JacketCanvas
-              className="w-[min(72svh,78vw)] max-w-[720px] aspect-square rounded-3xl shadow-2xl shadow-black/30 bg-ink"
+              className="max-w-full max-h-[60svh] aspect-square rounded-3xl shadow-2xl shadow-black/30 bg-ink"
               src={jacketUrl}
               mode={state.jacketMode}
               grayscale={state.jacketGrayscale}
