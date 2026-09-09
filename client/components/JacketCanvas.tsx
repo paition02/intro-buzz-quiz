@@ -193,14 +193,14 @@ function drawZoomRotateCrop(ctx: CanvasRenderingContext2D, image: HTMLImageEleme
   const random = seededRandom(`${seed}:zoomRotateCrop`)
   const maxRotation = (random() > 0.5 ? 1 : -1) * (Math.PI * (0.18 + random() * 0.32))
   const rotation = maxRotation * (1 - progress)
-  const zoom = 1 + (1 - progress) * 3.5
+  const zoom = 1 + (1 - progress) * 30
   const offsetX = (random() - 0.5) * size * 0.45 * (1 - progress)
   const offsetY = (random() - 0.5) * size * 0.45 * (1 - progress)
   ctx.save()
   ctx.translate(size / 2, size / 2)
   ctx.rotate(rotation)
   ctx.scale(zoom, zoom)
-  ctx.translate((-size / 2 + offsetX) / zoom, (-size / 2 + offsetY) / zoom)
+  ctx.translate(-size / 2 + offsetX, -size / 2 + offsetY)
   drawImageCover(ctx, image, 0, 0, size, size)
   ctx.restore()
 }
