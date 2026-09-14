@@ -143,3 +143,19 @@ Feature: MusicKit integration
     Then the jacket hint slider shows 1 percent
     When the frontend sets jacket hint percent to 12
     Then the jacket hint slider shows 12 percent
+
+
+  Scenario: Host album information follows the current jacket round
+    Given the frontend console selected playlist "Spec Playlist A"
+    When the frontend clicks "ジャケットで開始"
+    Then the album information is collapsed
+    When the frontend clicks "アルバム情報を開く"
+    Then the album information matches the current backend album
+    When the frontend clicks "アルバム情報を閉じる"
+    Then the album information is collapsed
+    When the frontend clicks "アルバム情報を開く"
+    And the frontend clicks "ギブアップ"
+    And the frontend clicks "次のラウンドへ"
+    Then the album information is collapsed
+    When the frontend clicks "アルバム情報を開く"
+    Then the album information matches the current backend album

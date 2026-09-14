@@ -1208,3 +1208,22 @@ def no_selected_tracks(socket_client):
 @then(parsers.parse("the jacket hint slider shows {percent:d} percent"))
 def jacket_hint_slider_shows(frontend_page: Page, percent: int):
     expect(frontend_page.get_by_role("slider", name="ヒントレベル")).to_have_attribute("aria-valuenow", str(percent))
+
+
+@then("the album information is collapsed")
+def album_information_collapsed(frontend_page: Page):
+    panel = frontend_page.get_by_role("region", name="アルバム情報", exact=True)
+    expect(panel.get_by_role("button", name="アルバム情報を開く")).to_have_attribute("aria-expanded", "false")
+    expect(panel.locator("strong")).to_have_count(0)
+    expect(panel.locator("img")).to_have_count(0)
+
+
+@then("the album information matches the current backend album")
+def album_information_matches(frontend_page: Page, socket_client):
+    state = _current_backend_state(socket_client.server_url)
+    album_id = state["shuffledAlbumIds"][state["roundAlbumIndex"]]
+    album = next(album for album in state["albums"] if album["id"] == album_id)
+    panel = frontend_page.get_by_role("region", name="アルバム情報", exact=True)
+    expect(panel.locator("strong")).to_have_text(album["name"])
+    expect(panel.get_by_text(album["artist"], exact=True)).to_be_visible()
+    expect(panel.locator("img")).to_have_attribute("src", album["artworkInfoUrl"])

@@ -17,6 +17,7 @@ import {
   phaseLabel,
   roundPreparationKeyFromState,
   roundTrackFromState,
+  roundAlbumFromState,
   roundTrackIdFromState,
   useGameState,
 } from '../lib/gameClient'
@@ -29,7 +30,7 @@ import { JacketHintSlider } from '../components/JacketHintSlider'
 import { Glass } from '../components/Glass'
 import { Button } from '../components/Button'
 import { Eyebrow } from '../components/Eyebrow'
-import { RoundTrackDisclosure } from '../components/RoundTrackDisclosure'
+import { RoundInfoDisclosure } from '../components/RoundInfoDisclosure'
 
 const JUDGE_RESULT_DURATION_MS = 1800
 const jacketModeOptions: Array<{ value: JacketMode; label: string }> = [
@@ -183,6 +184,8 @@ export function ConsolePage() {
   const statusMessage = consoleStatusMessage(state, seconds)
   const roundTrackId = roundTrackIdFromState(state)
   const roundTrack = roundTrackFromState(state)
+  const isJacket = state.quizMode === 'jacket'
+  const roundInfo = isJacket ? roundAlbumFromState(state) : roundTrack
   const roundPreparationKey = roundPreparationKeyFromState(state)
   const roundPrepared = state.quizMode === 'jacket'
     ? roundPreparationKey !== null
@@ -518,11 +521,12 @@ export function ConsolePage() {
           </div>
         </Glass>
 
-        <Glass as="section" className="rounded-2xl p-6 min-w-0" aria-label="曲情報">
-          <RoundTrackDisclosure
+        <Glass as="section" className="rounded-2xl p-6 min-w-0" aria-label={isJacket ? 'アルバム情報' : '曲情報'}>
+          <RoundInfoDisclosure
             expanded={trackInfoExpanded}
             onToggle={handleToggleTrackInfo}
-            track={roundTrack}
+            item={roundInfo}
+            kind={isJacket ? 'album' : 'track'}
           />
         </Glass>
         </div>
