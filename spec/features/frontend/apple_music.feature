@@ -159,3 +159,17 @@ Feature: MusicKit integration
     Then the album information is collapsed
     When the frontend clicks "アルバム情報を開く"
     Then the album information matches the current backend album
+
+
+  Scenario: Jacket reveal uses a complete MusicKit album queue
+    Given the frontend console selected playlist "Spec Playlist A"
+    When the frontend clicks "ジャケットで開始"
+    And album queue requests are observed
+    And the frontend clicks "ギブアップ"
+    Then MusicKit plays the entire revealed album with repeat all
+    When the frontend clicks "次のラウンドへ"
+    Then album playback is stopped
+    When the frontend clicks "ギブアップ"
+    Then MusicKit plays the entire revealed album with repeat all
+    When the frontend clicks "結果発表へ"
+    Then album playback is stopped

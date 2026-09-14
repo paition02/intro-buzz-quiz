@@ -17,6 +17,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from musickit_api_mock import (
+    Album,
     Account,
     AccountResponseSuccess,
     Artwork,
@@ -287,6 +288,26 @@ def _configure_library_data(
         song_id: _make_song(song_id, title=song_titles.get(song_id))
         for song_id in song_ids
     }
+    mock.data.albums = {}
+    extra_song_ids = []
+    for index, song_id in enumerate(song_ids):
+        song = mock.data.songs[song_id]
+        album_id = f"album-{song_id}"
+        extra_id = f"album-extra-{index + 101}"
+        extra_song_ids.append(extra_id)
+        extra = _make_song(extra_id)
+        extra.album = song.album
+        extra.artist = song.artist
+        extra.album_ids = [album_id]
+        song.album_ids = [album_id]
+        mock.data.songs[extra_id] = extra
+        mock.data.albums[album_id] = Album(
+            name=song.album, artist_name=song.artist, artwork=song.artwork,
+            genre_names=[], track_count=2, is_compilation=False, is_complete=True,
+            is_mastered_for_itunes=False, is_single=False, is_prerelease=False,
+            audio_traits=[], url=f"https://music.apple.com/us/album/{album_id}",
+            track_ids=[song_id, extra_id],
+        )
     mock.data.library_songs = {
         song_id: _make_library_song(song_id, name=song_titles.get(song_id))
         for song_id in song_ids
@@ -311,7 +332,7 @@ def _configure_library_data(
 
     playlist_callable: Callable[[LookupContext], Playlist | None] = resolve_playlist
     mock.data.playlists = playlist_callable
-    mock.endpoints.web_playback = _build_web_playback(song_ids, error=playback_error)
+    mock.endpoints.web_playback = _build_web_playback([*song_ids, *extra_song_ids], error=playback_error)
 
 
 def set_musickit_library_data(

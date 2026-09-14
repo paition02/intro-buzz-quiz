@@ -1227,3 +1227,37 @@ def album_information_matches(frontend_page: Page, socket_client):
     expect(panel.locator("strong")).to_have_text(album["name"])
     expect(panel.get_by_text(album["artist"], exact=True)).to_be_visible()
     expect(panel.locator("img")).to_have_attribute("src", album["artworkInfoUrl"])
+
+
+@when("album queue requests are observed")
+def observe_album_queues(frontend_page: Page):
+    frontend_page.evaluate("""() => {
+        const mk = MusicKit.getInstance();
+        const original = mk.setQueue.bind(mk);
+        window.__albumQueueRequests = [];
+        mk.setQueue = (options) => {
+            window.__albumQueueRequests.push(options);
+            return original(options);
+        };
+    }""")
+
+
+@then("MusicKit plays the entire revealed album with repeat all")
+def entire_album_playback(frontend_page: Page, socket_client):
+    state = _current_backend_state(socket_client.server_url)
+    album_id = state["shuffledAlbumIds"][state["roundAlbumIndex"]]
+    album = next(a for a in state["albums"] if a["id"] == album_id)
+    track = next(t for t in state["tracks"] if t["albumName"] == album["name"] and t["artist"] == album["artist"])
+    frontend_page.wait_for_function("""({id, selected}) => {
+        const mk = MusicKit.getInstance();
+        const request = window.__albumQueueRequests.at(-1);
+        return request?.album === id && !request.song && !request.songs &&
+            request.repeatMode === MusicKit.PlayerRepeatMode.all &&
+            mk.repeatMode === MusicKit.PlayerRepeatMode.all && mk.isPlaying &&
+            mk.queue.items.length === 2 && mk.queue.items.some(item => !selected.includes(item.id));
+    }""", arg={"id": "album-" + track["id"], "selected": [t["id"] for t in state["tracks"]]})
+
+
+@then("album playback is stopped")
+def album_playback_stopped(frontend_page: Page):
+    frontend_page.wait_for_function("() => !MusicKit.getInstance().isPlaying")

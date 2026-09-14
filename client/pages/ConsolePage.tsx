@@ -108,7 +108,6 @@ export function ConsolePage() {
 
     if (change.step !== undefined && change.step !== 'playing') clearPlayEndedTimeout()
     if (change.step !== undefined && change.step !== 'correct' && change.step !== 'wrong') clearFeedbackEndedTimeout()
-    if (latestState.quizMode === 'jacket') return
 
     if (change.step !== undefined && change.step !== 'playing' && change.step !== 'reveal') {
       try {
@@ -121,12 +120,40 @@ export function ConsolePage() {
 
     if (change.step === 'reveal') {
       try {
-        await playFromStart()
+        if (latestState.quizMode === 'jacket') {
+          const roundKey = roundPreparationKeyFromState(latestState)
+          const album = roundAlbumFromState(latestState)
+          const track = album && latestState.tracks.find((item) =>
+            item.albumName === album.name && item.artist === album.artist &&
+            item.artworkRevealUrl === album.artworkRevealUrl)
+          if (!track) throw new Error('アルバムを取得できません')
+          const response = await musicKitInstance.api.music<{
+            data?: Array<{ relationships?: { albums?: { data?: Array<{ id: string }> } } }>
+          }>(`/v1/catalog/${musicKitInstance.storefrontId}/songs/${encodeURIComponent(track.id)}`, { include: 'albums' })
+          const albumId = response.data.data?.[0]?.relationships?.albums?.data?.[0]?.id
+          if (!albumId) throw new Error('Apple MusicのアルバムIDを取得できません')
+          const stillRevealing = () => latestState.quizMode === 'jacket' && latestState.step === 'reveal' &&
+            roundPreparationKeyFromState(latestState) === roundKey
+          if (!stillRevealing()) return
+          await musicKitInstance.setQueue({
+            album: albumId,
+            repeatMode: MusicKit.PlayerRepeatMode.all,
+            shuffleMode: MusicKit.PlayerShuffleMode.off,
+            startPlaying: false,
+          })
+          if (!stillRevealing()) return
+          await musicKitInstance.play()
+          if (!stillRevealing()) await stop()
+        } else {
+          await playFromStart()
+        }
         setPlaybackError(null)
       } catch (error) {
         setPlaybackError(errorFromUnknown(error))
       }
     }
+
+    if (latestState.quizMode === 'jacket') return
 
     if (change.roundIndex !== undefined || change.shuffledTrackIds !== undefined) {
       const nextRoundKey = roundPreparationKeyFromState(latestState)
