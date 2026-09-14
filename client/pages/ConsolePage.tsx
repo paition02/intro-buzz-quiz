@@ -60,6 +60,7 @@ export function ConsolePage() {
   const [preparedRoundKey, setPreparedRoundKey] = useState<string | null>(null)
   const [expandedRoundKey, setExpandedRoundKey] = useState<string | null>(null)
   const [playbackError, setPlaybackError] = useState<Error | null>(null)
+  const jacketPlaybackRef = useRef<Promise<void>>(Promise.resolve())
   const autoReadyRequestedRef = useRef(false)
   const playEndedTimeoutIdRef = useRef<number | null>(null)
   const feedbackEndedTimeoutIdRef = useRef<number | null>(null)
@@ -108,7 +109,31 @@ export function ConsolePage() {
 
     if (change.step !== undefined && change.step !== 'playing') clearPlayEndedTimeout()
     if (change.step !== undefined && change.step !== 'correct' && change.step !== 'wrong') clearFeedbackEndedTimeout()
-    if (latestState.quizMode === 'jacket') return
+    if (latestState.quizMode === 'jacket') {
+      if (change.step === undefined) return
+      const roundKey = roundPreparationKeyFromState(latestState)
+      const album = roundAlbumFromState(latestState)
+      const song = album && latestState.tracks.find((track) =>
+        track.albumName === album.name && track.artist === album.artist &&
+        (track.artworkRevealUrl ?? track.artworkInfoUrl ?? track.artworkChipUrl) ===
+        (album.artworkRevealUrl ?? album.artworkInfoUrl ?? album.artworkChipUrl))
+      const shouldPlay = change.step === 'reveal'
+      const stillRevealing = () => latestState.quizMode === 'jacket' &&
+        latestState.step === 'reveal' && roundPreparationKeyFromState(latestState) === roundKey
+      jacketPlaybackRef.current = jacketPlaybackRef.current.then(async () => {
+        await stop()
+        if (!shouldPlay || !stillRevealing()) return
+        if (!song) throw new Error('このアルバムの再生できる曲がありません')
+        await setSongIds([song.id])
+        await prepareNext()
+        if (!stillRevealing()) return
+        await playFromStart()
+        if (!stillRevealing()) await stop()
+        setPlaybackError(null)
+      }).catch((error: unknown) => setPlaybackError(errorFromUnknown(error)))
+      await jacketPlaybackRef.current
+      return
+    }
 
     if (change.step !== undefined && change.step !== 'playing' && change.step !== 'reveal') {
       try {
