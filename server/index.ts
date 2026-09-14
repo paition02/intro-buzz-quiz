@@ -327,6 +327,7 @@ function loadCurrentAlbum() {
   const selectedAlbumIds = state.albums.map((album) => album.id)
   if (!hasSameIds(state.shuffledAlbumIds, selectedAlbumIds)) resetShuffledAlbumIds()
   state.roundAlbumIndex = state.roundAlbumIndex + 1 >= state.shuffledAlbumIds.length ? 0 : state.roundAlbumIndex + 1
+  state.jacketHintPercent = 1
   roundIntroPlayed = false
   state.step = 'beforePlayback'
   state.answererId = null

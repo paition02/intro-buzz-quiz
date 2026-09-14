@@ -29,14 +29,31 @@ Feature: Game flow
 
   Scenario: Wrong answer in jacket mode returns to a buzzable round
     Given a jacket game is before playback with joined players "player-1,player-2"
-    When actor "player-1" presses the action API
+    When the host sets jacket hint percent to 47
+    And actor "player-1" presses the action API
     And the host judges the answer as "wrong"
     Then the step is "wrong"
     When the judging animation expires
-    And actor "player-2" presses the action API
+    Then the step is "beforePlayback"
+    And the jacket hint percent is 47
+    When actor "player-2" presses the action API
     Then the HTTP status is 200
     And the step is "answering"
     And answerer is "player-2"
+
+  Scenario: New jacket round resets the hint level but keeps display settings
+    Given a jacket game is before playback with joined players "player-1"
+    When the host sets jacket mode to "tileShuffle"
+    And the host sets jacket grayscale to true
+    And the host sets jacket hint percent to 47
+    Then the jacket hint percent is 47
+    When the host gives up
+    Then the step is "reveal"
+    When the host advances to the next round
+    Then the step is "beforePlayback"
+    And the jacket hint percent is 1
+    And the jacket mode is "tileShuffle"
+    And jacket grayscale is true
 
   Scenario: Unknown judge result is ignored
     Given player "player-1" has answer rights

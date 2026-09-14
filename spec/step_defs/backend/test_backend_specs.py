@@ -318,7 +318,8 @@ def host_shows_results(ctx, socket_client):
 
 @when("the host advances to the next round")
 def host_advances_next_round(ctx, socket_client):
-    ctx.extra["previous_track_id"] = round_track(socket_client.state)["id"]
+    track = round_track(socket_client.state)
+    ctx.extra["previous_track_id"] = track["id"] if track else None
     ctx.state = socket_client.emit("console:next-round")
 
 
