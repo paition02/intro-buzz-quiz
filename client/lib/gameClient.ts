@@ -17,7 +17,7 @@ export const initialState: GameState = {
   roundAlbumIndex: -1,
   answererId: null,
   jacketMode: 'pixelated',
-  jacketGrayscale: false,
+  jacketGrayscale: true,
   jacketHintPercent: 1,
 }
 

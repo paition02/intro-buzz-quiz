@@ -759,8 +759,9 @@ def frontend_selects_jacket_mode(frontend_page: Page, socket_client, jacket_mode
 @when("the frontend toggles jacket grayscale")
 def frontend_toggles_jacket_grayscale(frontend_page: Page, socket_client):
     checkbox = frontend_page.get_by_role("checkbox", name="白黒")
+    expect(checkbox).to_be_checked()
     checkbox.click()
-    _wait_for_backend_state(socket_client, jacketGrayscale=True)
+    _wait_for_backend_state(socket_client, jacketGrayscale=False)
 
 
 @when(parsers.parse("the frontend sets jacket hint percent to {percent:d}"))
@@ -788,7 +789,7 @@ def frontend_shows_jacket_controls(frontend_page: Page):
 def backend_jacket_settings_match_frontend_controls(socket_client):
     state = socket_client.state
     assert state["jacketMode"] == "tileShuffle"
-    assert state["jacketGrayscale"] is True
+    assert state["jacketGrayscale"] is False
     assert state["jacketHintPercent"] == 12
 
 

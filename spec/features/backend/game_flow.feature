@@ -96,3 +96,16 @@ Feature: Game flow
     And there are no players
     And the track count is 3
     And selected playlist ids are "playlist-a"
+
+
+  Scenario: Jacket grayscale defaults on after reset and next game
+    Given a jacket game is before playback with joined players "player-1"
+    Then jacket grayscale is true
+    When the host sets jacket grayscale to false
+    Then jacket grayscale is false
+    When the host gives up
+    And the host shows results
+    And the host starts the next game
+    Then jacket grayscale is true
+    When the host starts a jacket game
+    Then jacket grayscale is true

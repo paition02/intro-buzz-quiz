@@ -129,7 +129,7 @@ Defaults:
 
 - `quizMode: null`
 - `jacketMode: 'pixelated'`
-- `jacketGrayscale: false`
+- `jacketGrayscale: true`
 - `jacketHintPercent: 1`
 
 Reset and next-game should return `quizMode` to `null`. Jacket settings may reset to defaults on reset and may either persist or reset on next game; prefer resetting to defaults when returning to ready so a fresh game is predictable.

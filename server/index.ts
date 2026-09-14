@@ -32,7 +32,7 @@ let state: InternalGameState = {
   roundAlbumIndex: -1,
   answererId: null,
   jacketMode: 'pixelated',
-  jacketGrayscale: false,
+  jacketGrayscale: true,
   jacketHintPercent: 1,
 }
 
@@ -577,7 +577,7 @@ function consoleNextGame(): ConsoleActionResult {
     roundIntroPlayed = false
     state.answererId = null
     state.jacketMode = 'pixelated'
-    state.jacketGrayscale = false
+    state.jacketGrayscale = true
     state.jacketHintPercent = 1
     state.players = {}
     lastAcceptedActionAtByActorId = {}
@@ -602,7 +602,7 @@ function consoleReset(): ConsoleActionResult {
       roundAlbumIndex: -1,
       answererId: null,
       jacketMode: 'pixelated',
-      jacketGrayscale: false,
+      jacketGrayscale: true,
       jacketHintPercent: 1,
     }
   })
