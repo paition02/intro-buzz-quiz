@@ -496,7 +496,7 @@ function consoleGiveUp(): ConsoleActionResult {
 function consoleSetJacketMode(payload: ConsoleSetJacketModePayload | null = {}): ConsoleActionResult {
   if (state.phase !== 'game' || state.quizMode !== 'jacket' || state.step !== 'beforePlayback') return invalidStateError
   const jacketMode = payload?.jacketMode
-  if (!isJacketMode(jacketMode)) return 'ジャケット難読化モードを選択してください'
+  if (!isJacketMode(jacketMode)) return 'ジャケットの隠し方を選択してください'
 
   update(() => {
     state.jacketMode = jacketMode
@@ -507,7 +507,7 @@ function consoleSetJacketMode(payload: ConsoleSetJacketModePayload | null = {}):
 function consoleSetJacketGrayscale(payload: ConsoleSetJacketGrayscalePayload | null = {}): ConsoleActionResult {
   if (state.phase !== 'game' || state.quizMode !== 'jacket' || state.step !== 'beforePlayback') return invalidStateError
   const jacketGrayscale = payload?.jacketGrayscale
-  if (typeof jacketGrayscale !== 'boolean') return 'グレースケール設定が不正です'
+  if (typeof jacketGrayscale !== 'boolean') return '白黒設定が不正です'
 
   update(() => {
     state.jacketGrayscale = jacketGrayscale

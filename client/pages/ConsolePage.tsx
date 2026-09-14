@@ -33,12 +33,12 @@ import { RoundTrackDisclosure } from '../components/RoundTrackDisclosure'
 
 const JUDGE_RESULT_DURATION_MS = 1800
 const jacketModeOptions: Array<{ value: JacketMode; label: string }> = [
-  { value: 'pixelated', label: '粗解像度' },
-  { value: 'missingBlocks', label: 'ブロック欠落' },
+  { value: 'pixelated', label: 'モザイク' },
+  { value: 'missingBlocks', label: '穴あき' },
   { value: 'tileShuffle', label: 'タイルシャッフル' },
-  { value: 'circleReveal', label: '円形スポット開示' },
-  { value: 'zoomRotateCrop', label: '拡大回転クロップ' },
-  { value: 'edgeReveal', label: '外周開示' },
+  { value: 'circleReveal', label: 'スポットライト' },
+  { value: 'zoomRotateCrop', label: 'ズーム＆回転' },
+  { value: 'edgeReveal', label: 'ふちから表示' },
 ]
 
 export function ConsolePage() {
@@ -366,13 +366,13 @@ export function ConsolePage() {
     <>
       <div className="grid gap-4">
         <label className="grid gap-2">
-          <span className="text-cream font-bold">難読化モード</span>
+          <span className="text-cream font-bold">隠し方</span>
           <select
             className="min-h-12 rounded-xl border border-white/10 bg-black/40 px-3.5 text-cream font-bold outline-none focus:border-amber"
             value={state.jacketMode}
             onChange={(event) => void handleJacketModeChange(event.currentTarget.value as JacketMode)}
             disabled={busy || state.phase !== 'game' || state.step !== 'beforePlayback'}
-            aria-label="難読化モード"
+            aria-label="隠し方"
           >
             {jacketModeOptions.map((option) => (
               <option className="bg-ink text-cream" value={option.value} key={option.value}>{option.label}</option>
@@ -380,14 +380,14 @@ export function ConsolePage() {
           </select>
         </label>
         <label className="flex min-h-12 items-center justify-between gap-3 rounded-xl border border-white/10 bg-black/30 px-3.5">
-          <span className="text-cream font-bold">グレースケール</span>
+          <span className="text-cream font-bold">白黒</span>
           <input
             className="size-6 accent-amber"
             type="checkbox"
             checked={state.jacketGrayscale}
             onChange={(event) => void handleJacketGrayscaleChange(event.currentTarget.checked)}
             disabled={busy || state.phase !== 'game' || state.step !== 'beforePlayback'}
-            aria-label="グレースケール"
+            aria-label="白黒"
           />
         </label>
       </div>

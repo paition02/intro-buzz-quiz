@@ -752,13 +752,13 @@ def backend_quiz_mode(socket_client, quiz_mode: str):
 
 @when(parsers.parse('the frontend selects jacket mode "{jacket_mode}"'))
 def frontend_selects_jacket_mode(frontend_page: Page, socket_client, jacket_mode: str):
-    frontend_page.get_by_role("combobox", name="難読化モード").select_option(jacket_mode)
+    frontend_page.get_by_role("combobox", name="隠し方").select_option(jacket_mode)
     _wait_for_backend_state(socket_client, jacketMode=jacket_mode)
 
 
 @when("the frontend toggles jacket grayscale")
 def frontend_toggles_jacket_grayscale(frontend_page: Page, socket_client):
-    checkbox = frontend_page.get_by_role("checkbox", name="グレースケール")
+    checkbox = frontend_page.get_by_role("checkbox", name="白黒")
     checkbox.click()
     _wait_for_backend_state(socket_client, jacketGrayscale=True)
 
@@ -779,8 +779,8 @@ def frontend_sets_jacket_hint_percent(frontend_page: Page, socket_client, percen
 
 @then("the frontend shows jacket controls")
 def frontend_shows_jacket_controls(frontend_page: Page):
-    expect(frontend_page.get_by_role("combobox", name="難読化モード")).to_be_visible(timeout=30000)
-    expect(frontend_page.get_by_role("checkbox", name="グレースケール")).to_be_visible(timeout=30000)
+    expect(frontend_page.get_by_role("combobox", name="隠し方")).to_be_visible(timeout=30000)
+    expect(frontend_page.get_by_role("checkbox", name="白黒")).to_be_visible(timeout=30000)
     expect(frontend_page.get_by_role("slider", name="ヒントレベル")).to_be_visible(timeout=30000)
 
 
