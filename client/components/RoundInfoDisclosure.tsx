@@ -47,7 +47,7 @@ export function RoundInfoDisclosure({
             ) : (
               <span className="size-24 rounded-xl shrink-0 grid place-items-center bg-linear-to-br from-pink to-amber text-cocoa text-4xl font-black" aria-hidden="true">♪</span>
             )}
-            <div className="min-w-0">
+            <div className="min-w-0 break-words">
               <strong className="block text-2xl font-bold leading-tight">{'name' in item ? item.name : item.title}</strong>
               <span className="block mt-2.5 text-subtle">{item.artist}</span>
             </div>
