@@ -24,7 +24,8 @@ import { errorFromUnknown, uniqueTracksById } from '../lib/util'
 import { playResultSound, playResultsSound } from '../lib/sounds'
 import { LibraryPlaylistsSection } from '../components/PlaylistPanel'
 import { PlayerBadge } from '../components/PlayerBadge'
-import { CircularPercentSlider, CircularSecondsSlider } from '../components/CircularSecondsSlider'
+import { CircularSecondsSlider } from '../components/CircularSecondsSlider'
+import { JacketHintSlider } from '../components/JacketHintSlider'
 import { Glass } from '../components/Glass'
 import { Button } from '../components/Button'
 import { Eyebrow } from '../components/Eyebrow'
@@ -358,10 +359,8 @@ export function ConsolePage() {
   })
 
   const handleJacketHintPercentChange = (jacketHintPercent: number) => {
-    void consoleAction('console:set-jacket-hint-percent', { jacketHintPercent }).catch(report)
+    return consoleAction('console:set-jacket-hint-percent', { jacketHintPercent })
   }
-
-  const handleJacketHintPercentCommit = handleJacketHintPercentChange
 
   const progressControls = state.quizMode === 'jacket' ? (
     <>
@@ -394,11 +393,11 @@ export function ConsolePage() {
       </div>
       <div className="grid justify-items-center gap-2.5 mt-4">
         <span className="justify-self-start text-cream font-bold">ヒントレベル</span>
-        <CircularPercentSlider
+        <JacketHintSlider
+          key={roundPreparationKey}
           value={state.jacketHintPercent}
-          label="ヒントレベル"
           onChange={handleJacketHintPercentChange}
-          onCommit={handleJacketHintPercentCommit}
+          onError={report}
         />
       </div>
     </>

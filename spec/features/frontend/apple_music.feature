@@ -129,3 +129,17 @@ Feature: MusicKit integration
     Given the frontend console is logged into mocked MusicKit with track loading failure "Tracks unavailable"
     When the frontend opens playlist "Spec Playlist A"
     Then the frontend shows "Tracks unavailable"
+
+
+  Scenario: Jacket hint repeated keys and new round stay synchronized
+    Given the frontend console selected playlist "Spec Playlist A"
+    When the frontend clicks "ジャケットで開始"
+    And the frontend sets jacket hint percent to 47
+    Then the jacket hint slider shows 47 percent
+    When the frontend sets jacket hint percent to 12
+    Then the jacket hint slider shows 12 percent
+    When the frontend clicks "ギブアップ"
+    And the frontend clicks "次のラウンドへ"
+    Then the jacket hint slider shows 1 percent
+    When the frontend sets jacket hint percent to 12
+    Then the jacket hint slider shows 12 percent

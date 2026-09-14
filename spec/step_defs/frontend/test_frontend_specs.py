@@ -772,6 +772,8 @@ def frontend_sets_jacket_hint_percent(frontend_page: Page, socket_client, percen
     key = "ArrowRight" if percent > current else "ArrowLeft"
     for _ in range(abs(percent - current)):
         frontend_page.keyboard.press(key)
+        # Let server echoes interleave with the next key, exposing stale-value races.
+        frontend_page.wait_for_timeout(5)
     _wait_for_backend_state(socket_client, jacketHintPercent=percent)
 
 
@@ -1200,3 +1202,8 @@ def console_shows_initialization(socket_client):
 @then("there are no selected tracks")
 def no_selected_tracks(socket_client):
     assert socket_client.state["tracks"] == []
+
+
+@then(parsers.parse("the jacket hint slider shows {percent:d} percent"))
+def jacket_hint_slider_shows(frontend_page: Page, percent: int):
+    expect(frontend_page.get_by_role("slider", name="ヒントレベル")).to_have_attribute("aria-valuenow", str(percent))
