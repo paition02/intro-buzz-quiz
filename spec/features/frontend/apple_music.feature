@@ -173,3 +173,13 @@ Feature: MusicKit integration
     Then MusicKit plays the entire revealed album with repeat all
     When the frontend clicks "結果発表へ"
     Then album playback is stopped
+
+
+  Scenario: Jacket reveal resolves library song IDs before album playback
+    Given the frontend console selected playlist "Spec Playlist A"
+    And the selected tracks have library IDs
+    When the frontend clicks "ジャケットで開始"
+    And album queue requests are observed
+    And the frontend clicks "ギブアップ"
+    Then MusicKit plays the entire revealed album with repeat all
+    And no library ID is sent to the catalog songs endpoint

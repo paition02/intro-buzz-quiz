@@ -127,9 +127,20 @@ export function ConsolePage() {
             item.albumName === album.name && item.artist === album.artist &&
             item.artworkRevealUrl === album.artworkRevealUrl)
           if (!track) throw new Error('アルバムを取得できません')
+          let catalogSongId = track.id
+          if (catalogSongId.startsWith('i.')) {
+            const libraryResponse = await musicKitInstance.api.music<{
+              data?: Array<{ id: string }>
+            }>(`/v1/me/library/songs/${encodeURIComponent(catalogSongId)}/catalog`)
+            const resolvedId = libraryResponse.data.data?.[0]?.id
+            if (!resolvedId || resolvedId.startsWith('i.')) {
+              throw new Error('このライブラリ曲に対応するApple Musicのカタログ曲がありません')
+            }
+            catalogSongId = resolvedId
+          }
           const response = await musicKitInstance.api.music<{
             data?: Array<{ relationships?: { albums?: { data?: Array<{ id: string }> } } }>
-          }>(`/v1/catalog/${musicKitInstance.storefrontId}/songs/${encodeURIComponent(track.id)}`, { include: 'albums' })
+          }>(`/v1/catalog/${musicKitInstance.storefrontId}/songs/${encodeURIComponent(catalogSongId)}`, { include: 'albums' })
           const albumId = response.data.data?.[0]?.relationships?.albums?.data?.[0]?.id
           if (!albumId) throw new Error('Apple MusicのアルバムIDを取得できません')
           const stillRevealing = () => latestState.quizMode === 'jacket' && latestState.step === 'reveal' &&

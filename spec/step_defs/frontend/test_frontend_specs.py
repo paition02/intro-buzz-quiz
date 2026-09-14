@@ -1255,9 +1255,29 @@ def entire_album_playback(frontend_page: Page, socket_client):
             request.repeatMode === MusicKit.PlayerRepeatMode.all &&
             mk.repeatMode === MusicKit.PlayerRepeatMode.all && mk.isPlaying &&
             mk.queue.items.length === 2 && mk.queue.items.some(item => !selected.includes(item.id));
-    }""", arg={"id": "album-" + track["id"], "selected": [t["id"] for t in state["tracks"]]})
+    }""", arg={"id": "album-" + track["id"].removeprefix("i."), "selected": [t["id"] for t in state["tracks"]]})
 
 
 @then("album playback is stopped")
 def album_playback_stopped(frontend_page: Page):
     frontend_page.wait_for_function("() => !MusicKit.getInstance().isPlaying")
+
+
+@given("the selected tracks have library IDs")
+def selected_library_ids(frontend_page: Page, socket_client):
+    mock = getattr(frontend_page, "music_kit_api_mock")
+    state = _current_backend_state(socket_client.server_url)
+    tracks = [dict(t) for t in state["tracks"]]
+    for track in tracks:
+        catalog_id = track["id"]
+        library_id = "i." + catalog_id
+        mock.data.library_songs[library_id] = mock.data.library_songs[catalog_id]
+        track["id"] = library_id
+    socket_client.emit("console:select-playlists", {"selectedPlaylistIds": state["selectedPlaylistIds"], "tracks": tracks})
+
+
+@then("no library ID is sent to the catalog songs endpoint")
+def no_library_catalog_requests(frontend_page: Page):
+    requests = getattr(frontend_page, "request_log", [])
+    assert any("/v1/me/library/songs/i." in r["url"] and "/catalog" in r["url"] for r in requests)
+    assert not any("/catalog/" in r["url"] and "/songs/i." in r["url"] for r in requests)
