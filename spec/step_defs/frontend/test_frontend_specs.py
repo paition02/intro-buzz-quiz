@@ -115,23 +115,49 @@ def _wait_for_backend_state_while_observing_page(frontend_page: Page, socket_cli
     raise AssertionError(f"state with {expected} not observed; latest={socket_client.state}")
 
 
-def _set_console_playback_seconds(frontend_page: Page, socket_client, seconds: int):
-    _ = socket_client
+def _playback_seconds_slider(frontend_page: Page):
     slider = frontend_page.get_by_role("slider", name="再生秒数")
     expect(slider).to_be_visible(timeout=30000)
+    return slider
+
+
+def _playback_seconds_slider_point(frontend_page: Page, degrees: float, radius_ratio: float):
+    slider = _playback_seconds_slider(frontend_page)
+    slider.scroll_into_view_if_needed(timeout=10000)
     box = slider.bounding_box()
     assert box is not None
-    minimum = 0.1
-    maximum = 30
-    progress = (seconds - minimum) / (maximum - minimum)
-    degrees = progress * 360
-    radians = (degrees - 90) * 3.141592653589793 / 180
-    radius = min(box["width"], box["height"]) * 0.38
-    x = box["x"] + box["width"] / 2 + radius * math.cos(radians)
-    y = box["y"] + box["height"] / 2 + radius * math.sin(radians)
+    radians = (degrees - 90) * math.pi / 180
+    radius = min(box["width"], box["height"]) * radius_ratio
+    return box["x"] + box["width"] / 2 + radius * math.cos(radians), box["y"] + box["height"] / 2 + radius * math.sin(radians)
+
+
+def _press_playback_seconds_slider(frontend_page: Page, degrees: float, radius_ratio: float):
+    x, y = _playback_seconds_slider_point(frontend_page, degrees, radius_ratio)
     frontend_page.mouse.move(x, y)
     frontend_page.mouse.down()
     frontend_page.mouse.up()
+    return _playback_seconds_slider(frontend_page)
+
+
+def _touch_swipe_up_on_playback_seconds_slider(frontend_page: Page, degrees: float, radius_ratio: float):
+    frontend_page.set_viewport_size({"width": 390, "height": 600})
+    x, y = _playback_seconds_slider_point(frontend_page, degrees, radius_ratio)
+    setattr(frontend_page, "scroll_y_before_swipe", frontend_page.evaluate("window.scrollY"))
+    session = frontend_page.context.new_cdp_session(frontend_page)
+    session.send(
+        "Input.synthesizeScrollGesture",
+        {"x": x, "y": y, "xDistance": 0, "yDistance": -200, "gestureSourceType": "touch", "speed": 800},
+    )
+    session.detach()
+    frontend_page.wait_for_timeout(500)
+
+
+def _set_console_playback_seconds(frontend_page: Page, socket_client, seconds: int):
+    _ = socket_client
+    minimum = 0.1
+    maximum = 30
+    progress = (seconds - minimum) / (maximum - minimum)
+    slider = _press_playback_seconds_slider(frontend_page, progress * 360, 0.38)
     expect(slider).to_have_attribute("aria-valuenow", str(seconds), timeout=30000)
     setattr(frontend_page, "last_playback_seconds", seconds)
 
@@ -1015,6 +1041,42 @@ def console_shows_before_playback(socket_client):
 @then("the gameboard shows the playing stage is ready")
 def gameboard_shows_playing_ready(frontend_page: Page):
     expect(_gameboard_page(frontend_page).get_by_text("♪", exact=True).first).to_be_visible(timeout=30000)
+
+
+@when(parsers.parse("the frontend sets playback seconds to {seconds:d} on the slider ring"))
+def frontend_sets_playback_seconds_on_ring(frontend_page: Page, socket_client, seconds: int):
+    _set_console_playback_seconds(frontend_page, socket_client, seconds)
+
+
+@when("the frontend presses inside the playback seconds slider ring")
+def frontend_presses_inside_playback_seconds_ring(frontend_page: Page):
+    _press_playback_seconds_slider(frontend_page, 270, 0.15)
+
+
+@when("the frontend swipes up inside the playback seconds slider ring on a phone viewport")
+def frontend_swipes_inside_playback_seconds_ring(frontend_page: Page):
+    _touch_swipe_up_on_playback_seconds_slider(frontend_page, 0, 0.1)
+
+
+@when("the frontend swipes up on the playback seconds slider ring on a phone viewport")
+def frontend_swipes_on_playback_seconds_ring(frontend_page: Page):
+    _touch_swipe_up_on_playback_seconds_slider(frontend_page, 270, 0.38)
+
+
+@then("the console page has scrolled")
+def console_page_has_scrolled(frontend_page: Page):
+    assert frontend_page.evaluate("window.scrollY") > getattr(frontend_page, "scroll_y_before_swipe")
+
+
+@then("the console page has not scrolled")
+def console_page_has_not_scrolled(frontend_page: Page):
+    assert frontend_page.evaluate("window.scrollY") == getattr(frontend_page, "scroll_y_before_swipe")
+
+
+@then(parsers.parse("the playback seconds slider shows {seconds:d} seconds"))
+def playback_seconds_slider_shows(frontend_page: Page, seconds: int):
+    frontend_page.wait_for_timeout(300)
+    expect(_playback_seconds_slider(frontend_page)).to_have_attribute("aria-valuenow", str(seconds))
 
 
 @when("the host plays the intro")

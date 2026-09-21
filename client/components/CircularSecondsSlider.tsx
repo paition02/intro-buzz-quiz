@@ -23,6 +23,11 @@ function CircularValueSlider({
 }) {
   const radius = 78
   const center = 96
+  const trackWidth = 18
+  const knobRadius = 15
+  const hitOuter = radius + knobRadius
+  const hitInner = radius - knobRadius
+  const ringPathRef = useRef<SVGPathElement>(null)
   const activePointerIdRef = useRef<number | null>(null)
   const interactionRectRef = useRef<DOMRectReadOnly | null>(null)
   const latestValueRef = useRef(value)
@@ -36,6 +41,24 @@ function CircularValueSlider({
   useEffect(() => {
     latestValueRef.current = value
   }, [value])
+
+  // ring 上で始まった touch だけ page scroll を止める (React の onTouchStart は passive なので直接登録)
+  useEffect(() => {
+    const ringPath = ringPathRef.current
+    if (!ringPath) return
+    const preventScroll = (event: TouchEvent) => event.preventDefault()
+    ringPath.addEventListener('touchstart', preventScroll, { passive: false })
+    return () => ringPath.removeEventListener('touchstart', preventScroll)
+  }, [])
+
+  const ringHitPath = [
+    `M ${center - hitOuter} ${center}`,
+    `a ${hitOuter} ${hitOuter} 0 1 0 ${hitOuter * 2} 0`,
+    `a ${hitOuter} ${hitOuter} 0 1 0 ${-hitOuter * 2} 0`,
+    `M ${center - hitInner} ${center}`,
+    `a ${hitInner} ${hitInner} 0 1 0 ${hitInner * 2} 0`,
+    `a ${hitInner} ${hitInner} 0 1 0 ${-hitInner * 2} 0`,
+  ].join(' ')
 
   const updateFromPoint = (clientX: number, clientY: number, rect: DOMRectReadOnly) => {
     const x = clientX - rect.left - rect.width / 2
@@ -53,57 +76,60 @@ function CircularValueSlider({
 
   return (
     <div className="grid place-items-center w-60 max-w-full mx-auto">
-      <svg
-        className="group w-56 max-w-full touch-none outline-none overflow-visible"
-        viewBox="0 0 192 192"
-        role="slider"
-        aria-label={label}
-        aria-valuemin={min}
-        aria-valuemax={max}
-        aria-valuenow={value}
-        tabIndex={0}
-        onPointerDown={(event) => {
-          activePointerIdRef.current = event.pointerId
-          interactionRectRef.current = event.currentTarget.getBoundingClientRect()
-          event.currentTarget.setPointerCapture(event.pointerId)
-          updateFromPoint(event.clientX, event.clientY, interactionRectRef.current)
-        }}
-        onPointerMove={(event) => {
-          if (activePointerIdRef.current !== event.pointerId) return
-          updateFromPoint(event.clientX, event.clientY, interactionRectRef.current ?? event.currentTarget.getBoundingClientRect())
-        }}
-        onPointerUp={(event) => {
-          if (activePointerIdRef.current !== event.pointerId) return
-          const nextValue = updateFromPoint(event.clientX, event.clientY, interactionRectRef.current ?? event.currentTarget.getBoundingClientRect())
-          activePointerIdRef.current = null
-          interactionRectRef.current = null
-          if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
-          onCommit?.(nextValue)
-        }}
-        onPointerCancel={(event) => {
-          if (activePointerIdRef.current !== event.pointerId) return
-          activePointerIdRef.current = null
-          interactionRectRef.current = null
-          if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
-          onCommit?.(latestValueRef.current)
-        }}
-        onKeyDown={(event) => {
-          let nextValue: number | null = null
-          const precision = step < 1 ? 1 : 0
-          const currentValue = latestValueRef.current
-          if (event.key === 'ArrowRight' || event.key === 'ArrowUp') nextValue = Number(Math.min(max, currentValue + step).toFixed(precision))
-          if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') nextValue = Number(Math.max(min, currentValue - step).toFixed(precision))
-          if (nextValue == null) return
-          event.preventDefault()
-          latestValueRef.current = nextValue
-          onChange(nextValue)
-          onCommit?.(nextValue)
-        }}
-      >
-        <circle className="fill-none stroke-white/15" strokeWidth={18} cx={center} cy={center} r={radius} />
+      <svg className="w-56 max-w-full overflow-visible pointer-events-none" viewBox="0 0 192 192">
+        <path
+          ref={ringPathRef}
+          className="peer pointer-events-auto fill-transparent outline-none"
+          fillRule="evenodd"
+          d={ringHitPath}
+          role="slider"
+          aria-label={label}
+          aria-valuemin={min}
+          aria-valuemax={max}
+          aria-valuenow={value}
+          tabIndex={0}
+          onPointerDown={(event) => {
+            activePointerIdRef.current = event.pointerId
+            interactionRectRef.current = event.currentTarget.getBoundingClientRect()
+            event.currentTarget.setPointerCapture(event.pointerId)
+            updateFromPoint(event.clientX, event.clientY, interactionRectRef.current)
+          }}
+          onPointerMove={(event) => {
+            if (activePointerIdRef.current !== event.pointerId) return
+            updateFromPoint(event.clientX, event.clientY, interactionRectRef.current ?? event.currentTarget.getBoundingClientRect())
+          }}
+          onPointerUp={(event) => {
+            if (activePointerIdRef.current !== event.pointerId) return
+            const nextValue = updateFromPoint(event.clientX, event.clientY, interactionRectRef.current ?? event.currentTarget.getBoundingClientRect())
+            activePointerIdRef.current = null
+            interactionRectRef.current = null
+            if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+            onCommit?.(nextValue)
+          }}
+          onPointerCancel={(event) => {
+            if (activePointerIdRef.current !== event.pointerId) return
+            activePointerIdRef.current = null
+            interactionRectRef.current = null
+            if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+            onCommit?.(latestValueRef.current)
+          }}
+          onKeyDown={(event) => {
+            let nextValue: number | null = null
+            const precision = step < 1 ? 1 : 0
+            const currentValue = latestValueRef.current
+            if (event.key === 'ArrowRight' || event.key === 'ArrowUp') nextValue = Number(Math.min(max, currentValue + step).toFixed(precision))
+            if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') nextValue = Number(Math.max(min, currentValue - step).toFixed(precision))
+            if (nextValue == null) return
+            event.preventDefault()
+            latestValueRef.current = nextValue
+            onChange(nextValue)
+            onCommit?.(nextValue)
+          }}
+        />
+        <circle className="fill-none stroke-white/15" strokeWidth={trackWidth} cx={center} cy={center} r={radius} />
         <circle
           className="fill-none stroke-amber"
-          strokeWidth={18}
+          strokeWidth={trackWidth}
           strokeLinecap="round"
           transform="rotate(-90 96 96)"
           cx={center}
@@ -112,9 +138,9 @@ function CircularValueSlider({
           strokeDasharray={circumference}
           strokeDashoffset={dashOffset}
         />
-        <circle className="fill-pink stroke-cream group-focus-visible:stroke-white" strokeWidth={4} cx={knobX} cy={knobY} r="15" />
-        <text className="fill-cream text-3xl font-black pointer-events-none" dominantBaseline="middle" x={center} y={center - 4} textAnchor="middle">{formatValue(value)}</text>
-        <text className="fill-subtle text-sm font-bold pointer-events-none" dominantBaseline="middle" x={center} y={center + 22} textAnchor="middle">{unit}</text>
+        <circle className="fill-pink stroke-cream peer-focus-visible:stroke-white" strokeWidth={4} cx={knobX} cy={knobY} r={knobRadius} />
+        <text className="fill-cream text-3xl font-black" dominantBaseline="middle" x={center} y={center - 4} textAnchor="middle">{formatValue(value)}</text>
+        <text className="fill-subtle text-sm font-bold" dominantBaseline="middle" x={center} y={center + 22} textAnchor="middle">{unit}</text>
       </svg>
     </div>
   )
