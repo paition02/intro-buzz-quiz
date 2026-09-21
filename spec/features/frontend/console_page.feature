@@ -69,3 +69,106 @@ Feature: Host console page
     When the frontend clicks "ギブアップ"
     And the frontend clicks "次のラウンドへ"
     Then the console round track information is hidden
+
+  Scenario: Console answer card is enabled only while a player has answer rights
+    Given the frontend console selected playlist "Spec Playlist A"
+    And action button "player-1" is joined
+    When the frontend clicks "イントロで開始"
+    Then the console answer input is disabled
+    When the backend host plays the intro for 1 seconds
+    And backend actor "player-1" presses the action API
+    Then the console answer input is enabled
+
+  Scenario: Console answer card suggests tracks with artwork and artist
+    Given the frontend console has actor "player-1" answering in an intro game
+    When the frontend types "Track" into the answer input
+    Then the console answer suggestions are "Track 1,Track 2,Track 3"
+    And each console answer suggestion shows artwork and artist
+
+  Scenario: Console answer card tolerates typos
+    Given the frontend console has actor "player-1" answering in an intro game
+    When the frontend types "Trak 2" into the answer input
+    Then the first console answer suggestion is "Track 2"
+
+  Scenario: Console answer card shows at most 5 suggestions
+    Given the frontend console has actor "player-1" answering in an intro game with 8 tracks
+    When the frontend types "Track" into the answer input
+    Then the console shows 5 answer suggestions
+
+  Scenario: Console answer card shows no suggestions for empty input
+    Given the frontend console has actor "player-1" answering in an intro game
+    Then the console shows 0 answer suggestions
+    When the frontend types "Track" into the answer input
+    And the frontend clears the answer input
+    Then the console shows 0 answer suggestions
+
+  Scenario: Choosing the round track in the answer card judges correct
+    Given the frontend console has actor "player-1" answering in an intro game
+    When the frontend chooses the round track in the answer card
+    Then backend phase is "game" and step is "correct"
+    And player "player-1" score is 1
+    And the console answer input is empty
+    And the console shows 0 answer suggestions
+
+  Scenario: Choosing another track in the answer card judges wrong
+    Given the frontend console has actor "player-1" answering in an intro game
+    When the frontend chooses a track other than the round track in the answer card
+    Then backend phase is "game" and step is "wrong"
+    And player "player-1" score is 0
+
+  Scenario: Console answer card suggests albums in jacket mode
+    Given the frontend console has actor "player-1" answering in a jacket game
+    When the frontend types "Album" into the answer input
+    Then the console answer suggestions are "Album 1,Album 2,Album 3"
+    And each console answer suggestion shows artwork and artist
+    When the frontend chooses the round album in the answer card
+    Then backend phase is "game" and step is "correct"
+    And player "player-1" score is 1
+
+  Scenario: Choosing another album in the answer card judges wrong
+    Given the frontend console has actor "player-1" answering in a jacket game
+    When the frontend chooses an album other than the round album in the answer card
+    Then backend phase is "game" and step is "wrong"
+    And player "player-1" score is 0
+
+  Scenario: Console answer card answers the first suggestion with Enter
+    Given the frontend console has actor "player-1" answering in an intro game
+    When the frontend types the round track title into the answer input
+    Then the console highlights answer suggestion 1
+    When the frontend presses "Enter" in the answer input
+    Then backend phase is "game" and step is "correct"
+    And player "player-1" score is 1
+    And the console answer input is empty
+
+  Scenario: Console answer card moves the highlight with arrow keys and wraps
+    Given the frontend console has actor "player-1" answering in an intro game
+    When the frontend types "Track" into the answer input
+    And the frontend presses "ArrowDown" 2 times in the answer input
+    Then the console highlights answer suggestion 3
+    When the frontend presses "ArrowDown" 1 times in the answer input
+    Then the console highlights answer suggestion 1
+    When the frontend presses "ArrowUp" 1 times in the answer input
+    Then the console highlights answer suggestion 3
+    When the frontend answers with the highlighted suggestion by Enter
+    Then the backend judged the highlighted suggestion
+
+  Scenario: Console answer card resets the highlight when the input changes
+    Given the frontend console has actor "player-1" answering in an intro game
+    When the frontend types "Track" into the answer input
+    And the frontend presses "ArrowDown" 2 times in the answer input
+    Then the console highlights answer suggestion 3
+    When the frontend types "Track " into the answer input
+    Then the console highlights answer suggestion 1
+
+  Scenario: Console answer card clears the input with Escape
+    Given the frontend console has actor "player-1" answering in an intro game
+    When the frontend types "Track" into the answer input
+    And the frontend presses "Escape" in the answer input
+    Then the console answer input is empty
+    And the console shows 0 answer suggestions
+
+  Scenario: Console answer card ignores Enter without suggestions
+    Given the frontend console has actor "player-1" answering in an intro game
+    When the frontend presses "Enter" in the answer input
+    Then backend phase is "game" and step is "answering"
+    And the console answer input is enabled
