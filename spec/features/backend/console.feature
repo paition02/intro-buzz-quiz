@@ -24,7 +24,15 @@ Feature: Host console state transitions
     When the host sends tracks with missing id or title
     Then the track count is 1
 
-  Scenario: Jacket album candidates are deduplicated from selected tracks
+  Scenario: Jacket album candidates are grouped by album name and album artist
+    Given the host console is ready
+    When the host selects tracks of one album with differing track artists and artwork
+    Then the track count is 3
+    And the album count is 1
+    And the album lists 3 tracks
+    And the album artist is "Shared Artist"
+
+  Scenario: Jacket album candidates without an album artist are grouped by name and track artist
     Given the host console is ready
     When the host selects multiple tracks from one album
     Then the track count is 3

@@ -54,6 +54,14 @@ Feature: MusicKit integration
     Then the selected round artwork URLs are sized for their display contexts
     And the selected tracks include album names
 
+  Scenario: Library playlist tracks of one album across two library albums form one jacket album
+    Given the frontend console is logged into mocked MusicKit with playlist "Spec Playlist A" on two library albums of one album
+    When the frontend clicks "Spec Playlist A"
+    Then MusicKit tracks for library playlist "playlist-a" are requested with their library albums
+    And the selected track count is 3
+    And the selected tracks carry album artist "Shared Artist"
+    And the selected album count is 1
+
   Scenario: Selecting a playlist sends the selected tracks to the backend
     Given the frontend console is logged into mocked MusicKit
     When the frontend clicks "Spec Playlist A"

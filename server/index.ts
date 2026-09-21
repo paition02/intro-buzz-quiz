@@ -241,36 +241,41 @@ function uniqueTracksById(tracks: Track[]) {
   })
 }
 
-function uniqueAlbumsById(albums: Album[]) {
-  const seenAlbumIds = new Set<string>()
-  return albums.filter((album) => {
-    if (seenAlbumIds.has(album.id)) return false
-    seenAlbumIds.add(album.id)
-    return true
-  })
+function normalizedAlbumText(value: string) {
+  return value.normalize('NFKC').trim().toLowerCase().replace(/\s+/g, ' ')
 }
 
+// Albums are identified the way people recognize them: title and album
+// artist. Library album IDs split the same album across releases and
+// artwork differs across remasters, so neither takes part in the key.
 function albumIdFromTrack(track: Track) {
   return [
-    track.albumName.trim().toLowerCase(),
-    track.artist.trim().toLowerCase(),
-    track.artworkRevealUrl ?? track.artworkInfoUrl ?? track.artworkChipUrl ?? '',
+    normalizedAlbumText(track.albumName),
+    normalizedAlbumText(track.albumArtist ?? track.artist),
   ].join('\u001f')
 }
 
 function albumsFromTracks(tracks: Track[]) {
-  return uniqueAlbumsById(
-    tracks
-      .filter((track) => track.albumName.trim())
-      .map((track): Album => ({
-        id: albumIdFromTrack(track),
-        name: track.albumName,
-        artist: track.artist,
-        artworkChipUrl: track.artworkChipUrl,
-        artworkInfoUrl: track.artworkInfoUrl,
-        artworkRevealUrl: track.artworkRevealUrl,
-      })),
-  )
+  const albums = new Map<string, Album>()
+  for (const track of tracks) {
+    if (!track.albumName.trim()) continue
+    const id = albumIdFromTrack(track)
+    const album = albums.get(id)
+    if (album) {
+      album.trackIds.push(track.id)
+      continue
+    }
+    albums.set(id, {
+      id,
+      name: track.albumName,
+      artist: track.albumArtist ?? track.artist,
+      artworkChipUrl: track.artworkChipUrl,
+      artworkInfoUrl: track.artworkInfoUrl,
+      artworkRevealUrl: track.artworkRevealUrl,
+      trackIds: [track.id],
+    })
+  }
+  return [...albums.values()]
 }
 
 function shuffledValues<T>(values: T[]) {
@@ -389,6 +394,7 @@ function consoleSelectPlaylists(payload: ConsoleSelectPlaylistsPayload = {}): Co
       title: String(track.title ?? ''),
       artist: String(track.artist ?? ''),
       albumName: String(track.albumName ?? ''),
+      albumArtist: typeof track.albumArtist === 'string' && track.albumArtist ? track.albumArtist : undefined,
       artworkChipUrl: typeof track.artworkChipUrl === 'string' ? track.artworkChipUrl : undefined,
       artworkInfoUrl: typeof track.artworkInfoUrl === 'string' ? track.artworkInfoUrl : undefined,
       artworkRevealUrl: typeof track.artworkRevealUrl === 'string' ? track.artworkRevealUrl : undefined,

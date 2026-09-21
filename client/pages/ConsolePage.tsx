@@ -123,9 +123,7 @@ export function ConsolePage() {
         if (latestState.quizMode === 'jacket') {
           const roundKey = roundPreparationKeyFromState(latestState)
           const album = roundAlbumFromState(latestState)
-          const track = album && latestState.tracks.find((item) =>
-            item.albumName === album.name && item.artist === album.artist &&
-            item.artworkRevealUrl === album.artworkRevealUrl)
+          const track = album && latestState.tracks.find((item) => album.trackIds.includes(item.id))
           if (!track) throw new Error('アルバムを取得できません')
           const albumId = await (async () => {
             if (track.id.startsWith('i.')) {

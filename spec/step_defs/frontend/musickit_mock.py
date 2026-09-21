@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import tempfile
 import time
 import urllib.request
@@ -44,6 +45,7 @@ from musickit_api_mock import (
     WebPlaybackResponseSuccess,
     WidevineCertResponseSuccess,
 )
+from musickit_api_mock.transport.http import Request
 from musickit_api_mock_playwright import intercept
 from playwright.sync_api import Page, Route
 
@@ -401,6 +403,42 @@ def set_musickit_library_albums(page: Page, album_tracks: dict[str, list[str]]) 
     mock.endpoints.web_playback = web_playback
 
 
+def set_musickit_library_song_albums(
+    page: Page,
+    album_songs: dict[str, list[str]],
+    *,
+    album_name: str,
+    artist_name: str,
+) -> None:
+    """Put the playlists' library songs on library albums that share one title and album artist.
+
+    Each song keeps its own track artist and artwork, as with featured-artist
+    tracks, and several library album ids stand for the same album the way
+    separate releases do in a real library.
+    """
+    mock = getattr(page, "music_kit_api_mock", None)
+    if mock is None:
+        raise AssertionError("MusicKit API mock has not been configured for this page")
+    library_songs = dict(mock.data.library_songs)
+    library_albums = dict(mock.data.library_albums or {})
+    for album_id, song_ids in album_songs.items():
+        for song_id in song_ids:
+            mock.data.songs[song_id].album = album_name
+            library_songs[song_id] = replace(library_songs[song_id], album_name=album_name, album_ids=[album_id])
+        first = library_songs[song_ids[0]]
+        library_albums[album_id] = CatalogLibraryAlbum(
+            name=album_name,
+            artist_name=artist_name,
+            artwork=first.artwork,
+            genre_names=list(first.genre_names),
+            track_count=len(song_ids),
+            catalog_id="album-" + song_ids[0],
+            track_ids=list(song_ids),
+        )
+    mock.data.library_songs = library_songs
+    mock.data.library_albums = library_albums
+
+
 def _parse_positive_int(values: list[str] | None, *, default: int) -> int:
     if not values:
         return default
@@ -444,6 +482,45 @@ def _register_library_playlists_override(page: Page, mock: MusicKitApiMock) -> N
         )
 
     page.route("**/api.music.apple.com/v1/me/library/playlists*", handler)
+
+
+_LIBRARY_PLAYLIST_TRACKS_PATH = re.compile(r"/v1/me/library/playlists/[^/]+/tracks")
+
+
+def _register_library_playlist_tracks_include_override(page: Page, mock: MusicKitApiMock) -> None:
+    """Honor ``?include=`` on library playlist tracks, which musickit-api-mock 0.2.0 ignores.
+
+    The tracks come from the mock's own playlist response; their relationships
+    come from the mock's ``/v1/me/library/songs?ids=…&include=…`` endpoint.
+    """
+    def handler(route: Route) -> None:
+        parsed = urlparse(route.request.url)
+        includes = parse_qs(parsed.query).get("include")
+        if route.request.method != "GET" or not includes or not _LIBRARY_PLAYLIST_TRACKS_PATH.fullmatch(parsed.path):
+            route.fallback()
+            return
+        headers = dict(route.request.headers)
+        response = mock.handle_request(Request(method="GET", url=route.request.url, headers=headers, body=None))
+        if response is None:
+            route.fallback()
+            return
+        if response.status != 200:
+            route.fulfill(status=response.status, headers=response.headers, body=response.body)
+            return
+        body = json.loads(response.body)
+        song_ids = [item["id"] for item in body.get("data", [])]
+        if song_ids:
+            batch_url = f"{parsed.scheme}://{parsed.netloc}/v1/me/library/songs?ids={','.join(song_ids)}&include={includes[0]}"
+            batch = mock.handle_request(Request(method="GET", url=batch_url, headers=headers, body=None))
+            if batch is None or batch.status != 200:
+                raise AssertionError(f"library songs batch lookup failed: {batch and batch.status}")
+            relationships = {item["id"]: item.get("relationships") for item in json.loads(batch.body).get("data", [])}
+            for item in body["data"]:
+                if relationships.get(item["id"]):
+                    item["relationships"] = relationships[item["id"]]
+        route.fulfill(status=response.status, headers=response.headers, body=json.dumps(body))
+
+    page.route("**/api.music.apple.com/v1/me/library/playlists/*/tracks*", handler)
 
 
 def _serve_musickit_js(page: Page) -> None:
@@ -533,5 +610,6 @@ def configure_musickit_api_mock(
     _block_unmocked_musickit_requests(page)
     intercept(mock, page)
     _register_library_playlists_override(page, mock)
+    _register_library_playlist_tracks_include_override(page, mock)
     setattr(page, "music_kit_api_mock", mock)
     return mock

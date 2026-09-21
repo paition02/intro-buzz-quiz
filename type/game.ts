@@ -32,6 +32,7 @@ export type Track = {
   title: string
   artist: string
   albumName: string
+  albumArtist?: string
   artworkChipUrl?: string
   artworkInfoUrl?: string
   artworkRevealUrl?: string
@@ -44,6 +45,7 @@ export type Album = {
   artworkChipUrl?: string
   artworkInfoUrl?: string
   artworkRevealUrl?: string
+  trackIds: string[]
 }
 
 export type GameState = {
