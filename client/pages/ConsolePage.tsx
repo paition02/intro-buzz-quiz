@@ -46,7 +46,7 @@ export function ConsolePage() {
   useScreenWakeLock()
 
   const { instance: musicKitInstance, error: musicKitInitError } = useMusicKitInstance()
-  const { setSongIds, prepareNext, playFromStart, stop } = useSequentialPlayback()
+  const { setSongIds, prepareNext, playFromStart, playAlbum, stop } = useSequentialPlayback()
   const musicKitAuth = useMusicKitAuth()
   const queryClient = useQueryClient()
   const libraryPlaylistsQuery = useLibraryPlaylistsQuery()
@@ -146,14 +146,7 @@ export function ConsolePage() {
           const stillRevealing = () => latestState.quizMode === 'jacket' && latestState.step === 'reveal' &&
             roundPreparationKeyFromState(latestState) === roundKey
           if (!stillRevealing()) return
-          await musicKitInstance.setQueue({
-            album: albumId,
-            repeatMode: MusicKit.PlayerRepeatMode.all,
-            shuffleMode: MusicKit.PlayerShuffleMode.off,
-            startPlaying: false,
-          })
-          if (!stillRevealing()) return
-          await musicKitInstance.play()
+          await playAlbum(albumId)
           if (!stillRevealing()) await stop()
         } else {
           await playFromStart()
@@ -206,7 +199,7 @@ export function ConsolePage() {
       }
     }
 
-  }, [clearFeedbackEndedTimeout, clearPlayEndedTimeout, musicKitAuth.authorized, musicKitInstance, playFromStart, prepareNext, preparedRoundKey, setSongIds, stop]))
+  }, [clearFeedbackEndedTimeout, clearPlayEndedTimeout, musicKitAuth.authorized, musicKitInstance, playAlbum, playFromStart, prepareNext, preparedRoundKey, setSongIds, stop]))
 
   useEffect(() => {
     return () => {
