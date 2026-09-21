@@ -12,7 +12,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from pytest_bdd import given, parsers, scenarios, then, when
 
 from frontend.helpers import sample_tracks
-from frontend.musickit_mock import set_musickit_library_data
+from frontend.musickit_mock import library_song_id, set_musickit_library_albums, set_musickit_library_data
 from tls_helpers import tls_verify, websocket_ssl_options
 
 scenarios("../../features/frontend")
@@ -1242,12 +1242,13 @@ def observe_album_queues(frontend_page: Page):
     }""")
 
 
-@then("MusicKit plays the entire revealed album with repeat all")
-def entire_album_playback(frontend_page: Page, socket_client):
-    state = _current_backend_state(socket_client.server_url)
+def _revealed_track(state):
     album_id = state["shuffledAlbumIds"][state["roundAlbumIndex"]]
     album = next(a for a in state["albums"] if a["id"] == album_id)
-    track = next(t for t in state["tracks"] if t["albumName"] == album["name"] and t["artist"] == album["artist"])
+    return next(t for t in state["tracks"] if t["albumName"] == album["name"] and t["artist"] == album["artist"])
+
+
+def _expect_entire_album_playback(frontend_page: Page, state, queue_album_id: str):
     frontend_page.wait_for_function("""({id, selected}) => {
         const mk = MusicKit.getInstance();
         const request = window.__albumQueueRequests.at(-1);
@@ -1255,7 +1256,19 @@ def entire_album_playback(frontend_page: Page, socket_client):
             request.repeatMode === MusicKit.PlayerRepeatMode.all &&
             mk.repeatMode === MusicKit.PlayerRepeatMode.all && mk.isPlaying &&
             mk.queue.items.length === 2 && mk.queue.items.some(item => !selected.includes(item.id));
-    }""", arg={"id": "album-" + track["id"].removeprefix("i."), "selected": [t["id"] for t in state["tracks"]]})
+    }""", arg={"id": queue_album_id, "selected": [t["id"] for t in state["tracks"]]})
+
+
+@then("MusicKit plays the entire revealed album with repeat all")
+def entire_album_playback(frontend_page: Page, socket_client):
+    state = _current_backend_state(socket_client.server_url)
+    _expect_entire_album_playback(frontend_page, state, "album-" + _revealed_track(state)["id"])
+
+
+@then("MusicKit plays the entire revealed library album with repeat all")
+def entire_library_album_playback(frontend_page: Page, socket_client):
+    state = _current_backend_state(socket_client.server_url)
+    _expect_entire_album_playback(frontend_page, state, _library_album_id(_revealed_track(state)["id"]))
 
 
 @then("album playback is stopped")
@@ -1263,21 +1276,27 @@ def album_playback_stopped(frontend_page: Page):
     frontend_page.wait_for_function("() => !MusicKit.getInstance().isPlaying")
 
 
+def _library_album_id(track_id: str) -> str:
+    return "l." + "".join(ch for ch in "album" + track_id.removeprefix("i.") if ch.isalnum())
+
+
 @given("the selected tracks have library IDs")
 def selected_library_ids(frontend_page: Page, socket_client):
     mock = getattr(frontend_page, "music_kit_api_mock")
     state = _current_backend_state(socket_client.server_url)
     tracks = [dict(t) for t in state["tracks"]]
+    album_tracks = {}
     for track in tracks:
         catalog_id = track["id"]
-        library_id = "i." + catalog_id
-        mock.data.library_songs[library_id] = mock.data.library_songs[catalog_id]
-        track["id"] = library_id
+        track["id"] = library_song_id(catalog_id)
+        album_tracks[_library_album_id(catalog_id)] = list(mock.data.albums["album-" + catalog_id].track_ids)
+    set_musickit_library_albums(frontend_page, album_tracks)
     socket_client.emit("console:select-playlists", {"selectedPlaylistIds": state["selectedPlaylistIds"], "tracks": tracks})
 
 
-@then("no library ID is sent to the catalog songs endpoint")
+@then("no catalog lookup is sent for library song IDs")
 def no_library_catalog_requests(frontend_page: Page):
     requests = getattr(frontend_page, "request_log", [])
-    assert any("/v1/me/library/songs/i." in r["url"] and "/catalog" in r["url"] for r in requests)
+    assert any("/v1/me/library/songs/i." in r["url"] and "/albums" in r["url"] for r in requests)
+    assert not any("/v1/me/library/songs/i." in r["url"] and "/catalog" in r["url"] for r in requests)
     assert not any("/catalog/" in r["url"] and "/songs/i." in r["url"] for r in requests)
