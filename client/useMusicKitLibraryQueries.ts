@@ -44,6 +44,9 @@ type MusicApiTrack = {
     catalog?: {
       data?: MusicApiTrack[]
     }
+    albums?: {
+      data?: Array<{ id: string; attributes?: Pick<MusicApiAttributes, 'artistName'> }>
+    }
   }
 }
 
@@ -91,7 +94,7 @@ async function fetchLibraryPlaylists(mk: MusicKit.MusicKitInstance) {
 async function fetchPlaylistTracks(mk: MusicKit.MusicKitInstance, playlistId: string) {
   const allTracks: MusicApiTrack[] = []
   let url: string | null = `/v1/me/library/playlists/${playlistId}/tracks`
-  let params: MusicApiParams | undefined = { limit: 100, include: 'catalog' }
+  let params: MusicApiParams | undefined = { limit: 100, include: 'catalog,albums' }
   while (url) {
     const data: MusicApiPage<MusicApiTrack> = await musicApi<MusicApiPage<MusicApiTrack>>(mk, url, params)
     allTracks.push(...(data?.data ?? []))
@@ -106,6 +109,7 @@ async function fetchPlaylistTracks(mk: MusicKit.MusicKitInstance, playlistId: st
       title: track.attributes?.name ?? catalog?.attributes?.name ?? track.id,
       artist: track.attributes?.artistName ?? catalog?.attributes?.artistName ?? '',
       albumName: catalog?.attributes?.albumName ?? track.attributes?.albumName ?? '',
+      albumArtist: track.relationships?.albums?.data?.[0]?.attributes?.artistName,
       artworkChipUrl: artworkUrlForSize(artworkTemplate, ARTWORK_CHIP_SIZE),
       artworkInfoUrl: artworkUrlForSize(artworkTemplate, ARTWORK_INFO_SIZE),
       artworkRevealUrl: artworkUrlForSize(artworkTemplate, ARTWORK_REVEAL_SIZE),

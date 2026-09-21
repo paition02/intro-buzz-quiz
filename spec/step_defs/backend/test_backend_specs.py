@@ -209,6 +209,19 @@ def when_host_selects_tracks_from_one_album(ctx, socket_client):
     )
 
 
+@when("the host selects tracks of one album with differing track artists and artwork")
+def when_host_selects_tracks_of_one_album(ctx, socket_client):
+    tracks = make_tracks(3)
+    for index, track in enumerate(tracks):
+        track["albumName"] = ["Shared Album", "shared album", "Shared  Album "][index]
+        track["albumArtist"] = "Shared Artist"
+    ctx.tracks = tracks
+    ctx.state = socket_client.emit(
+        "console:select-playlists",
+        {"selectedPlaylistIds": ["playlist-a"], "tracks": tracks},
+    )
+
+
 @when("the host starts the game")
 def when_host_starts_game(ctx, socket_client):
     ctx.state = socket_client.emit("console:start", {"quizMode": "intro"})
@@ -451,6 +464,18 @@ def then_track_count(ctx, socket_client, count: int):
 def then_album_count(ctx, socket_client, count: int):
     state = ctx.state or socket_client.state
     assert len(state["albums"]) == count
+
+
+@then(parsers.parse("the album lists {count:d} tracks"))
+def then_album_track_count(ctx, socket_client, count: int):
+    state = ctx.state or socket_client.state
+    assert state["albums"][0]["trackIds"] == [track["id"] for track in ctx.tracks[:count]]
+
+
+@then(parsers.parse('the album artist is "{artist}"'))
+def then_album_artist(ctx, socket_client, artist: str):
+    state = ctx.state or socket_client.state
+    assert state["albums"][0]["artist"] == artist
 
 
 @then("the current track is cleared")

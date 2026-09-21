@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import math
 import time
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 import httpx
 import socketio
@@ -12,7 +12,12 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from pytest_bdd import given, parsers, scenarios, then, when
 
 from frontend.helpers import sample_tracks
-from frontend.musickit_mock import library_song_id, set_musickit_library_albums, set_musickit_library_data
+from frontend.musickit_mock import (
+    library_song_id,
+    set_musickit_library_albums,
+    set_musickit_library_data,
+    set_musickit_library_song_albums,
+)
 from tls_helpers import tls_verify, websocket_ssl_options
 
 scenarios("../../features/frontend")
@@ -349,6 +354,20 @@ def frontend_console_selected_long_playlist(frontend_page: Page, socket_client, 
     frontend_console_logged_in_with_long_playlist(frontend_page, socket_client, playlist, count)
     frontend_page.get_by_role("button", name=playlist, exact=True).click()
     expect(frontend_page.get_by_text(f"1件のプレイリスト、{count}曲を選択中", exact=True)).to_be_visible(timeout=30000)
+
+
+@given(parsers.parse('the frontend console is logged into mocked MusicKit with playlist "{playlist}" on two library albums of one album'))
+def frontend_console_logged_in_with_two_library_albums_of_one_album(frontend_page: Page, socket_client, playlist: str):
+    _ = socket_client
+    set_musickit_library_song_albums(
+        frontend_page,
+        {"l.release1": ["track-1", "track-2"], "l.release2": ["track-3"]},
+        album_name="Shared Album",
+        artist_name="Shared Artist",
+    )
+    frontend_page.goto("/console")
+    frontend_page.get_by_role("button", name="ログイン", exact=True).click()
+    expect(frontend_page.get_by_text(playlist, exact=True)).to_be_visible()
 
 
 @given("the frontend console is logged into mocked MusicKit with overlapping playlists")
@@ -867,6 +886,15 @@ def musickit_library_tracks_requested(frontend_page: Page, playlist_id: str):
     )
 
 
+@then(parsers.parse('MusicKit tracks for library playlist "{playlist_id}" are requested with their library albums'))
+def musickit_library_tracks_requested_with_albums(frontend_page: Page, playlist_id: str):
+    _wait_for_request(
+        frontend_page,
+        lambda request: f"/v1/me/library/playlists/{playlist_id}/tracks" in request["url"]
+        and "include=catalog,albums" in unquote(request["url"]),
+    )
+
+
 @then(parsers.parse('MusicKit tracks page 1 for library playlist "{playlist_id}" is requested'))
 def musickit_library_tracks_page_1_requested(frontend_page: Page, playlist_id: str):
     _wait_for_request(
@@ -1251,6 +1279,17 @@ def selected_track_count_is(socket_client, count: int):
     assert len(socket_client.state["tracks"]) == count
 
 
+@then(parsers.parse('the selected tracks carry album artist "{artist}"'))
+def selected_tracks_carry_album_artist(socket_client, artist: str):
+    tracks = socket_client.state["tracks"]
+    assert [track["albumArtist"] for track in tracks] == [artist] * len(tracks)
+
+
+@then(parsers.parse("the selected album count is {count:d}"))
+def selected_album_count_is(socket_client, count: int):
+    assert len(socket_client.state["albums"]) == count
+
+
 @when("the host resets the game")
 def host_resets_game(socket_client):
     socket_client.emit("console:reset")
@@ -1307,7 +1346,7 @@ def observe_album_queues(frontend_page: Page):
 def _revealed_track(state):
     album_id = state["shuffledAlbumIds"][state["roundAlbumIndex"]]
     album = next(a for a in state["albums"] if a["id"] == album_id)
-    return next(t for t in state["tracks"] if t["albumName"] == album["name"] and t["artist"] == album["artist"])
+    return next(t for t in state["tracks"] if t["id"] == album["trackIds"][0])
 
 
 def _expect_entire_album_playback(frontend_page: Page, state, queue_album_id: str):
