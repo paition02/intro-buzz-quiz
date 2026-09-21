@@ -39,6 +39,27 @@ Feature: Host console page
     When the frontend clicks "再生"
     Then backend phase is "game" and step is "playing"
 
+  Scenario: Console playback seconds slider ignores presses inside the ring
+    Given the frontend console selected playlist "Spec Playlist A"
+    When the frontend clicks "イントロで開始"
+    And the frontend sets playback seconds to 10 on the slider ring
+    And the frontend presses inside the playback seconds slider ring
+    Then the playback seconds slider shows 10 seconds
+
+  Scenario: Console page scrolls when swiping inside the playback seconds slider ring
+    Given the frontend console selected playlist "Spec Playlist A"
+    When the frontend clicks "イントロで開始"
+    And the frontend sets playback seconds to 10 on the slider ring
+    And the frontend swipes up inside the playback seconds slider ring on a phone viewport
+    Then the console page has scrolled
+    And the playback seconds slider shows 10 seconds
+
+  Scenario: Console page does not scroll when swiping on the playback seconds slider ring
+    Given the frontend console selected playlist "Spec Playlist A"
+    When the frontend clicks "イントロで開始"
+    And the frontend swipes up on the playback seconds slider ring on a phone viewport
+    Then the console page has not scrolled
+
   Scenario: Console round track info starts closed and can be reopened per round
     Given the frontend console selected playlist "Spec Playlist A"
     When the frontend clicks "イントロで開始"
