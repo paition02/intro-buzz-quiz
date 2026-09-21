@@ -31,6 +31,7 @@ import { Glass } from '../components/Glass'
 import { Button } from '../components/Button'
 import { Eyebrow } from '../components/Eyebrow'
 import { RoundInfoDisclosure } from '../components/RoundInfoDisclosure'
+import { AnswerCard, type AnswerCandidate } from '../components/AnswerCard'
 
 const JUDGE_RESULT_DURATION_MS = 1800
 const jacketModeOptions: Array<{ value: JacketMode; label: string }> = [
@@ -214,7 +215,12 @@ export function ConsolePage() {
   const roundTrackId = roundTrackIdFromState(state)
   const roundTrack = roundTrackFromState(state)
   const isJacket = state.quizMode === 'jacket'
-  const roundInfo = isJacket ? roundAlbumFromState(state) : roundTrack
+  const roundAlbum = roundAlbumFromState(state)
+  const roundInfo = isJacket ? roundAlbum : roundTrack
+  const roundAnswerId = isJacket ? roundAlbum?.id ?? null : roundTrackId
+  const answerCandidates = useMemo<AnswerCandidate[]>(() => isJacket
+    ? state.albums.map((album) => ({ id: album.id, title: album.name, artist: album.artist, artworkUrl: album.artworkChipUrl }))
+    : state.tracks.map((track) => ({ id: track.id, title: track.title, artist: track.artist, artworkUrl: track.artworkChipUrl })), [isJacket, state.albums, state.tracks])
   const roundPreparationKey = roundPreparationKeyFromState(state)
   const roundPrepared = state.quizMode === 'jacket'
     ? roundPreparationKey !== null
@@ -360,6 +366,12 @@ export function ConsolePage() {
       void consoleAction('console:wrong-feedback-ended').catch(report)
     }, JUDGE_RESULT_DURATION_MS)
   })
+
+  // 入力回答は候補の id を今ラウンドの正解と突き合わせ、host の正解 / 不正解操作と同じ経路へ流す。
+  const handleAnswer = (candidate: AnswerCandidate) => {
+    if (candidate.id === roundAnswerId) return handleCorrect()
+    return handleWrong()
+  }
 
   const handleGiveUp = () => run(async () => {
     await consoleAction('console:give-up')
@@ -556,6 +568,17 @@ export function ConsolePage() {
             onToggle={handleToggleTrackInfo}
             item={roundInfo}
             kind={isJacket ? 'album' : 'track'}
+          />
+        </Glass>
+
+        <Glass as="section" className="rounded-2xl p-6 min-w-0" aria-label="回答">
+          <h2 className="m-0 mb-2.5 text-2xl font-bold">回答</h2>
+          <AnswerCard
+            key={roundPreparationKey}
+            candidates={answerCandidates}
+            disabled={busy || state.step !== 'answering'}
+            placeholder={isJacket ? 'アルバム名を入力' : '曲名を入力'}
+            onAnswer={handleAnswer}
           />
         </Glass>
         </div>

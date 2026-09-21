@@ -1401,3 +1401,199 @@ def no_library_catalog_requests(frontend_page: Page):
     assert any("/v1/me/library/songs/i." in r["url"] and "/albums" in r["url"] for r in requests)
     assert not any("/v1/me/library/songs/i." in r["url"] and "/catalog" in r["url"] for r in requests)
     assert not any("/catalog/" in r["url"] and "/songs/i." in r["url"] for r in requests)
+
+
+# Console answer card steps ------------------------------------------------
+
+
+def _answer_input(frontend_page: Page):
+    return frontend_page.get_by_role("combobox", name="回答", exact=True)
+
+
+def _answer_suggestions(frontend_page: Page):
+    return frontend_page.get_by_role("listbox", name="回答候補", exact=True).get_by_role("option")
+
+
+def _suggestion_title(suggestion) -> str:
+    return suggestion.locator("span span").first.inner_text()
+
+
+def _round_album(state):
+    round_index = state["roundAlbumIndex"]
+    if round_index < 0:
+        return None
+    album_ids = state["shuffledAlbumIds"]
+    if round_index >= len(album_ids):
+        return None
+    album_id = album_ids[round_index]
+    return next((album for album in state["albums"] if album["id"] == album_id), None)
+
+
+def _console_actor_answering(frontend_page: Page, socket_client, actor: str, quiz_mode: str):
+    action_button_is_joined(socket_client, actor)
+    socket_client.emit("console:start", {"quizMode": quiz_mode})
+    socket_client.wait_for_state(phase="game", step="beforePlayback")
+    if quiz_mode == "intro":
+        socket_client.emit("console:play")
+        socket_client.wait_for_state(step="playing")
+    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}", verify=tls_verify(socket_client.server_url))
+    assert response.status_code == 200
+    socket_client.wait_for_state(step="answering", answererId=actor)
+    expect(_answer_input(frontend_page)).to_be_enabled(timeout=30000)
+
+
+@given(parsers.parse('the frontend console has actor "{actor}" answering in an intro game'))
+def frontend_console_actor_answering_intro(frontend_page: Page, socket_client, actor: str):
+    frontend_console_selected_playlist(frontend_page, socket_client, "Spec Playlist A")
+    _console_actor_answering(frontend_page, socket_client, actor, "intro")
+
+
+@given(parsers.parse('the frontend console has actor "{actor}" answering in an intro game with {count:d} tracks'))
+def frontend_console_actor_answering_intro_with_tracks(frontend_page: Page, socket_client, actor: str, count: int):
+    frontend_console_selected_long_playlist(frontend_page, socket_client, "Spec Playlist Long", count)
+    _console_actor_answering(frontend_page, socket_client, actor, "intro")
+
+
+@given(parsers.parse('the frontend console has actor "{actor}" answering in a jacket game'))
+def frontend_console_actor_answering_jacket(frontend_page: Page, socket_client, actor: str):
+    frontend_console_selected_playlist(frontend_page, socket_client, "Spec Playlist A")
+    _console_actor_answering(frontend_page, socket_client, actor, "jacket")
+
+
+@then("the console answer input is disabled")
+def console_answer_input_disabled(frontend_page: Page):
+    expect(_answer_input(frontend_page)).to_be_disabled(timeout=30000)
+
+
+@then("the console answer input is enabled")
+def console_answer_input_enabled(frontend_page: Page):
+    expect(_answer_input(frontend_page)).to_be_enabled(timeout=30000)
+
+
+@then("the console answer input is empty")
+def console_answer_input_empty(frontend_page: Page):
+    expect(_answer_input(frontend_page)).to_have_value("", timeout=30000)
+
+
+@when(parsers.parse('the frontend types "{text}" into the answer input'))
+def frontend_types_into_answer_input(frontend_page: Page, text: str):
+    _answer_input(frontend_page).fill(text)
+
+
+@when("the frontend clears the answer input")
+def frontend_clears_answer_input(frontend_page: Page):
+    _answer_input(frontend_page).fill("")
+
+
+@then(parsers.parse('the console answer suggestions are "{titles}"'))
+def console_answer_suggestions_are(frontend_page: Page, titles: str):
+    expected = sorted(value for value in titles.split(",") if value)
+    suggestions = _answer_suggestions(frontend_page)
+    expect(suggestions).to_have_count(len(expected), timeout=30000)
+    shown = sorted(_suggestion_title(suggestions.nth(index)) for index in range(len(expected)))
+    assert shown == expected, shown
+
+
+@then(parsers.parse('the first console answer suggestion is "{title}"'))
+def first_console_answer_suggestion_is(frontend_page: Page, title: str):
+    expect(_answer_suggestions(frontend_page).first.get_by_text(title, exact=True)).to_be_visible(timeout=30000)
+
+
+@then(parsers.parse("the console shows {count:d} answer suggestions"))
+def console_shows_answer_suggestions(frontend_page: Page, count: int):
+    expect(_answer_suggestions(frontend_page)).to_have_count(count, timeout=30000)
+
+
+@then("each console answer suggestion shows artwork and artist")
+def each_console_answer_suggestion_shows_artwork_and_artist(frontend_page: Page, socket_client):
+    suggestions = _answer_suggestions(frontend_page)
+    count = suggestions.count()
+    assert count > 0
+    artists = {track["artist"] for track in socket_client.state["tracks"]}
+    for index in range(count):
+        suggestion = suggestions.nth(index)
+        expect(suggestion.locator('img[src*="/48x48.jpg"]')).to_be_visible(timeout=30000)
+        assert suggestion.locator("span span").nth(1).inner_text() in artists
+
+
+def _choose_answer(frontend_page: Page, title: str):
+    _answer_input(frontend_page).fill(title)
+    _answer_suggestions(frontend_page).filter(has_text=title).first.click(timeout=10000)
+
+
+@when("the frontend chooses the round track in the answer card")
+def frontend_chooses_round_track(frontend_page: Page, socket_client):
+    track = _round_track(socket_client.state)
+    assert track is not None
+    _choose_answer(frontend_page, track["title"])
+
+
+@when("the frontend chooses a track other than the round track in the answer card")
+def frontend_chooses_other_track(frontend_page: Page, socket_client):
+    state = socket_client.state
+    track = _round_track(state)
+    assert track is not None
+    other = next(item for item in state["tracks"] if item["id"] != track["id"])
+    _choose_answer(frontend_page, other["title"])
+
+
+@when("the frontend chooses the round album in the answer card")
+def frontend_chooses_round_album(frontend_page: Page, socket_client):
+    album = _round_album(socket_client.state)
+    assert album is not None
+    _choose_answer(frontend_page, album["name"])
+
+
+@when("the frontend chooses an album other than the round album in the answer card")
+def frontend_chooses_other_album(frontend_page: Page, socket_client):
+    state = socket_client.state
+    album = _round_album(state)
+    assert album is not None
+    other = next(item for item in state["albums"] if item["id"] != album["id"])
+    _choose_answer(frontend_page, other["name"])
+
+
+@when("the frontend types the round track title into the answer input")
+def frontend_types_round_track_title(frontend_page: Page, socket_client):
+    track = _round_track(socket_client.state)
+    assert track is not None
+    _answer_input(frontend_page).fill(track["title"])
+
+
+@when(parsers.parse('the frontend presses "{key}" in the answer input'))
+def frontend_presses_key_in_answer_input(frontend_page: Page, key: str):
+    _answer_input(frontend_page).press(key)
+
+
+@when(parsers.parse('the frontend presses "{key}" {count:d} times in the answer input'))
+def frontend_presses_key_times_in_answer_input(frontend_page: Page, key: str, count: int):
+    for _ in range(count):
+        _answer_input(frontend_page).press(key)
+
+
+@then(parsers.parse("the console highlights answer suggestion {position:d}"))
+def console_highlights_answer_suggestion(frontend_page: Page, position: int):
+    suggestion = _answer_suggestions(frontend_page).nth(position - 1)
+    expect(suggestion).to_have_attribute("aria-selected", "true", timeout=30000)
+    selected = _answer_suggestions(frontend_page).and_(frontend_page.locator('[aria-selected="true"]'))
+    expect(selected).to_have_count(1)
+    option_id = suggestion.get_attribute("id")
+    assert option_id
+    expect(_answer_input(frontend_page)).to_have_attribute("aria-activedescendant", option_id)
+
+
+@when("the frontend answers with the highlighted suggestion by Enter")
+def frontend_answers_with_highlighted_suggestion(frontend_page: Page):
+    highlighted = _answer_suggestions(frontend_page).and_(frontend_page.locator('[aria-selected="true"]'))
+    expect(highlighted).to_have_count(1)
+    setattr(frontend_page, "highlighted_answer_title", _suggestion_title(highlighted))
+    _answer_input(frontend_page).press("Enter")
+
+
+@then("the backend judged the highlighted suggestion")
+def backend_judged_highlighted_suggestion(frontend_page: Page, socket_client):
+    title = getattr(frontend_page, "highlighted_answer_title")
+    track = _round_track(socket_client.state)
+    assert track is not None
+    expected = "correct" if track["title"] == title else "wrong"
+    _wait_for_backend_state(socket_client, phase="game", step=expected)
