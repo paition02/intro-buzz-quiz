@@ -50,8 +50,9 @@ Feature: MusicKit integration
     When the frontend opens playlist "Spec Playlist A"
     Then the frontend shows track chip artwork
     When the frontend clicks "Spec Playlist A"
-    And the frontend clicks "ゲーム開始"
+    And the frontend clicks "イントロで開始"
     Then the selected round artwork URLs are sized for their display contexts
+    And the selected tracks include album names
 
   Scenario: Selecting a playlist sends the selected tracks to the backend
     Given the frontend console is logged into mocked MusicKit
@@ -67,25 +68,42 @@ Feature: MusicKit integration
 
   Scenario: Starting a selected game prepares the first round without playback
     Given the frontend console selected playlist "Spec Playlist A"
-    When the frontend clicks "ゲーム開始"
+    When the frontend clicks "イントロで開始"
     Then backend phase is "game" and step is "beforePlayback"
+    And backend quiz mode is "intro"
     And the frontend play button becomes enabled
+
+  Scenario: Starting jacket mode shows jacket controls
+    Given the frontend console selected playlist "Spec Playlist A"
+    When the frontend clicks "ジャケットで開始"
+    Then backend phase is "game" and step is "beforePlayback"
+    And backend quiz mode is "jacket"
+    And the frontend shows jacket controls
+    And the frontend does not show "再生"
+
+  Scenario: Jacket controls update backend settings
+    Given the frontend console selected playlist "Spec Playlist A"
+    When the frontend clicks "ジャケットで開始"
+    And the frontend selects jacket mode "tileShuffle"
+    And the frontend toggles jacket grayscale
+    And the frontend sets jacket hint percent to 12
+    Then the backend jacket settings match the frontend controls
 
   Scenario: Play is available when the current round is ready
     Given the frontend console selected playlist "Spec Playlist A"
-    When the frontend clicks "ゲーム開始"
+    When the frontend clicks "イントロで開始"
     Then the frontend play button becomes enabled
 
   Scenario: Playing the intro advances playback and stops after the duration
     Given the frontend console selected playlist "Spec Playlist A"
-    When the frontend clicks "ゲーム開始"
+    When the frontend clicks "イントロで開始"
     And the frontend clicks "再生"
     Then backend phase is "game" and step is "playing"
     And the backend returns before playback after the intro duration
 
   Scenario: Revealing a round shows the current track
     Given the frontend console selected playlist "Spec Playlist A"
-    When the frontend clicks "ゲーム開始"
+    When the frontend clicks "イントロで開始"
     And the frontend clicks "ギブアップ"
     Then backend phase is "game" and step is "reveal"
     When the frontend clicks "曲情報を開く"
@@ -111,3 +129,57 @@ Feature: MusicKit integration
     Given the frontend console is logged into mocked MusicKit with track loading failure "Tracks unavailable"
     When the frontend opens playlist "Spec Playlist A"
     Then the frontend shows "Tracks unavailable"
+
+
+  Scenario: Jacket hint repeated keys and new round stay synchronized
+    Given the frontend console selected playlist "Spec Playlist A"
+    When the frontend clicks "ジャケットで開始"
+    And the frontend sets jacket hint percent to 47
+    Then the jacket hint slider shows 47 percent
+    When the frontend sets jacket hint percent to 12
+    Then the jacket hint slider shows 12 percent
+    When the frontend clicks "ギブアップ"
+    And the frontend clicks "次のラウンドへ"
+    Then the jacket hint slider shows 1 percent
+    When the frontend sets jacket hint percent to 12
+    Then the jacket hint slider shows 12 percent
+
+
+  Scenario: Host album information follows the current jacket round
+    Given the frontend console selected playlist "Spec Playlist A"
+    When the frontend clicks "ジャケットで開始"
+    Then the album information is collapsed
+    When the frontend clicks "アルバム情報を開く"
+    Then the album information matches the current backend album
+    When the frontend clicks "アルバム情報を閉じる"
+    Then the album information is collapsed
+    When the frontend clicks "アルバム情報を開く"
+    And the frontend clicks "ギブアップ"
+    And the frontend clicks "次のラウンドへ"
+    Then the album information is collapsed
+    When the frontend clicks "アルバム情報を開く"
+    Then the album information matches the current backend album
+
+
+  Scenario: Jacket reveal uses a complete MusicKit album queue
+    Given the frontend console selected playlist "Spec Playlist A"
+    When the frontend clicks "ジャケットで開始"
+    And album queue requests are observed
+    And the frontend clicks "ギブアップ"
+    Then MusicKit plays the entire revealed album with repeat all
+    When the frontend clicks "次のラウンドへ"
+    Then album playback is stopped
+    When the frontend clicks "ギブアップ"
+    Then MusicKit plays the entire revealed album with repeat all
+    When the frontend clicks "結果発表へ"
+    Then album playback is stopped
+
+
+  Scenario: Jacket reveal plays the library album for library song IDs
+    Given the frontend console selected playlist "Spec Playlist A"
+    And the selected tracks have library IDs
+    When the frontend clicks "ジャケットで開始"
+    And album queue requests are observed
+    And the frontend clicks "ギブアップ"
+    Then MusicKit plays the entire revealed library album with repeat all
+    And no catalog lookup is sent for library song IDs

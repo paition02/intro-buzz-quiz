@@ -13,6 +13,7 @@ import tempfile
 import time
 import urllib.request
 from collections.abc import Callable, Iterable
+from dataclasses import replace
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -21,23 +22,26 @@ from musickit_api_mock import (
     AccountResponseSuccess,
     Artwork,
     AuthorizeSuccess,
+    CatalogAlbum,
+    CatalogLibraryAlbum,
+    CatalogLibrarySong,
+    CatalogSong,
     LibraryPlaylist,
-    LibrarySong,
     LicenseResponseSuccess,
     LogoutResponseSuccess,
     LookupContext,
     MusicKitApiMock,
     PlayActivityResponseSuccess,
     Playlist,
-    Song,
     SongMetadataFallback,
     Storefront,
     StorefrontResponseSuccess,
     WebPlaybackAsset,
     WebPlaybackResponse,
     WebPlaybackResponseServerError,
+    WebPlaybackCatalogLibrarySong,
+    WebPlaybackCatalogSong,
     WebPlaybackResponseSuccess,
-    WebPlaybackSong,
     WidevineCertResponseSuccess,
 )
 from musickit_api_mock_playwright import intercept
@@ -62,7 +66,7 @@ _CORS_PREFLIGHT_HEADERS = {
     "Access-Control-Allow-Headers": "*",
 }
 _musickit_js_cache: dict[str, bytes] = {}
-_silence_song_cache: Song | None = None
+_silence_song_cache: CatalogSong | None = None
 
 
 def make_developer_token(*, expired: bool = False) -> str:
@@ -103,7 +107,7 @@ def _build_silence_audio(out_path: Path, *, duration_sec: float = 2.0) -> None:
     container.close()
 
 
-def _silence_song() -> Song:
+def _silence_song() -> CatalogSong:
     global _silence_song_cache
     if _silence_song_cache is None:
         path = Path(tempfile.gettempdir()) / "intro_buzz_musickit_silence.m4a"
@@ -112,12 +116,8 @@ def _silence_song() -> Song:
         fallback = SongMetadataFallback(
             artwork=Artwork(url="https://example.test/artwork.jpg", width=64, height=64),
             has_lyrics=False,
-            audio_locale="en-US",
-            audio_traits=["lossless"],
-            has_time_synced_lyrics=False,
             is_apple_digital_master=False,
-            is_mastered_for_itunes=False,
-            is_vocal_attenuation_allowed=False,
+            isrc="USTEST0000001",
             url="https://music.apple.com/us/song/placeholder",
             title="Silence",
             artist="Test Artist",
@@ -127,7 +127,7 @@ def _silence_song() -> Song:
             track_number=1,
             disc_number=1,
         )
-        _silence_song_cache = Song.from_file(str(path), fallback)
+        _silence_song_cache = CatalogSong.from_file(str(path), fallback)
     return _silence_song_cache
 
 
@@ -139,23 +139,19 @@ def _playlist_name(playlist_id: str) -> str:
     return playlist_id
 
 
-def _make_song(song_id: str, *, title: str | None = None) -> Song:
+def _make_song(song_id: str, *, title: str | None = None) -> CatalogSong:
     base = _silence_song()
     n = song_id.removeprefix("track-") or song_id
-    return Song(
+    return CatalogSong(
         title=title or f"Track {n}",
         artist=f"Artist {n}",
-        album=base.album,
+        album=f"Album {n}",
         duration_ms=base.duration_ms,
         artwork=Artwork(url=f"https://example.test/artwork/{n}/{{w}}x{{h}}.jpg", width=1000, height=1000),
         genres=list(base.genres),
         has_lyrics=base.has_lyrics,
-        audio_locale=base.audio_locale,
-        audio_traits=list(base.audio_traits),
-        has_time_synced_lyrics=base.has_time_synced_lyrics,
         is_apple_digital_master=base.is_apple_digital_master,
-        is_mastered_for_itunes=base.is_mastered_for_itunes,
-        is_vocal_attenuation_allowed=base.is_vocal_attenuation_allowed,
+        isrc=base.isrc,
         url=f"https://music.apple.com/us/song/{song_id}",
         hls_layout=base.hls_layout,
         hls_segment=base.hls_segment,
@@ -184,16 +180,16 @@ def _make_playlist(playlist_id: str, track_ids: list[str], *, name: str | None =
     )
 
 
-def _make_library_song(song_id: str, *, name: str | None = None) -> LibrarySong:
+def _make_library_song(song_id: str, *, name: str | None = None) -> CatalogLibrarySong:
     n = song_id.removeprefix("track-") or song_id
-    return LibrarySong(
+    return CatalogLibrarySong(
         name=name or f"Track {n}",
         artist_name=f"Artist {n}",
         artwork=Artwork(url=f"https://example.test/artwork/{n}/{{w}}x{{h}}.jpg", width=1000, height=1000),
         duration_ms=2000,
         genre_names=["Test"],
         has_lyrics=False,
-        album_name="Test Album",
+        album_name=f"Album {n}",
         catalog_id=song_id,
     )
 
@@ -222,7 +218,7 @@ def _build_web_playback(song_ids: Iterable[str], *, error: bool) -> dict[str, We
     return {
         song_id: WebPlaybackResponseSuccess(
             song_list=[
-                WebPlaybackSong(
+                WebPlaybackCatalogSong(
                     song_id=song_id,
                     hls_key_cert_url="https://s.mzstatic.com/skdtool_2021_certbundle.bin",
                     hls_key_server_url="https://play.itunes.apple.com/WebObjects/MZPlay.woa/wa/acquireWebPlaybackLicense",
@@ -287,6 +283,26 @@ def _configure_library_data(
         song_id: _make_song(song_id, title=song_titles.get(song_id))
         for song_id in song_ids
     }
+    mock.data.albums = {}
+    extra_song_ids = []
+    for index, song_id in enumerate(song_ids):
+        song = mock.data.songs[song_id]
+        album_id = f"album-{song_id}"
+        extra_id = f"album-extra-{index + 101}"
+        extra_song_ids.append(extra_id)
+        extra = _make_song(extra_id)
+        extra.album = song.album
+        extra.artist = song.artist
+        extra.album_ids = [album_id]
+        song.album_ids = [album_id]
+        mock.data.songs[extra_id] = extra
+        mock.data.albums[album_id] = CatalogAlbum(
+            name=song.album, artist_name=song.artist, artwork=song.artwork,
+            genre_names=[], track_count=2, is_compilation=False, is_complete=True,
+            is_mastered_for_itunes=False, is_single=False, is_prerelease=False,
+            audio_traits=[], url=f"https://music.apple.com/us/album/{album_id}",
+            track_ids=[song_id, extra_id],
+        )
     mock.data.library_songs = {
         song_id: _make_library_song(song_id, name=song_titles.get(song_id))
         for song_id in song_ids
@@ -311,7 +327,7 @@ def _configure_library_data(
 
     playlist_callable: Callable[[LookupContext], Playlist | None] = resolve_playlist
     mock.data.playlists = playlist_callable
-    mock.endpoints.web_playback = _build_web_playback(song_ids, error=playback_error)
+    mock.endpoints.web_playback = _build_web_playback([*song_ids, *extra_song_ids], error=playback_error)
 
 
 def set_musickit_library_data(
@@ -330,6 +346,59 @@ def set_musickit_library_data(
         playlist_names=playlist_names,
         song_titles=song_titles,
     )
+
+
+def library_song_id(catalog_id: str) -> str:
+    return "i." + "".join(ch for ch in catalog_id if ch.isalnum())
+
+
+def _web_playback_library_entry(catalog_id: str) -> WebPlaybackResponse:
+    return WebPlaybackResponseSuccess(
+        song_list=[
+            WebPlaybackCatalogLibrarySong(
+                song_id=catalog_id,
+                hls_key_cert_url="https://s.mzstatic.com/skdtool_2021_certbundle.bin",
+                hls_key_server_url="https://play.itunes.apple.com/WebObjects/MZPlay.woa/wa/acquireWebPlaybackLicense",
+                widevine_cert_url="https://play.itunes.apple.com/WebObjects/MZPlay.woa/wa/widevineCert",
+                assets=[
+                    WebPlaybackAsset(
+                        flavor="30:ctrp256",
+                        url=f"https://aod-ssl.itunes.apple.com/itunes-assets/{catalog_id}/index.m3u8",
+                    )
+                ],
+            )
+        ]
+    )
+
+
+def set_musickit_library_albums(page: Page, album_tracks: dict[str, list[str]]) -> None:
+    mock = getattr(page, "music_kit_api_mock", None)
+    if mock is None:
+        raise AssertionError("MusicKit API mock has not been configured for this page")
+    library_songs = dict(mock.data.library_songs)
+    library_albums = {}
+    web_playback = dict(mock.endpoints.web_playback)
+    for album_id, catalog_ids in album_tracks.items():
+        track_ids = [library_song_id(catalog_id) for catalog_id in catalog_ids]
+        for catalog_id, track_id in zip(catalog_ids, track_ids, strict=True):
+            library_songs[track_id] = replace(
+                library_songs.get(track_id) or _make_library_song(catalog_id),
+                album_ids=[album_id],
+            )
+            web_playback[track_id] = _web_playback_library_entry(catalog_id)
+        first = library_songs[track_ids[0]]
+        library_albums[album_id] = CatalogLibraryAlbum(
+            name=first.album_name or album_id,
+            artist_name=first.artist_name,
+            artwork=first.artwork,
+            genre_names=list(first.genre_names),
+            track_count=len(track_ids),
+            catalog_id="album-" + catalog_ids[0],
+            track_ids=track_ids,
+        )
+    mock.data.library_songs = library_songs
+    mock.data.library_albums = library_albums
+    mock.endpoints.web_playback = web_playback
 
 
 def _parse_positive_int(values: list[str] | None, *, default: int) -> int:

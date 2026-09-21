@@ -9,7 +9,7 @@ import {
   useInvalidateLibraryPlaylists,
   type MusicPlaylist,
 } from '../useMusicKitLibraryQueries'
-import type { GameState } from '../../type/game'
+import type { GameState, JacketMode, QuizMode } from '../../type/game'
 import {
   consoleAction,
   consoleStatusMessage,
@@ -17,6 +17,7 @@ import {
   phaseLabel,
   roundPreparationKeyFromState,
   roundTrackFromState,
+  roundAlbumFromState,
   roundTrackIdFromState,
   useGameState,
 } from '../lib/gameClient'
@@ -25,18 +26,27 @@ import { playResultSound, playResultsSound } from '../lib/sounds'
 import { LibraryPlaylistsSection } from '../components/PlaylistPanel'
 import { PlayerBadge } from '../components/PlayerBadge'
 import { CircularSecondsSlider } from '../components/CircularSecondsSlider'
+import { JacketHintSlider } from '../components/JacketHintSlider'
 import { Glass } from '../components/Glass'
 import { Button } from '../components/Button'
 import { Eyebrow } from '../components/Eyebrow'
-import { RoundTrackDisclosure } from '../components/RoundTrackDisclosure'
+import { RoundInfoDisclosure } from '../components/RoundInfoDisclosure'
 
 const JUDGE_RESULT_DURATION_MS = 1800
+const jacketModeOptions: Array<{ value: JacketMode; label: string }> = [
+  { value: 'pixelated', label: 'モザイク' },
+  { value: 'missingBlocks', label: '穴あき' },
+  { value: 'tileShuffle', label: 'タイルシャッフル' },
+  { value: 'circleReveal', label: 'スポットライト' },
+  { value: 'zoomRotateCrop', label: 'ズーム＆回転' },
+  { value: 'edgeReveal', label: 'ふちから表示' },
+]
 
 export function ConsolePage() {
   useScreenWakeLock()
 
   const { instance: musicKitInstance, error: musicKitInitError } = useMusicKitInstance()
-  const { setSongIds, prepareNext, playFromStart, stop } = useSequentialPlayback()
+  const { setSongIds, prepareNext, playFromStart, playAlbum, stop } = useSequentialPlayback()
   const musicKitAuth = useMusicKitAuth()
   const queryClient = useQueryClient()
   const libraryPlaylistsQuery = useLibraryPlaylistsQuery()
@@ -110,12 +120,44 @@ export function ConsolePage() {
 
     if (change.step === 'reveal') {
       try {
-        await playFromStart()
+        if (latestState.quizMode === 'jacket') {
+          const roundKey = roundPreparationKeyFromState(latestState)
+          const album = roundAlbumFromState(latestState)
+          const track = album && latestState.tracks.find((item) =>
+            item.albumName === album.name && item.artist === album.artist &&
+            item.artworkRevealUrl === album.artworkRevealUrl)
+          if (!track) throw new Error('アルバムを取得できません')
+          const albumId = await (async () => {
+            if (track.id.startsWith('i.')) {
+              const libraryResponse = await musicKitInstance.api.music<{
+                data?: Array<{ id: string }>
+              }>(`/v1/me/library/songs/${encodeURIComponent(track.id)}/albums`)
+              const libraryAlbumId = libraryResponse.data.data?.[0]?.id
+              if (!libraryAlbumId) throw new Error('ライブラリのアルバムIDを取得できません')
+              return libraryAlbumId
+            }
+            const response = await musicKitInstance.api.music<{
+              data?: Array<{ relationships?: { albums?: { data?: Array<{ id: string }> } } }>
+            }>(`/v1/catalog/${musicKitInstance.storefrontId}/songs/${encodeURIComponent(track.id)}`, { include: 'albums' })
+            const catalogAlbumId = response.data.data?.[0]?.relationships?.albums?.data?.[0]?.id
+            if (!catalogAlbumId) throw new Error('Apple MusicのアルバムIDを取得できません')
+            return catalogAlbumId
+          })()
+          const stillRevealing = () => latestState.quizMode === 'jacket' && latestState.step === 'reveal' &&
+            roundPreparationKeyFromState(latestState) === roundKey
+          if (!stillRevealing()) return
+          await playAlbum(albumId)
+          if (!stillRevealing()) await stop()
+        } else {
+          await playFromStart()
+        }
         setPlaybackError(null)
       } catch (error) {
         setPlaybackError(errorFromUnknown(error))
       }
     }
+
+    if (latestState.quizMode === 'jacket') return
 
     if (change.roundIndex !== undefined || change.shuffledTrackIds !== undefined) {
       const nextRoundKey = roundPreparationKeyFromState(latestState)
@@ -157,7 +199,7 @@ export function ConsolePage() {
       }
     }
 
-  }, [clearFeedbackEndedTimeout, clearPlayEndedTimeout, musicKitAuth.authorized, musicKitInstance, playFromStart, prepareNext, preparedRoundKey, setSongIds, stop]))
+  }, [clearFeedbackEndedTimeout, clearPlayEndedTimeout, musicKitAuth.authorized, musicKitInstance, playAlbum, playFromStart, prepareNext, preparedRoundKey, setSongIds, stop]))
 
   useEffect(() => {
     return () => {
@@ -173,11 +215,19 @@ export function ConsolePage() {
   const statusMessage = consoleStatusMessage(state, seconds)
   const roundTrackId = roundTrackIdFromState(state)
   const roundTrack = roundTrackFromState(state)
+  const isJacket = state.quizMode === 'jacket'
+  const roundInfo = isJacket ? roundAlbumFromState(state) : roundTrack
   const roundPreparationKey = roundPreparationKeyFromState(state)
-  const roundPrepared = roundPreparationKey !== null && preparedRoundKey === roundPreparationKey
+  const roundPrepared = state.quizMode === 'jacket'
+    ? roundPreparationKey !== null
+    : roundPreparationKey !== null && preparedRoundKey === roundPreparationKey
   const trackInfoExpanded = roundPreparationKey !== null && expandedRoundKey === roundPreparationKey
-  const canPlayIntro = state.step === 'beforePlayback' && roundTrackId != null && roundPrepared && !isPreparingNext && playbackError === null && musicKitReady && musicKitAuth.authorized
-  const canGoNextRound = state.phase === 'game' && state.step === 'reveal' && state.roundIndex >= 0 && state.roundIndex + 1 < state.shuffledTrackIds.length
+  const canPlayIntro = state.quizMode === 'intro' && state.step === 'beforePlayback' && roundTrackId != null && roundPrepared && !isPreparingNext && playbackError === null && musicKitReady && musicKitAuth.authorized
+  const canGoNextRound = state.phase === 'game' && state.step === 'reveal' && (
+    state.quizMode === 'jacket'
+      ? state.roundAlbumIndex >= 0 && state.roundAlbumIndex + 1 < state.shuffledAlbumIds.length
+      : state.roundIndex >= 0 && state.roundIndex + 1 < state.shuffledTrackIds.length
+  )
   const playButtonLabel = state.step === 'playing' ? '再生中' : state.step === 'beforePlayback' && roundTrackId != null && !roundPrepared ? 'ロード中' : '再生'
 
   const handlePlaybackSecondsChange = useCallback((value: number) => {
@@ -258,12 +308,12 @@ export function ConsolePage() {
   })
 
   // 再生操作はボタンと useGameState(onChange) からだけ useSequentialPlayback へ渡す。
-  const handleStart = () => run(async () => {
+  const handleStart = (quizMode: QuizMode) => run(async () => {
     if (state.tracks.length === 0) {
       setConsoleMessage('曲を選択してから開始してください')
       return
     }
-    await consoleAction('console:start')
+    await consoleAction('console:start', { quizMode })
   })
 
   const handlePlay = () => run(async () => {
@@ -334,6 +384,83 @@ export function ConsolePage() {
     await consoleAction('console:reset')
   })
 
+  const handleJacketModeChange = (jacketMode: JacketMode) => run(async () => {
+    await consoleAction('console:set-jacket-mode', { jacketMode })
+  })
+
+  const handleJacketGrayscaleChange = (jacketGrayscale: boolean) => run(async () => {
+    await consoleAction('console:set-jacket-grayscale', { jacketGrayscale })
+  })
+
+  const handleJacketHintPercentChange = (jacketHintPercent: number) => {
+    return consoleAction('console:set-jacket-hint-percent', { jacketHintPercent })
+  }
+
+  const progressControls = state.quizMode === 'jacket' ? (
+    <>
+      <div className="grid gap-4">
+        <label className="grid gap-2">
+          <span className="text-cream font-bold">隠し方</span>
+          <select
+            className="min-h-12 rounded-xl border border-white/10 bg-black/40 px-3.5 text-cream font-bold outline-none focus:border-amber"
+            value={state.jacketMode}
+            onChange={(event) => void handleJacketModeChange(event.currentTarget.value as JacketMode)}
+            disabled={busy || state.phase !== 'game' || state.step !== 'beforePlayback'}
+            aria-label="隠し方"
+          >
+            {jacketModeOptions.map((option) => (
+              <option className="bg-ink text-cream" value={option.value} key={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+        <label className="flex min-h-12 items-center justify-between gap-3 rounded-xl border border-white/10 bg-black/30 px-3.5">
+          <span className="text-cream font-bold">白黒</span>
+          <input
+            className="size-6 accent-amber"
+            type="checkbox"
+            checked={state.jacketGrayscale}
+            onChange={(event) => void handleJacketGrayscaleChange(event.currentTarget.checked)}
+            disabled={busy || state.phase !== 'game' || state.step !== 'beforePlayback'}
+            aria-label="白黒"
+          />
+        </label>
+      </div>
+      <div className="grid justify-items-center gap-2.5 mt-4">
+        <span className="justify-self-start text-cream font-bold">ヒントレベル</span>
+        <JacketHintSlider
+          key={roundPreparationKey}
+          value={state.jacketHintPercent}
+          onChange={handleJacketHintPercentChange}
+          onError={report}
+        />
+      </div>
+    </>
+  ) : (
+    <div className="grid justify-items-center gap-2.5">
+      <span className="justify-self-start text-cream font-bold">再生秒数</span>
+      <CircularSecondsSlider
+        value={seconds}
+        onChange={handlePlaybackSecondsChange}
+        onCommit={handlePlaybackSecondsCommit}
+      />
+    </div>
+  )
+
+  const primaryProgressButtons = state.quizMode === 'jacket' ? (
+    <div className="grid gap-2.5 grid-cols-1 md:grid-cols-2 [&>button]:min-h-14">
+      <Button variant="ghost" disabled={busy || state.phase !== 'game' || state.step !== 'beforePlayback' || !roundPrepared} onClick={handleGiveUp}>ギブアップ</Button>
+      <Button disabled={busy || state.step !== 'answering'} onClick={handleCorrect}>正解</Button>
+      <Button disabled={busy || state.step !== 'answering'} onClick={handleWrong}>不正解</Button>
+    </div>
+  ) : (
+    <div className="grid gap-2.5 grid-cols-1 md:grid-cols-2 [&>button]:min-h-14">
+      <Button disabled={busy || !canPlayIntro} onClick={handlePlay}>{playButtonLabel}</Button>
+      <Button variant="ghost" disabled={busy || state.phase !== 'game' || state.step !== 'beforePlayback' || !roundPrepared} onClick={handleGiveUp}>ギブアップ</Button>
+      <Button disabled={busy || state.step !== 'answering'} onClick={handleCorrect}>正解</Button>
+      <Button disabled={busy || state.step !== 'answering'} onClick={handleWrong}>不正解</Button>
+    </div>
+  )
+
   return (
     <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
       <Glass as="header" className="rounded-3xl p-6 flex flex-col items-stretch justify-between gap-4 mb-4 md:flex-row md:items-center">
@@ -397,7 +524,8 @@ export function ConsolePage() {
             </p>
           )}
           <div className="flex flex-wrap gap-2.5 mt-3.5 max-md:[&>button]:flex-1">
-            <Button disabled={busy || state.phase !== 'ready' || selectedPlaylistIds.length === 0 || state.tracks.length === 0} onClick={handleStart}>ゲーム開始</Button>
+            <Button disabled={busy || state.phase !== 'ready' || selectedPlaylistIds.length === 0 || state.tracks.length === 0} onClick={() => handleStart('intro')}>イントロで開始</Button>
+            <Button disabled={busy || state.phase !== 'ready' || selectedPlaylistIds.length === 0 || state.tracks.length === 0} onClick={() => handleStart('jacket')}>ジャケットで開始</Button>
           </div>
           <div className="flex items-center gap-2 flex-wrap mt-3">
             <span className="text-muted">参加中:</span>
@@ -413,21 +541,9 @@ export function ConsolePage() {
 
         <Glass className="rounded-2xl p-6 min-w-0">
           <h2 className="m-0 mb-2.5 text-2xl font-bold">3. 進行</h2>
-          <div className="grid justify-items-center gap-2.5">
-            <span className="justify-self-start text-cream font-bold">再生秒数</span>
-            <CircularSecondsSlider
-              value={seconds}
-              onChange={handlePlaybackSecondsChange}
-              onCommit={handlePlaybackSecondsCommit}
-            />
-          </div>
+          {progressControls}
           <div className="grid gap-3.5 mt-4">
-            <div className="grid gap-2.5 grid-cols-1 md:grid-cols-2 [&>button]:min-h-14">
-              <Button disabled={busy || !canPlayIntro} onClick={handlePlay}>{playButtonLabel}</Button>
-              <Button variant="ghost" disabled={busy || state.phase !== 'game' || state.step !== 'beforePlayback' || !roundPrepared} onClick={handleGiveUp}>ギブアップ</Button>
-              <Button disabled={busy || state.step !== 'answering'} onClick={handleCorrect}>正解</Button>
-              <Button disabled={busy || state.step !== 'answering'} onClick={handleWrong}>不正解</Button>
-            </div>
+            {primaryProgressButtons}
             <div className="grid gap-2.5 grid-cols-1 pt-3.5 border-t border-white/10 [&>button]:min-h-14">
               <Button disabled={busy || !canGoNextRound} onClick={handleNextRound}>次のラウンドへ</Button>
               <Button disabled={busy || state.step !== 'reveal'} onClick={handleShowResults}>結果発表へ</Button>
@@ -436,11 +552,12 @@ export function ConsolePage() {
           </div>
         </Glass>
 
-        <Glass as="section" className="rounded-2xl p-6 min-w-0" aria-label="曲情報">
-          <RoundTrackDisclosure
+        <Glass as="section" className="rounded-2xl p-6 min-w-0" aria-label={isJacket ? 'アルバム情報' : '曲情報'}>
+          <RoundInfoDisclosure
             expanded={trackInfoExpanded}
             onToggle={handleToggleTrackInfo}
-            track={roundTrack}
+            item={roundInfo}
+            kind={isJacket ? 'album' : 'track'}
           />
         </Glass>
         </div>

@@ -264,7 +264,7 @@ dev = [
 [package.metadata.requires-dev]
 dev = [
     { name = "httpx", specifier = ">=0.28.1" },
-    { name = "musickit-api-mock-playwright", specifier = ">=0.1.1" },
+    { name = "musickit-api-mock-playwright", specifier = ">=0.2.0" },
     { name = "playwright", specifier = ">=1.57.0" },
     { name = "pytest", specifier = ">=9.0.2" },
     { name = "pytest-bdd", specifier = ">=8.1.0" },
@@ -338,28 +338,28 @@ wheels = [
 
 [[package]]
 name = "musickit-api-mock"
-version = "0.1.1"
+version = "0.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "av" },
     { name = "werkzeug" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/97/f8/f21ff30f7b9d926f428a91310f64135f45d0f0ad961cb6ecf8de23983e79/musickit_api_mock-0.1.1.tar.gz", hash = "sha256:bef10784763ababe68c30e443d97ad70ed567e7f2e62f0b74b996293e346aae0", size = 80897, upload-time = "2026-06-01T07:27:31.877Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b1/ca/32e110bc080c25d8ec4c2812d10e149ba08d6bab5774c2c27ff73b8c9274/musickit_api_mock-0.2.0.tar.gz", hash = "sha256:75787bb79a5fa446e8dabf3d72d239f3403df5b73b62dfae17620af30c7de8bf", size = 87262, upload-time = "2026-09-21T04:30:06.892Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/37/39/62b8b2bea57091f6d4554e0f2ce9bf2d43bc38b2bf1850d550ef5cc6270d/musickit_api_mock-0.1.1-py3-none-any.whl", hash = "sha256:3a323e0ad5c3633555295e46889a65e490c036a4ba10b21f51cc4872a3207142", size = 132756, upload-time = "2026-06-01T07:27:29.534Z" },
+    { url = "https://files.pythonhosted.org/packages/a1/0b/0be3be65411d350ae4cf540962496dbf228a700b1db23d50735bb0a611eb/musickit_api_mock-0.2.0-py3-none-any.whl", hash = "sha256:9df7f9f66081532fa6ff2c463bcf29418d4f51c637d425ccb17c410e6d0757e0", size = 139792, upload-time = "2026-09-21T04:30:04.334Z" },
 ]
 
 [[package]]
 name = "musickit-api-mock-playwright"
-version = "0.1.1"
+version = "0.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "musickit-api-mock" },
     { name = "playwright" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/66/5e/614e9c1ae65933fa69923ecd0e8b546881795ce159ed6538bbacdc0d717c/musickit_api_mock_playwright-0.1.1.tar.gz", hash = "sha256:22263e5d8dc1d73fe1057dd2791b717102b51470ec3efb7b96c618d736f05059", size = 7287, upload-time = "2026-06-01T07:27:32.824Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/90/df/5f4920e4307376b5fc883d4a2694fc33cb0c5581db90665188bcda8334ac/musickit_api_mock_playwright-0.2.0.tar.gz", hash = "sha256:cf306cd12a97d530348f3dc053430e7bb9de15a39ac5a247df1b2c9ae94f8627", size = 7378, upload-time = "2026-09-21T04:30:07.794Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0e/51/4d59f96e5932db948f69ac10c645e98fdf302a8bb125e34f082cb67a886e/musickit_api_mock_playwright-0.1.1-py3-none-any.whl", hash = "sha256:c55a1e9b646c1d98e40f644badea7a0e270af75733469674971880e8135f4b56", size = 10213, upload-time = "2026-06-01T07:27:30.874Z" },
+    { url = "https://files.pythonhosted.org/packages/a1/3d/7d0c15a96151c9eea6acbacd9d69b3f80e6e6da26e1224043bc0d2a70b91/musickit_api_mock_playwright-0.2.0-py3-none-any.whl", hash = "sha256:736391ff23dcf695f18568659ee8befd113ecb972c2aa22be5d65724919df2f0", size = 10150, upload-time = "2026-09-21T04:30:05.651Z" },
 ]
 
 [[package]]
