@@ -18,7 +18,6 @@ from frontend.musickit_mock import (
     set_musickit_library_data,
     set_musickit_library_song_albums,
 )
-from tls_helpers import tls_verify, websocket_ssl_options
 
 scenarios("../../features/frontend")
 scenarios("../../features/integration")
@@ -85,7 +84,6 @@ def _current_backend_state(socket_client):
         reconnection=False,
         logger=False,
         engineio_logger=False,
-        websocket_extra_options=websocket_ssl_options(server_url),
     )
     client.on("state", lambda payload: events.append(payload))
     client.connect(server_url, transports=["websocket"], socketio_path="socket.io", wait_timeout=5)
@@ -259,7 +257,7 @@ def _wait_for_fullscreen_button_style(page: Page, *, opacity: str, pointer_event
 
 def _prepare_game(socket_client, actor: str = "player-front"):
     _set_ready_tracks(socket_client, 3)
-    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}", verify=tls_verify(socket_client.server_url))
+    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}")
     assert response.status_code == 200
     _wait_for_joined_count(socket_client, 1)
     # The action API intentionally has a cooldown shared by join and buzz.
@@ -283,6 +281,21 @@ def given_open_frontend(frontend_page: Page, path: str):
 @when(parsers.parse('the frontend opens "{path}" with mocked MusicKit'))
 def open_frontend_with_musickit(frontend_page: Page, path: str):
     frontend_page.goto(path)
+
+
+@given("secure-context-only web APIs are unavailable")
+def secure_context_apis_unavailable(frontend_page: Page):
+    # LAN の http (non-secure context) を再現する。localhost は常に secure context なので API を明示的に消す。
+    frontend_page.add_init_script(
+        """
+        (() => {
+          Object.defineProperty(window, 'isSecureContext', { value: false, configurable: true });
+          delete Crypto.prototype.randomUUID;
+          delete Crypto.prototype.subtle;
+          delete Navigator.prototype.wakeLock;
+        })();
+        """
+    )
 
 
 @given("MusicKit is already authorized")
@@ -500,7 +513,7 @@ def backend_host_plays(socket_client, seconds: int):
 
 @when(parsers.parse('backend actor "{actor}" presses the action API'))
 def backend_actor_presses(socket_client, actor: str):
-    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}", verify=tls_verify(socket_client.server_url))
+    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}")
     assert response.status_code == 200
     socket_client.wait_for_state(step="answering", answererId=actor)
 
@@ -510,7 +523,7 @@ def backend_game_has_actor_answering(socket_client, actor: str):
     _prepare_game(socket_client, actor)
     socket_client.emit("console:play")
     socket_client.wait_for_state(step="playing")
-    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}", verify=tls_verify(socket_client.server_url))
+    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}")
     assert response.status_code == 200
     socket_client.wait_for_state(step="answering", answererId=actor)
 
@@ -669,7 +682,7 @@ def backend_game_has_results(socket_client, actor: str):
     _prepare_game(socket_client, actor)
     socket_client.emit("console:play")
     socket_client.wait_for_state(step="playing")
-    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}", verify=tls_verify(socket_client.server_url))
+    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}")
     assert response.status_code == 200
     socket_client.wait_for_state(step="answering", answererId=actor)
     socket_client.emit("console:correct")
@@ -1000,7 +1013,7 @@ def action_button_is_open(frontend_page: Page, actor: str):
 
 @given(parsers.parse('action button "{actor}" is joined'))
 def action_button_is_joined(socket_client, actor: str):
-    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}", verify=tls_verify(socket_client.server_url))
+    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}")
     assert response.status_code in {200, 204}
     _wait_for_joined_count(socket_client, len(socket_client.state["players"]) + (0 if any(p["id"] == actor for p in socket_client.state["players"]) else 1))
     socket_client.sleep(1.05)
@@ -1009,7 +1022,7 @@ def action_button_is_joined(socket_client, actor: str):
 @given(parsers.parse('action buttons "{actors}" are joined'))
 def action_buttons_are_joined(socket_client, actors: str):
     for actor in [value for value in actors.split(",") if value]:
-        response = httpx.post(f"{socket_client.server_url}/api/act/{actor}", verify=tls_verify(socket_client.server_url))
+        response = httpx.post(f"{socket_client.server_url}/api/act/{actor}")
         assert response.status_code in {200, 204}
         socket_client.sleep(1.05)
     expected = len([value for value in actors.split(",") if value])
@@ -1023,7 +1036,7 @@ def action_button_is_pressed(frontend_page: Page, socket_client, actor: str):
         state.get("step") == "playing"
         or (state.get("quizMode") == "jacket" and state.get("step") == "beforePlayback")
     )
-    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}", verify=tls_verify(socket_client.server_url))
+    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}")
     last = getattr(frontend_page, "last_action_responses", {})
     last[actor] = response.status_code
     setattr(frontend_page, "last_action_responses", last)
@@ -1231,7 +1244,7 @@ def host_advances_next_round(socket_client):
 def player_has_scored_once(socket_client, actor: str):
     socket_client.emit("console:play")
     socket_client.wait_for_state(step="playing")
-    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}", verify=tls_verify(socket_client.server_url))
+    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}")
     assert response.status_code == 200
     socket_client.wait_for_state(step="answering", answererId=actor)
     socket_client.emit("console:correct")
@@ -1429,7 +1442,7 @@ def _console_actor_answering(frontend_page: Page, socket_client, actor: str, qui
     if quiz_mode == "intro":
         socket_client.emit("console:play")
         socket_client.wait_for_state(step="playing")
-    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}", verify=tls_verify(socket_client.server_url))
+    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}")
     assert response.status_code == 200
     socket_client.wait_for_state(step="answering", answererId=actor)
     expect(_answer_input(frontend_page)).to_be_enabled(timeout=30000)

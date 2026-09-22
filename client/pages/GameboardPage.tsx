@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { roundAlbumFromState, roundTrackFromState, useConnected, useGameState } from '../lib/gameClient'
-import { useScreenWakeLock } from '../useScreenWakeLock'
 import { playerColor } from '../lib/util'
 import { Glass } from '../components/Glass'
 import { PersonGlyph } from '../components/Glyphs'
@@ -10,8 +9,6 @@ import { JacketCanvas } from '../components/JacketCanvas'
 import { ReadyTrackLanes, TrackArtwork } from '../components/TrackDisplay'
 
 export function GameboardPage() {
-  useScreenWakeLock()
-
   const state = useGameState()
   const connected = useConnected()
   const boardRef = useRef<HTMLElement>(null)

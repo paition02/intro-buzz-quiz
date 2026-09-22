@@ -7,6 +7,11 @@ Feature: Action button page
     And the action button has no visible text
     And the action page keeps the same player identity after reload
 
+  Scenario: Action page works outside a secure context
+    Given secure-context-only web APIs are unavailable
+    When the frontend opens "/action"
+    Then the action page keeps the same player identity after reload
+
   Scenario: Pressing the action button joins before the game starts
     Given the frontend opens "/action"
     When the frontend action button is pressed

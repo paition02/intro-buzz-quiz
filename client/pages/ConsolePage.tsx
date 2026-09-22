@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useMusicKitAuth, useMusicKitInstance } from '../useMusicKit'
 import { introTarget, isPlaybackSuperseded, playbackTargetFromState, playbackTargetsEqual, usePlaybackTarget } from '../usePlaybackTarget'
-import { useScreenWakeLock } from '../useScreenWakeLock'
 import {
   playlistTracksQueryOptions,
   useLibraryPlaylistsQuery,
@@ -44,8 +43,6 @@ const jacketModeOptions: Array<{ value: JacketMode; label: string }> = [
 ]
 
 export function ConsolePage() {
-  useScreenWakeLock()
-
   const { instance: musicKitInstance, error: musicKitInitError } = useMusicKitInstance()
   const { status: playback, setTarget: setPlaybackTarget } = usePlaybackTarget()
   const musicKitAuth = useMusicKitAuth()
