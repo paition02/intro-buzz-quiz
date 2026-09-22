@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
@@ -38,6 +39,10 @@ class SocketClient:
         )
         self.events: list[dict[str, Any]] = []
         self.last_ack: dict[str, Any] | None = None
+        # 待機の実装。frontend test では Playwright に制御を返す関数に差し替える (frontend/conftest.py)。
+        # sync API の route handler (MusicKit API mock) は test 側が Playwright を呼んでいる間しか動かないため、
+        # time.sleep で待つと mock 応答が待機終了まで止まる。
+        self.sleep: Callable[[float], None] = time.sleep
         self.sio.on("state", self._on_state)
         self.sio.connect(server_url, transports=["websocket"], socketio_path="socket.io", wait_timeout=5)
 
@@ -60,7 +65,7 @@ class SocketClient:
 
     def send(self, event: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         self.sio.emit(event, data=payload)
-        time.sleep(0.02)
+        self.sleep(0.02)
         return self.state
 
     def wait_for_next_state(self, event_count: int) -> dict[str, Any]:
@@ -68,7 +73,7 @@ class SocketClient:
         while time.time() < deadline:
             if len(self.events) > event_count:
                 return self.events[-1]
-            time.sleep(0.02)
+            self.sleep(0.02)
         raise AssertionError(f"state event after {event_count} not observed; latest={self.events[-1] if self.events else None}")
 
     def wait_for_state(self, **expected: Any) -> dict[str, Any]:
@@ -78,7 +83,7 @@ class SocketClient:
                 state = self.events[-1]
                 if all(state.get(key) == value for key, value in expected.items()):
                     return state
-            time.sleep(0.02)
+            self.sleep(0.02)
         raise AssertionError(f"state with {expected} not observed; latest={self.events[-1] if self.events else None}")
 
     @property

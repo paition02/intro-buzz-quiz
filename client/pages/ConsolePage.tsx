@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useMusicKitAuth, useMusicKitInstance } from '../useMusicKit'
-import { useSequentialPlayback } from '../useSequentialPlayback'
+import { introTarget, isPlaybackSuperseded, playbackTargetFromState, playbackTargetsEqual, usePlaybackTarget } from '../usePlaybackTarget'
 import { useScreenWakeLock } from '../useScreenWakeLock'
 import {
   playlistTracksQueryOptions,
@@ -21,7 +21,7 @@ import {
   roundTrackIdFromState,
   useGameState,
 } from '../lib/gameClient'
-import { errorFromUnknown, uniqueTracksById } from '../lib/util'
+import { uniqueTracksById } from '../lib/util'
 import { playResultSound, playResultsSound } from '../lib/sounds'
 import { LibraryPlaylistsSection } from '../components/PlaylistPanel'
 import { PlayerBadge } from '../components/PlayerBadge'
@@ -47,7 +47,7 @@ export function ConsolePage() {
   useScreenWakeLock()
 
   const { instance: musicKitInstance, error: musicKitInitError } = useMusicKitInstance()
-  const { setSongIds, prepareNext, playFromStart, playAlbum, stop } = useSequentialPlayback()
+  const { status: playback, setTarget: setPlaybackTarget } = usePlaybackTarget()
   const musicKitAuth = useMusicKitAuth()
   const queryClient = useQueryClient()
   const libraryPlaylistsQuery = useLibraryPlaylistsQuery()
@@ -57,14 +57,12 @@ export function ConsolePage() {
   const [busy, setBusy] = useState(false)
   const [consoleMessage, setConsoleMessage] = useState<string | null>(null)
   const [playbackSeconds, setPlaybackSeconds] = useState(0.5)
-  const [isPreparingNext, setIsPreparingNext] = useState(false)
-  const [preparedRoundKey, setPreparedRoundKey] = useState<string | null>(null)
   const [expandedRoundKey, setExpandedRoundKey] = useState<string | null>(null)
-  const [playbackError, setPlaybackError] = useState<Error | null>(null)
   const autoReadyRequestedRef = useRef(false)
   const playEndedTimeoutIdRef = useRef<number | null>(null)
   const feedbackEndedTimeoutIdRef = useRef<number | null>(null)
   const musicKitReady = musicKitInstance !== null
+  const playbackError = playback.error
   const musicKitError = musicKitInitError ?? musicKitAuth.error ?? playbackError
 
   const run = async (action: () => Promise<void>) => {
@@ -104,101 +102,17 @@ export function ConsolePage() {
     feedbackEndedTimeoutIdRef.current = null
   }, [])
 
-  const state = useGameState(useCallback(async (change: Partial<GameState>) => {
-    if (musicKitInstance === null || !musicKitAuth.authorized) return
-
+  const state = useGameState(useCallback((change: Partial<GameState>) => {
     if (change.step !== undefined && change.step !== 'playing') clearPlayEndedTimeout()
     if (change.step !== undefined && change.step !== 'correct' && change.step !== 'wrong') clearFeedbackEndedTimeout()
+  }, [clearFeedbackEndedTimeout, clearPlayEndedTimeout]))
 
-    if (change.step !== undefined && change.step !== 'playing' && change.step !== 'reveal') {
-      try {
-        await stop()
-        setPlaybackError(null)
-      } catch (error) {
-        setPlaybackError(errorFromUnknown(error))
-      }
-    }
-
-    if (change.step === 'reveal') {
-      try {
-        if (latestState.quizMode === 'jacket') {
-          const roundKey = roundPreparationKeyFromState(latestState)
-          const album = roundAlbumFromState(latestState)
-          const track = album && latestState.tracks.find((item) => album.trackIds.includes(item.id))
-          if (!track) throw new Error('アルバムを取得できません')
-          const albumId = await (async () => {
-            if (track.id.startsWith('i.')) {
-              const libraryResponse = await musicKitInstance.api.music<{
-                data?: Array<{ id: string }>
-              }>(`/v1/me/library/songs/${encodeURIComponent(track.id)}/albums`)
-              const libraryAlbumId = libraryResponse.data.data?.[0]?.id
-              if (!libraryAlbumId) throw new Error('ライブラリのアルバムIDを取得できません')
-              return libraryAlbumId
-            }
-            const response = await musicKitInstance.api.music<{
-              data?: Array<{ relationships?: { albums?: { data?: Array<{ id: string }> } } }>
-            }>(`/v1/catalog/${musicKitInstance.storefrontId}/songs/${encodeURIComponent(track.id)}`, { include: 'albums' })
-            const catalogAlbumId = response.data.data?.[0]?.relationships?.albums?.data?.[0]?.id
-            if (!catalogAlbumId) throw new Error('Apple MusicのアルバムIDを取得できません')
-            return catalogAlbumId
-          })()
-          const stillRevealing = () => latestState.quizMode === 'jacket' && latestState.step === 'reveal' &&
-            roundPreparationKeyFromState(latestState) === roundKey
-          if (!stillRevealing()) return
-          await playAlbum(albumId)
-          if (!stillRevealing()) await stop()
-        } else {
-          await playFromStart()
-        }
-        setPlaybackError(null)
-      } catch (error) {
-        setPlaybackError(errorFromUnknown(error))
-      }
-    }
-
-    if (latestState.quizMode === 'jacket') return
-
-    if (change.roundIndex !== undefined || change.shuffledTrackIds !== undefined) {
-      const nextRoundKey = roundPreparationKeyFromState(latestState)
-      setPreparedRoundKey(null)
-
-      if (latestState.roundIndex < 0 || nextRoundKey === null) {
-        setIsPreparingNext(false)
-        return
-      }
-
-      setIsPreparingNext(true)
-      try {
-        if (change.shuffledTrackIds !== undefined) {
-          const songIds = latestState.shuffledTrackIds.slice(latestState.roundIndex)
-          await setSongIds(songIds)
-        }
-        await prepareNext()
-        setPreparedRoundKey(nextRoundKey)
-        setPlaybackError(null)
-      } catch (error) {
-        setPlaybackError(errorFromUnknown(error))
-      } finally {
-        setIsPreparingNext(false)
-      }
-    } else if (change.step === 'beforePlayback') {
-      const nextRoundKey = roundPreparationKeyFromState(latestState)
-      if (nextRoundKey !== null && preparedRoundKey !== nextRoundKey) {
-        setPreparedRoundKey(null)
-        setIsPreparingNext(true)
-        try {
-          await prepareNext()
-          setPreparedRoundKey(nextRoundKey)
-          setPlaybackError(null)
-        } catch (error) {
-          setPlaybackError(errorFromUnknown(error))
-        } finally {
-          setIsPreparingNext(false)
-        }
-      }
-    }
-
-  }, [clearFeedbackEndedTimeout, clearPlayEndedTimeout, musicKitAuth.authorized, musicKitInstance, playAlbum, playFromStart, prepareNext, preparedRoundKey, setSongIds, stop]))
+  // 望ましい再生状態はゲーム状態から導いて宣言するだけ。適用順序や古い状態変化の扱いは usePlaybackTarget が持つ。
+  useEffect(() => {
+    if (musicKitInstance === null || !musicKitAuth.authorized) return
+    const target = playbackTargetFromState(state)
+    if (target !== null) setPlaybackTarget(target).catch(() => {})
+  }, [musicKitAuth.authorized, musicKitInstance, setPlaybackTarget, state])
 
   useEffect(() => {
     return () => {
@@ -222,9 +136,10 @@ export function ConsolePage() {
     ? state.albums.map((album) => ({ id: album.id, title: album.name, artist: album.artist, artworkUrl: album.artworkChipUrl }))
     : state.tracks.map((track) => ({ id: track.id, title: track.title, artist: track.artist, artworkUrl: track.artworkChipUrl })), [isJacket, state.albums, state.tracks])
   const roundPreparationKey = roundPreparationKeyFromState(state)
+  const isPreparingNext = playback.target !== null && !playbackTargetsEqual(playback.target, playback.settled)
   const roundPrepared = state.quizMode === 'jacket'
     ? roundPreparationKey !== null
-    : roundPreparationKey !== null && preparedRoundKey === roundPreparationKey
+    : roundTrackId != null && playback.settled?.kind === 'prepared' && playback.settled.songId === roundTrackId
   const trackInfoExpanded = roundPreparationKey !== null && expandedRoundKey === roundPreparationKey
   const canPlayIntro = state.quizMode === 'intro' && state.step === 'beforePlayback' && roundTrackId != null && roundPrepared && !isPreparingNext && playbackError === null && musicKitReady && musicKitAuth.authorized
   const canGoNextRound = state.phase === 'game' && state.step === 'reveal' && (
@@ -311,7 +226,7 @@ export function ConsolePage() {
     })
   })
 
-  // 再生操作はボタンと useGameState(onChange) からだけ useSequentialPlayback へ渡す。
+  // 再生操作は state からの導出 (上の useEffect) と再生ボタンからだけ usePlaybackTarget へ宣言する。
   const handleStart = (quizMode: QuizMode) => run(async () => {
     if (state.tracks.length === 0) {
       setConsoleMessage('曲を選択してから開始してください')
@@ -326,17 +241,22 @@ export function ConsolePage() {
       return
     }
     await consoleAction('console:play')
-    await playFromStart()
-    setPlaybackError(null)
+    const playing = introTarget(latestState, 'playing')
+    if (playing === null) return
+    try {
+      await setPlaybackTarget(playing)
+    } catch (error) {
+      if (!isPlaybackSuperseded(error)) throw error
+      return
+    }
     clearPlayEndedTimeout()
     playEndedTimeoutIdRef.current = window.setTimeout(async () => {
       playEndedTimeoutIdRef.current = null
       try {
-        await stop()
-        setPlaybackError(null)
+        const prepared = introTarget(latestState, 'prepared')
+        if (prepared !== null) await setPlaybackTarget(prepared).catch((error: unknown) => { if (!isPlaybackSuperseded(error)) throw error })
         await consoleAction('console:play-ended')
       } catch (error) {
-        setPlaybackError(errorFromUnknown(error))
         report(error)
       }
     }, Math.ceil(seconds * 1000))
@@ -346,14 +266,9 @@ export function ConsolePage() {
     await consoleAction('console:correct')
     playResultSound('correct')
     clearFeedbackEndedTimeout()
-    feedbackEndedTimeoutIdRef.current = window.setTimeout(async () => {
+    feedbackEndedTimeoutIdRef.current = window.setTimeout(() => {
       feedbackEndedTimeoutIdRef.current = null
-      try {
-        await consoleAction('console:correct-feedback-ended')
-      } catch (error) {
-        setPlaybackError(errorFromUnknown(error))
-        report(error)
-      }
+      void consoleAction('console:correct-feedback-ended').catch(report)
     }, JUDGE_RESULT_DURATION_MS)
   })
 
