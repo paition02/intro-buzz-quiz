@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 import shutil
 from typing import Iterator
 
@@ -113,7 +114,10 @@ def frontend_page(browser: Browser, server_url: str, socket_client) -> Iterator[
             body=json_token_response(),
         ),
     )
+    # 待機中も Playwright に制御を返し、route handler (MusicKit API mock) が応答できるようにする
+    socket_client.sleep = lambda seconds: page.wait_for_timeout(seconds * 1000)
     try:
         yield page
     finally:
+        socket_client.sleep = time.sleep
         context.close()

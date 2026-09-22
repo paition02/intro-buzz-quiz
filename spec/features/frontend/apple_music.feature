@@ -191,3 +191,53 @@ Feature: MusicKit integration
     And the frontend clicks "ギブアップ"
     Then MusicKit plays the entire revealed library album with repeat all
     And no catalog lookup is sent for library song IDs
+
+  Scenario: Intro rounds keep preparing when the host advances quickly
+    Given the frontend console selected mocked playlist "Spec Long" containing 4 tracks
+    When the frontend clicks "イントロで開始"
+    Then the frontend play button becomes enabled
+    When the frontend clicks "再生"
+    Then the backend returns before playback after the intro duration
+    When the frontend clicks "ギブアップ"
+    And the frontend clicks "次のラウンドへ"
+    Then the frontend play button becomes enabled
+    And MusicKit has loaded the backend round track
+    When the frontend clicks "再生"
+    Then the backend returns before playback after the intro duration
+    When the frontend clicks "ギブアップ"
+    And the frontend clicks "次のラウンドへ"
+    Then the frontend play button becomes enabled
+    And MusicKit has loaded the backend round track
+
+  Scenario: Advancing right after the reveal does not start the revealed track later
+    Given the frontend console selected mocked playlist "Spec Long" containing 4 tracks
+    And MusicKit playback is observed
+    When the frontend clicks "イントロで開始"
+    Then the frontend play button becomes enabled
+    When the frontend clicks "再生"
+    Then the backend returns before playback after the intro duration
+    When the frontend clicks "ギブアップ"
+    And the frontend clicks "次のラウンドへ"
+    Then the frontend play button becomes enabled
+    And MusicKit does not start the previous round track after advancing
+
+  Scenario: The next round track is preloaded and loads without fetching its manifest
+    Given the frontend console selected mocked playlist "Spec Long" containing 4 tracks
+    And MusicKit playback is observed
+    When the frontend clicks "イントロで開始"
+    Then the frontend play button becomes enabled
+    And MusicKit has queued the next backend round track
+    And MusicKit has fetched the manifest of the next backend round track
+    When the frontend clicks "ギブアップ"
+    And the frontend clicks "次のラウンドへ"
+    Then the frontend play button becomes enabled
+    And MusicKit has loaded the backend round track
+    And MusicKit has not fetched the manifest of the backend round track since advancing
+
+  Scenario: The intro reveal loops the round track without advancing the queue
+    Given the frontend console selected mocked playlist "Spec Long" containing 4 tracks
+    When the frontend clicks "イントロで開始"
+    Then the frontend play button becomes enabled
+    When the frontend clicks "ギブアップ"
+    Then MusicKit is playing the backend round track
+    And MusicKit is still playing the backend round track after the track duration
