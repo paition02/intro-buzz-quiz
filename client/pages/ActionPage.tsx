@@ -1,6 +1,5 @@
 import { useRef, useState, type CSSProperties } from 'react'
 import { loadSessionString, playerColor, saveSessionString } from '../lib/util'
-import { useScreenWakeLock } from '../useScreenWakeLock'
 
 type ActionVisualState = 'idle' | 'pressed' | 'muted' | 'error'
 
@@ -8,14 +7,13 @@ function getActionActorId() {
   const storageKey = 'intro-buzz-action-actor-id'
   const stored = loadSessionString(storageKey)
   if (stored) return stored
-  const id = crypto.randomUUID()
+  // crypto.randomUUID は secure context 限定で LAN の http では使えないため getRandomValues で生成する。
+  const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, '0')).join('')
   saveSessionString(storageKey, id)
   return id
 }
 
 export function ActionPage() {
-  useScreenWakeLock()
-
   const [actorId] = useState(getActionActorId)
   const [busy, setBusy] = useState(false)
   const [visualState, setVisualState] = useState<ActionVisualState>('idle')

@@ -2,16 +2,13 @@ import { SignJWT, importPKCS8 } from 'jose'
 import { Server } from 'socket.io'
 import { Server as Engine } from '@socket.io/bun-engine'
 import { networkInterfaces } from 'node:os'
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
-import { spawnSync } from 'node:child_process'
 import homeHtml from '../client/index.html'
 import consoleHtml from '../client/console.html'
 import gameboardHtml from '../client/gameboard.html'
 import actionHtml from '../client/action.html'
 import type { Album, GameState, JacketMode, Player, QuizMode, Track } from '../type/game'
 
-// Bun が cwd の .env を読む。HTTP_PORT / HTTPS_PORT は数値として渡す。
+// Bun が cwd の .env を読む。PORT は数値として渡す。
 const isDevelopment = process.env.NODE_ENV !== 'production'
 
 type InternalGameState = Omit<GameState, 'players'> & {
@@ -50,157 +47,6 @@ const applePrivateKey = (process.env.APPLE_PRIVATE_KEY ?? '').replace(/\\n/g, '\
 
 function hasAppleMusicCredentials() {
   return Boolean(appleTeamId && appleKeyId && applePrivateKey)
-}
-
-function lanIpv4Addresses() {
-  const addresses = new Set<string>()
-  for (const entries of Object.values(networkInterfaces())) {
-    for (const entry of entries ?? []) {
-      if (entry.internal || entry.family !== 'IPv4') continue
-      addresses.add(entry.address)
-    }
-  }
-  return [...addresses].sort()
-}
-
-function runOpenSsl(args: string[], cwd: string) {
-  const openSslBin = existsSync('/usr/bin/openssl') ? '/usr/bin/openssl' : 'openssl'
-  const result = spawnSync(openSslBin, args, { cwd, encoding: 'utf8' })
-  if (result.status === 0) return result.stdout
-  const details = [result.stdout, result.stderr].filter(Boolean).join('\n').trim()
-  throw new Error(`${openSslBin} ${args.join(' ')} failed${details ? `:\n${details}` : ''}`)
-}
-
-function chmodIfExists(path: string, mode: number) {
-  if (existsSync(path)) chmodSync(path, mode)
-}
-
-function certificateIncludes(path: string, cwd: string, required: string[]) {
-  if (!existsSync(path)) return false
-  const text = runOpenSsl(['x509', '-in', path, '-text', '-noout'], cwd)
-  return required.every((value) => text.includes(value))
-}
-
-function ensureHttpsCertificate() {
-  const certDir = resolve(process.cwd(), '.certs')
-  const caKey = join(certDir, 'intro-buzz-ca.key')
-  const caCert = join(certDir, 'intro-buzz-ca.crt')
-  const caSerial = join(certDir, 'intro-buzz-ca.srl')
-  const caConfig = join(certDir, 'intro-buzz-ca-openssl.cnf')
-  const serverKey = join(certDir, 'localhost.key')
-  const serverCsr = join(certDir, 'localhost.csr')
-  const serverCert = join(certDir, 'localhost.crt')
-  const chainCert = join(certDir, 'localhost-chain.crt')
-  const opensslConfig = join(certDir, 'localhost-openssl.cnf')
-
-  mkdirSync(certDir, { recursive: true, mode: 0o700 })
-  chmodSync(certDir, 0o700)
-
-  if (!existsSync(caKey)) {
-    runOpenSsl(['genrsa', '-out', caKey, '4096'], certDir)
-    chmodSync(caKey, 0o600)
-  }
-  chmodIfExists(caKey, 0o600)
-
-  writeFileSync(caConfig, [
-    '[req]',
-    'prompt = no',
-    'distinguished_name = req_distinguished_name',
-    'x509_extensions = v3_ca',
-    '',
-    '[req_distinguished_name]',
-    'CN = Intro Buzz Quiz Local CA',
-    '',
-    '[v3_ca]',
-    'basicConstraints = critical, CA:TRUE',
-    'keyUsage = critical, keyCertSign, cRLSign',
-    'subjectKeyIdentifier = hash',
-    'authorityKeyIdentifier = keyid:always,issuer:always',
-    '',
-  ].join('\n'))
-
-  if (!certificateIncludes(caCert, certDir, ['X509v3 Basic Constraints', 'CA:TRUE', 'X509v3 Authority Key Identifier'])) {
-    runOpenSsl([
-      'req',
-      '-x509',
-      '-new',
-      '-nodes',
-      '-key',
-      caKey,
-      '-sha256',
-      '-days',
-      '3650',
-      '-out',
-      caCert,
-      '-config',
-      caConfig,
-    ], certDir)
-  }
-
-  if (!existsSync(serverKey)) {
-    runOpenSsl(['genrsa', '-out', serverKey, '2048'], certDir)
-    chmodSync(serverKey, 0o600)
-  }
-  chmodIfExists(serverKey, 0o600)
-
-  const ipAddresses = ['127.0.0.1', '::1', ...lanIpv4Addresses()]
-  const altNames = [
-    'DNS.1 = localhost',
-    ...ipAddresses.map((address, index) => `IP.${index + 1} = ${address}`),
-  ].join('\n')
-
-  writeFileSync(opensslConfig, [
-    '[req]',
-    'prompt = no',
-    'distinguished_name = req_distinguished_name',
-    'req_extensions = req_ext',
-    '',
-    '[req_distinguished_name]',
-    'CN = localhost',
-    '',
-    '[req_ext]',
-    'subjectAltName = @alt_names',
-    '',
-    '[v3_req]',
-    'basicConstraints = CA:FALSE',
-    'keyUsage = critical, digitalSignature, keyEncipherment',
-    'extendedKeyUsage = serverAuth',
-    'subjectKeyIdentifier = hash',
-    'authorityKeyIdentifier = keyid,issuer',
-    'subjectAltName = @alt_names',
-    '',
-    '[alt_names]',
-    altNames,
-    '',
-  ].join('\n'))
-
-  runOpenSsl(['req', '-new', '-key', serverKey, '-out', serverCsr, '-config', opensslConfig], certDir)
-  runOpenSsl([
-    'x509',
-    '-req',
-    '-in',
-    serverCsr,
-    '-CA',
-    caCert,
-    '-CAkey',
-    caKey,
-    '-CAserial',
-    caSerial,
-    '-CAcreateserial',
-    '-out',
-    serverCert,
-    '-days',
-    '825',
-    '-sha256',
-    '-extensions',
-    'v3_req',
-    '-extfile',
-    opensslConfig,
-  ], certDir)
-
-  writeFileSync(chainCert, `${readFileSync(serverCert, 'utf8')}\n${readFileSync(caCert, 'utf8')}`)
-
-  return { certFile: chainCert, keyFile: serverKey, caCert }
 }
 
 async function generateAppleMusicToken(expiresInSeconds = 60 * 60 * 24) {
@@ -738,14 +584,7 @@ function readPort(name: string) {
 
 // engine.handler() から Bun.serve 用の websocket / idleTimeout / maxRequestBodySize を取り出す。
 const { websocket, idleTimeout, maxRequestBodySize } = engine.handler()
-const httpPort = readPort('HTTP_PORT')
-const httpsPort = readPort('HTTPS_PORT')
-
-if (httpPort === httpsPort) {
-  throw new Error('HTTP_PORT and HTTPS_PORT must be different')
-}
-
-const httpsCertificate = ensureHttpsCertificate()
+const port = readPort('PORT')
 
 const appRoutes = {
   // ルートごとに専用の HTML エントリポイントを持つ MPA 構成。
@@ -762,8 +601,8 @@ function handleAppRequest(req: Request, server: Parameters<typeof engine.handleR
   return new Response('Not Found', { status: 404 })
 }
 
-const httpServer = Bun.serve({
-  port: httpPort,
+const server = Bun.serve({
+  port,
   hostname: '0.0.0.0',
   development: isDevelopment,
   idleTimeout,
@@ -774,33 +613,12 @@ const httpServer = Bun.serve({
   websocket,
 })
 
-const httpsServer = Bun.serve({
-  port: httpsPort,
-  hostname: '0.0.0.0',
-  development: isDevelopment,
-  idleTimeout,
-  maxRequestBodySize,
-  tls: {
-    cert: readFileSync(httpsCertificate.certFile, 'utf8'),
-    key: readFileSync(httpsCertificate.keyFile, 'utf8'),
-  },
-  routes: appRoutes,
-  // routes に無いものだけここに落ちる。/socket.io/ は engine に丸ごと委ねる(HTTP も WS アップグレードも)。
-  fetch: handleAppRequest,
-  websocket,
-})
-
-const actualHttpPort = httpServer.port ?? httpPort
-const actualHttpsPort = httpsServer.port ?? httpsPort
+const actualPort = server.port ?? port
 
 console.log('Intro Buzz Quiz server listening')
 console.log('')
-console.log('Local CA certificate:')
-console.log(`  ${httpsCertificate.caCert}`)
-console.log('')
-console.log('Local URLs:')
-console.log(`  HTTP:  http://localhost:${actualHttpPort}/`)
-console.log(`  HTTPS: https://localhost:${actualHttpsPort}/`)
+console.log('Local URL:')
+console.log(`  http://localhost:${actualPort}/`)
 
 let loggedLanHeader = false
 for (const [name, entries] of Object.entries(networkInterfaces())) {
@@ -811,7 +629,6 @@ for (const [name, entries] of Object.entries(networkInterfaces())) {
       console.log('LAN URLs:')
       loggedLanHeader = true
     }
-    console.log(`  ${name} HTTP:  http://${entry.address}:${actualHttpPort}/`)
-    console.log(`  ${name} HTTPS: https://${entry.address}:${actualHttpsPort}/`)
+    console.log(`  ${name}: http://${entry.address}:${actualPort}/`)
   }
 }

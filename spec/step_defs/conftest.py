@@ -13,7 +13,6 @@ import httpx
 import pytest
 import socketio
 from dotenv import load_dotenv
-from tls_helpers import tls_verify, websocket_ssl_options
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(REPO_ROOT / ".env", override=False)
@@ -35,7 +34,6 @@ class SocketClient:
             reconnection=False,
             logger=False,
             engineio_logger=False,
-            websocket_extra_options=websocket_ssl_options(server_url),
         )
         self.events: list[dict[str, Any]] = []
         self.last_ack: dict[str, Any] | None = None
@@ -94,7 +92,7 @@ class SocketClient:
 
 @pytest.fixture
 def http(server_url: str):
-    with httpx.Client(base_url=server_url, timeout=5, verify=tls_verify(server_url)) as client:
+    with httpx.Client(base_url=server_url, timeout=5) as client:
         yield client
 
 

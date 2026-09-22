@@ -9,7 +9,6 @@ import pytest
 from playwright.sync_api import Browser, Error as PlaywrightError, Page, Playwright, sync_playwright
 
 from frontend.musickit_mock import configure_musickit_api_mock, make_developer_token
-from tls_helpers import chromium_certificate_args
 
 
 @pytest.fixture(scope="session")
@@ -19,10 +18,10 @@ def playwright_instance() -> Iterator[Playwright]:
 
 
 @pytest.fixture(scope="session")
-def browser(playwright_instance: Playwright, server_url: str) -> Iterator[Browser]:
+def browser(playwright_instance: Playwright) -> Iterator[Browser]:
     launch_options = {
         "headless": True,
-        "args": ["--no-sandbox", "--disable-dev-shm-usage", *chromium_certificate_args(server_url)],
+        "args": ["--no-sandbox", "--disable-dev-shm-usage"],
     }
     executable_path = os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE") or shutil.which("chromium-browser") or shutil.which("chromium")
     if executable_path:
