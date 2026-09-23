@@ -31,7 +31,7 @@ import { Glass } from '../components/Glass'
 import { Button } from '../components/Button'
 import { Eyebrow } from '../components/Eyebrow'
 import { RoundInfoDisclosure } from '../components/RoundInfoDisclosure'
-import { AnswerCard, type AnswerCandidate } from '../components/AnswerCard'
+import { AnswerInput, type AnswerCandidate } from '../components/AnswerInput'
 import { watchIntroDeadline } from '../lib/introDeadline'
 import { isUnavailableTrack } from '../lib/unavailableTrack'
 
@@ -559,6 +559,13 @@ export function ConsolePage() {
           {progressControls}
           <div className="grid gap-3.5 mt-4">
             {primaryProgressButtons}
+            <AnswerInput
+              key={`${roundPreparationKey}:${state.step === 'answering' ? state.answererId : 'inactive'}`}
+              candidates={answerCandidates}
+              disabled={state.step !== 'answering'}
+              placeholder={isJacket ? 'アルバム名を入力' : '曲名を入力'}
+              onAnswer={handleAnswer}
+            />
             <div className="grid gap-2.5 grid-cols-1 pt-3.5 border-t border-white/10 [&>button]:min-h-14">
               <Button disabled={busy || !canGoNextRound} onClick={handleNextRound}>次のラウンドへ</Button>
               <Button disabled={busy || state.step !== 'reveal'} onClick={handleShowResults}>結果発表へ</Button>
@@ -573,17 +580,6 @@ export function ConsolePage() {
             onToggle={handleToggleTrackInfo}
             item={roundInfo}
             kind={isJacket ? 'album' : 'track'}
-          />
-        </Glass>
-
-        <Glass as="section" className="rounded-2xl p-6 min-w-0" aria-label="回答">
-          <h2 className="m-0 mb-2.5 text-2xl font-bold">回答</h2>
-          <AnswerCard
-            key={`${roundPreparationKey}:${state.step === 'answering' ? state.answererId : 'inactive'}`}
-            candidates={answerCandidates}
-            disabled={state.step !== 'answering'}
-            placeholder={isJacket ? 'アルバム名を入力' : '曲名を入力'}
-            onAnswer={handleAnswer}
           />
         </Glass>
         </div>
