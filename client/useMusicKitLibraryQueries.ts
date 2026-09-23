@@ -30,6 +30,7 @@ type MusicApiAttributes = {
   artistName?: string
   albumName?: string
   artwork?: MusicApiArtwork
+  playParams?: { id?: string } | null
 }
 
 type MusicApiPlaylist = {
@@ -79,9 +80,13 @@ async function fetchLibraryPlaylists(mk: MusicKit.MusicKitInstance) {
   const allPlaylists: MusicApiPlaylist[] = []
   let url: string | null = '/v1/me/library/playlists'
   let params: MusicApiParams | undefined = { limit: 100 }
+  const visited = new Set<string>()
   while (url) {
+    if (visited.has(url)) throw new Error('ページ取得が循環しています。再読み込みしてください')
+    visited.add(url)
     const data: MusicApiPage<MusicApiPlaylist> = await musicApi<MusicApiPage<MusicApiPlaylist>>(mk, url, params)
-    allPlaylists.push(...(data?.data ?? []))
+    if (!Array.isArray(data?.data)) throw new Error('プレイリストの取得結果が不正です')
+    allPlaylists.push(...data.data)
     url = data?.next ?? null
     params = undefined
   }
@@ -95,18 +100,28 @@ async function fetchPlaylistTracks(mk: MusicKit.MusicKitInstance, playlistId: st
   const allTracks: MusicApiTrack[] = []
   let url: string | null = `/v1/me/library/playlists/${playlistId}/tracks`
   let params: MusicApiParams | undefined = { limit: 100, include: 'catalog,albums' }
+  const visited = new Set<string>()
   while (url) {
+    if (visited.has(url)) throw new Error('ページ取得が循環しています。再読み込みしてください')
+    visited.add(url)
     const data: MusicApiPage<MusicApiTrack> = await musicApi<MusicApiPage<MusicApiTrack>>(mk, url, params)
-    allTracks.push(...(data?.data ?? []))
+    if (!Array.isArray(data?.data)) throw new Error('曲の取得結果が不正です')
+    allTracks.push(...data.data)
     url = data?.next ?? null
     params = undefined
   }
-  return allTracks.map((track): Track => {
+  const availableTracks = allTracks.filter((track) => {
+    const attributes = track.relationships?.catalog?.data?.[0]?.attributes ?? track.attributes
+    // An explicit lack of playback parameters means this item cannot play.
+    // Older/partial responses without the field do not prove unavailability.
+    return !attributes || !('playParams' in attributes) || attributes.playParams != null
+  })
+  const tracks = availableTracks.map((track): Track => {
     const catalog = track.relationships?.catalog?.data?.[0]
     const artworkTemplate = catalog?.attributes?.artwork?.url ?? track.attributes?.artwork?.url
     return {
       id: catalog?.id ?? track.id,
-      title: track.attributes?.name ?? catalog?.attributes?.name ?? track.id,
+      title: track.attributes?.name ?? catalog?.attributes?.name ?? '',
       artist: track.attributes?.artistName ?? catalog?.attributes?.artistName ?? '',
       albumName: catalog?.attributes?.albumName ?? track.attributes?.albumName ?? '',
       albumArtist: track.relationships?.albums?.data?.[0]?.attributes?.artistName,
@@ -114,7 +129,8 @@ async function fetchPlaylistTracks(mk: MusicKit.MusicKitInstance, playlistId: st
       artworkInfoUrl: artworkUrlForSize(artworkTemplate, ARTWORK_INFO_SIZE),
       artworkRevealUrl: artworkUrlForSize(artworkTemplate, ARTWORK_REVEAL_SIZE),
     }
-  }).filter((track: Track) => track.id)
+  }).filter((track: Track) => track.id && track.title.trim())
+  return { tracks, unavailableCount: allTracks.length - availableTracks.length }
 }
 
 export function libraryPlaylistsQueryOptions(mk: MusicKit.MusicKitInstance | null, authorized: boolean) {
@@ -127,7 +143,7 @@ export function libraryPlaylistsQueryOptions(mk: MusicKit.MusicKitInstance | nul
 export function playlistTracksQueryOptions(mk: MusicKit.MusicKitInstance | null, authorized: boolean, playlistId: string) {
   return queryOptions({
     queryKey: ['musicKit', 'playlistTracks', mk === null ? 'no-instance' : 'instance', authorized, playlistId],
-    queryFn: () => mk !== null && authorized && playlistId.length > 0 ? fetchPlaylistTracks(mk, playlistId) : [],
+    queryFn: () => mk !== null && authorized && playlistId.length > 0 ? fetchPlaylistTracks(mk, playlistId) : { tracks: [] as Track[], unavailableCount: 0 },
   })
 }
 

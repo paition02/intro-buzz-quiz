@@ -49,6 +49,7 @@ export type Album = {
 }
 
 export type GameState = {
+  operationId: string
   phase: Phase
   step: GameStep
   quizMode: QuizMode | null

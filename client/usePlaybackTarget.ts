@@ -1,4 +1,4 @@
-import { useCallback, useRef, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useSyncExternalStore } from 'react'
 import { useMusicKitInstance } from './useMusicKit'
 import { musicKitInstanceStore } from './musicKitStore'
 import type { GameState } from '../type/game'
@@ -58,18 +58,6 @@ export function introTarget(state: GameState, kind: 'prepared' | 'playing' | 'lo
   return { kind, songId, nextSongId: state.shuffledTrackIds[state.roundIndex + 1] ?? null }
 }
 
-type Waiter = { resolve: () => void; reject: (error: Error) => void }
-
-function waitFor(waiters: Map<number, Waiter>, version: number) {
-  return new Promise<void>((resolve, reject) => {
-    const previous = waiters.get(version)
-    waiters.set(version, previous ? {
-      resolve: () => { previous.resolve(); resolve() },
-      reject: (error) => { previous.reject(error); reject(error) },
-    } : { resolve, reject })
-  })
-}
-
 class SupersededError extends Error {
   constructor() {
     super('再生状態が更新されました')
@@ -81,161 +69,236 @@ export function isPlaybackSuperseded(error: unknown) {
   return error instanceof SupersededError
 }
 
-export function usePlaybackTarget(): { status: PlaybackStatus; setTarget(target: PlaybackTarget): Promise<void> } {
-  const { instance: mk } = useMusicKitInstance()
-  const statusRef = useRef<PlaybackStatus>({ target: null, settled: null, error: null })
-  const listenersRef = useRef(new Set<() => void>())
-  const versionRef = useRef(0)
-  const runningRef = useRef(false)
-  const waitersRef = useRef(new Map<number, Waiter>())
-
-  const subscribe = useCallback((listener: () => void) => {
-    listenersRef.current.add(listener)
-    return () => { listenersRef.current.delete(listener) }
-  }, [])
-  const status = useSyncExternalStore(subscribe, () => statusRef.current)
-
-  const publish = useCallback((next: Partial<PlaybackStatus>) => {
-    statusRef.current = { ...statusRef.current, ...next }
-    listenersRef.current.forEach((listener) => listener())
-  }, [])
-
-  const settle = useCallback((version: number, error: Error | null) => {
-    const waiter = waitersRef.current.get(version)
-    waitersRef.current.delete(version)
-    if (error === null) waiter?.resolve()
-    else waiter?.reject(error)
-  }, [])
-
-  const run = useCallback(async () => {
-    if (runningRef.current) return
-    runningRef.current = true
-    try {
-      while (true) {
-        const version = versionRef.current
-        const target = statusRef.current.target
-        const superseded = () => versionRef.current !== version
-        try {
-          if (target === null) throw new Error('再生状態がありません')
-          if (mk === null) throw new Error('MusicKit is not initialized')
-          await applyTarget(mk, target, superseded)
-          if (superseded()) throw new SupersededError()
-          publish({ settled: target, error: null })
-          settle(version, null)
-        } catch (e) {
-          const error = e instanceof Error ? e : new Error(String(e))
-          if (!(error instanceof SupersededError)) publish({ settled: null, error })
-          settle(version, error)
-        }
-        if (!superseded()) return
-      }
-    } finally {
-      runningRef.current = false
-    }
-  }, [mk, publish, settle])
-
-  const setTarget = useCallback((target: PlaybackTarget) => {
-    const current = statusRef.current
-    if (playbackTargetsEqual(current.target, target)) {
-      if (playbackTargetsEqual(current.settled, target)) return Promise.resolve()
-      // 適用中なら完了を待つ。失敗済みなら下で新しい version として再適用する
-      if (runningRef.current) return waitFor(waitersRef.current, versionRef.current)
-    }
-    const version = ++versionRef.current
-    publish({ target, settled: null })
-    const promise = waitFor(waitersRef.current, version)
-    void run()
-    return promise
-  }, [publish, run])
-
-  return { status, setTarget }
-}
-
-// MusicKit の instance.play() / pause() は 250ms の leading-edge debounce で、直前の呼び出しから
-// 250ms 以内の呼び出しは無視される (resolve はする)。同じ method は 250ms 空けて呼ぶ。
-const PLAYBACK_DEBOUNCE_MS = 250
+// A late SDK operation cannot be cancelled inside MusicKit. Its completion must
+// instead be reconciled by the current owner, including across React remounts.
+const owners = new WeakMap<MusicKit.MusicKitInstance, PlaybackController>()
 const lastPlaybackCallAt = new WeakMap<MusicKit.MusicKitInstance, { play: number; pause: number }>()
+const PLAYBACK_DEBOUNCE_MS = 250
+const STOP_FALLBACK_MS = 100
+const MEDIA_OPERATION_TIMEOUT_MS = 3000
 
-async function paced(mk: MusicKit.MusicKitInstance, method: 'play' | 'pause', superseded: () => boolean = () => false) {
-  const at = lastPlaybackCallAt.get(mk) ?? { play: -Infinity, pause: -Infinity }
-  lastPlaybackCallAt.set(mk, at)
-  const wait = at[method] + PLAYBACK_DEBOUNCE_MS - performance.now()
-  if (wait > 0) await new Promise<void>((resolve) => setTimeout(resolve, wait))
-  if (superseded()) return
-  at[method] = performance.now()
-  await mk[method]()
-}
+type Operation = { abort: AbortController }
 
-async function applyTarget(mk: MusicKit.MusicKitInstance, target: PlaybackTarget, superseded: () => boolean) {
-  switch (target.kind) {
-    case 'stopped':
-      if (mk.isPlaying) await paced(mk, 'pause')
+class PlaybackController {
+  snapshot: PlaybackStatus = { target: null, settled: null, error: null }
+  listeners = new Set<() => void>()
+  operation: Operation | null = null
+  pending: Promise<void> | null = null
+  attached = false
+  repairing = false
+
+  readonly mk: MusicKit.MusicKitInstance | null
+  constructor(mk: MusicKit.MusicKitInstance | null) { this.mk = mk }
+  subscribe = (listener: () => void) => {
+    this.listeners.add(listener)
+    return () => { this.listeners.delete(listener) }
+  }
+  getSnapshot = () => this.snapshot
+  publish(next: Partial<PlaybackStatus>) {
+    this.snapshot = { ...this.snapshot, ...next }
+    this.listeners.forEach(listener => listener())
+  }
+  attach = () => {
+    this.attached = true
+    if (this.mk) this.mk.addEventListener('playbackStateDidChange', this.onMediaChange)
+    return () => {
+      this.operation?.abort.abort()
+      if (this.mk) {
+        this.mk.removeEventListener('playbackStateDidChange', this.onMediaChange)
+        if (owners.get(this.mk) === this) {
+          // Keep a silent owner for completions delivered after unmount.
+          this.setTarget({ kind: 'stopped' }).catch(() => {})
+        }
+      }
+      this.attached = false
+    }
+  }
+  onMediaChange = () => {
+    // Preparation itself may briefly play muted to acquire the asset. Once
+    // settled, however, buffer recovery must never restart a stopped intro.
+    const settled = this.snapshot.settled
+    if ((settled?.kind === 'stopped' || settled?.kind === 'prepared') && this.mk && owners.get(this.mk) === this) this.repair()
+  }
+  repair = () => {
+    if (!this.mk || owners.get(this.mk) !== this || this.repairing) return
+    const target = this.snapshot.target
+    if (!target) return
+    const silent = target.kind === 'stopped' || target.kind === 'prepared'
+    const wrongSong = target.kind !== 'stopped' && target.kind !== 'album' && this.mk.nowPlayingItem?.id !== target.songId
+    if (silent ? !this.mk.isPlaying && !wrongSong : this.mk.isPlaying && !wrongSong) return
+    this.repairing = true
+    void this.setTarget(target, true).catch(() => {}).finally(() => { this.repairing = false })
+  }
+  setTarget = (target: PlaybackTarget, force = false): Promise<void> => {
+    if (!this.attached && !(force && target.kind === 'stopped')) return Promise.reject(new SupersededError())
+    if (!force && playbackTargetsEqual(this.snapshot.target, target)) {
+      if (this.snapshot.settled && !this.snapshot.error) return Promise.resolve()
+      if (this.pending && !this.operation?.abort.signal.aborted) return this.pending
+    }
+    this.operation?.abort.abort()
+    if (this.mk) {
+      const previous = owners.get(this.mk)
+      if (previous !== this) previous?.operation?.abort.abort()
+      owners.set(this.mk, this)
+    }
+    const operation: Operation = { abort: new AbortController() }
+    this.operation = operation
+    this.publish({ target, settled: null, error: null })
+    const promise = this.apply(target, operation, force).then(() => {
+      this.check(operation)
+      this.publish({ settled: target })
+    }).catch((error: unknown) => {
+      if (operation.abort.signal.aborted) throw new SupersededError()
+      const problem = error instanceof Error ? error : new Error(String(error), { cause: error })
+      this.publish({ target: { kind: 'stopped' }, error: problem, settled: null })
+      operation.abort.abort()
+      throw problem
+    }).finally(() => {
+      if (this.operation === operation) this.pending = null
+    })
+    this.pending = promise
+    return promise
+  }
+  check(operation: Operation) {
+    if (operation.abort.signal.aborted) throw new SupersededError()
+    if (!this.mk) throw new Error('MusicKit is not initialized')
+  }
+  wait<T>(promise: Promise<T>, operation: Operation): Promise<T> {
+    this.check(operation)
+    return new Promise((resolve, reject) => {
+      const cleanup = () => {
+        operation.abort.signal.removeEventListener('abort', cancel)
+        this.mk?.removeEventListener('mediaPlaybackError', failed)
+      }
+      const cancel = () => { cleanup(); reject(new SupersededError()) }
+      const failed = (event: MusicKit.Events['mediaPlaybackError']) => { cleanup(); reject(event.error) }
+      operation.abort.signal.addEventListener('abort', cancel, { once: true })
+      this.mk?.addEventListener('mediaPlaybackError', failed)
+      promise.then(value => { cleanup(); resolve(value) }, error => { cleanup(); reject(error) })
+    })
+  }
+  async call<T>(fn: () => Promise<T>, operation: Operation) {
+    this.check(operation)
+    const promise = fn()
+    // Observe both success and rejection: a rejected call can still have applied
+    // a side effect. Never report an obsolete error in the new operation.
+    void promise.then(() => this.lateCompletion(operation), () => this.lateCompletion(operation))
+    return this.wait(promise, operation)
+  }
+  lateCompletion(operation: Operation) {
+    if (!operation.abort.signal.aborted || !this.mk) return
+    const owner = owners.get(this.mk)
+    if (owner?.pending) void owner.pending.then(owner.repair, owner.repair)
+    else owner?.repair()
+  }
+  async playback(method: 'play' | 'pause', operation: Operation, waitForCompletion = false) {
+    this.check(operation)
+    const mk = this.mk!
+    const times = lastPlaybackCallAt.get(mk) ?? { play: -Infinity, pause: -Infinity }
+    lastPlaybackCallAt.set(mk, times)
+    // Recheck after waiting; a newer owner may have called the same method.
+    while (times[method] + PLAYBACK_DEBOUNCE_MS > performance.now()) {
+      await this.wait(new Promise<void>(resolve => setTimeout(resolve, times[method] + PLAYBACK_DEBOUNCE_MS - performance.now())), operation)
+    }
+    this.check(operation)
+    times[method] = performance.now()
+    const wanted = method === 'play'
+    let completion: Promise<void> | undefined
+    await this.wait(new Promise<void>((resolve, reject) => {
+      let done = false
+      const cleanup = () => {
+        clearTimeout(timeout)
+        clearTimeout(stopFallback)
+        mk.removeEventListener('playbackStateDidChange', changed)
+        operation.abort.signal.removeEventListener('abort', cancelled)
+      }
+      const finish = (error?: unknown) => {
+        if (done) return
+        done = true
+        cleanup()
+        if (error) reject(error)
+        else resolve()
+      }
+      const changed = () => { if (mk.isPlaying === wanted) finish() }
+      const cancelled = () => finish(new SupersededError())
+      let timeout: ReturnType<typeof setTimeout> | undefined
+      const stopFallback = !wanted ? setTimeout(() => {
+        if (mk.isPlaying && typeof mk.stop === 'function') {
+          void mk.stop().then(changed, error => finish(error))
+        }
+      }, STOP_FALLBACK_MS) : undefined
+      mk.addEventListener('playbackStateDidChange', changed)
+      operation.abort.signal.addEventListener('abort', cancelled, { once: true })
+      const promise = mk[method]()
+      completion = promise
+      void promise.then(() => {
+        this.lateCompletion(operation)
+        changed()
+        if (!done) timeout = setTimeout(() => finish(new Error(wanted ? '再生を開始できません' : '再生を停止できません')), MEDIA_OPERATION_TIMEOUT_MS)
+      }, error => {
+        this.lateCompletion(operation)
+        if (!done && !wanted && mk.isPlaying && typeof mk.stop === 'function') {
+          void mk.stop().then(() => finish(error), () => finish(error))
+        } else if (!done) finish(error)
+      })
+    }), operation)
+    if (waitForCompletion && completion) await this.wait(completion, operation)
+  }
+  async apply(target: PlaybackTarget, operation: Operation, repair: boolean) {
+    this.check(operation)
+    const mk = this.mk!
+    if (target.kind === 'stopped') {
+      if (mk.isPlaying) await musicKitInstanceStore.muteTemporarily(() => this.playback('pause', operation))
       return
-    case 'album':
-      await playAlbumOfTrack(mk, target.trackId, superseded)
+    }
+    if (target.kind === 'album') {
+      if (repair && mk.nowPlayingItem) {
+        await this.playback('play', operation)
+        return
+      }
+      const album = await this.call(() => albumIdOfTrack(mk, target.trackId), operation)
+      await this.call(() => mk.setQueue({ album, repeatMode: MusicKit.PlayerRepeatMode.all, shuffleMode: MusicKit.PlayerShuffleMode.off, startPlaying: false }), operation)
+      await this.playback('play', operation)
       return
-    default:
-      await loadSong(mk, target.songId)
-      if (superseded()) return
-      await rewind(mk)
-      if (superseded()) return
-      // 曲末で queue の次の曲 (次ラウンドの答え) へ進まないよう、再生中は常に 1 曲リピート
-      mk.repeatMode = MusicKit.PlayerRepeatMode.one
-      if (target.kind !== 'prepared') await paced(mk, 'play', superseded)
-      if (superseded()) return
-      await preloadNext(mk, target.nextSongId)
+    }
+    if (mk.nowPlayingItem?.id !== target.songId) {
+      await musicKitInstanceStore.muteTemporarily(async () => {
+        if (mk.queue.items[mk.nowPlayingItemIndex + 1]?.id === target.songId) {
+          mk.repeatMode = MusicKit.PlayerRepeatMode.none
+          await this.call(() => mk.skipToNextItem(), operation)
+        } else {
+          await this.call(() => mk.setQueue({ song: target.songId, repeatMode: MusicKit.PlayerRepeatMode.one, shuffleMode: MusicKit.PlayerShuffleMode.off, startPlaying: false, startTime: 0 }), operation)
+          await this.playback('play', operation, true)
+        }
+        await this.playback('pause', operation, true)
+      })
+      this.check(operation)
+      if (mk.nowPlayingItem?.id !== target.songId) throw new Error('曲を読み込めません')
+    }
+    if (mk.isPlaying) await musicKitInstanceStore.muteTemporarily(() => this.playback('pause', operation, true))
+    if ((!repair || target.kind === 'prepared') && mk.currentPlaybackTime > 0) await this.call(() => mk.seekToTime(0), operation)
+    this.check(operation)
+    // An intro owns a single-item queue: reaching its end must neither loop
+    // nor advance to a preloaded answer. Reveals retain their repeat behavior.
+    if (target.kind === 'playing' && mk.queue.items.length > 1) {
+      await this.call(() => mk.setQueue({ song: target.songId, repeatMode: MusicKit.PlayerRepeatMode.none, shuffleMode: MusicKit.PlayerShuffleMode.off, startPlaying: false, startTime: 0 }), operation)
+    }
+    mk.repeatMode = target.kind === 'playing' ? MusicKit.PlayerRepeatMode.none : MusicKit.PlayerRepeatMode.one
+    if (target.kind !== 'prepared') await this.playback('play', operation)
+    this.check(operation)
+    // Preloading is optional, and must never hold the current track's deadline.
+    if (target.kind !== 'playing' && target.nextSongId && mk.queue.items[mk.nowPlayingItemIndex + 1]?.id !== target.nextSongId && typeof mk.playNext === 'function') {
+      void mk.playNext({ song: target.nextSongId }).catch(() => {})
+    }
   }
 }
 
-// songId を nowPlayingItem にする。queue の次にあれば skip (先読み済みなら network なしで即時)、
-// なければ queue を作り直して無音で再生 → 停止し asset を取得させる。
-async function loadSong(mk: MusicKit.MusicKitInstance, songId: string) {
-  if (mk.nowPlayingItem?.id === songId) return
-  const isQueuedNext = mk.queue.items[mk.nowPlayingItemIndex + 1]?.id === songId
-  await musicKitInstanceStore.muteTemporarily(async () => {
-    if (isQueuedNext) {
-      // repeat one のままだと skipToNextItem が進まない
-      mk.repeatMode = MusicKit.PlayerRepeatMode.none
-      await mk.skipToNextItem()
-    } else {
-      await mk.setQueue({
-        song: songId,
-        shuffleMode: MusicKit.PlayerShuffleMode.off,
-        repeatMode: MusicKit.PlayerRepeatMode.one,
-        startPlaying: false,
-        startTime: 0,
-      })
-      await paced(mk, 'play')
-    }
-    await paced(mk, 'pause')
-  })
-  if (mk.nowPlayingItem?.id !== songId) throw new Error('曲を読み込めません')
-}
-
-// 頭出し。seekToTime は位置が 0 でも resolve に ~250ms かかるので、必要な時だけ呼ぶ
-async function rewind(mk: MusicKit.MusicKitInstance) {
-  if (mk.isPlaying) await paced(mk, 'pause')
-  if (mk.currentPlaybackTime > 0.1) await mk.seekToTime(0)
-}
-
-// 次ラウンドの曲を queue の次に積む。MusicKit は再生中の曲がある間に次 item の manifest / license を
-// 先読みする (MSE 環境)。先読みしない環境でも queue に積むだけなので害はない
-async function preloadNext(mk: MusicKit.MusicKitInstance, nextSongId: string | null) {
-  if (nextSongId === null) return
-  if (mk.queue.items[mk.nowPlayingItemIndex + 1]?.id === nextSongId) return
-  await mk.playNext({ song: nextSongId })
-}
-
-async function playAlbumOfTrack(mk: MusicKit.MusicKitInstance, trackId: string, superseded: () => boolean) {
-  const albumId = await albumIdOfTrack(mk, trackId)
-  if (superseded()) return
-  await mk.setQueue({
-    album: albumId,
-    repeatMode: MusicKit.PlayerRepeatMode.all,
-    shuffleMode: MusicKit.PlayerShuffleMode.off,
-    startPlaying: false,
-  })
-  await paced(mk, 'play', superseded)
+export function usePlaybackTarget(): { status: PlaybackStatus; setTarget(target: PlaybackTarget): Promise<void> } {
+  const { instance } = useMusicKitInstance()
+  const controller = useMemo(() => new PlaybackController(instance), [instance])
+  useEffect(() => controller.attach(), [controller])
+  const status = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
+  return { status, setTarget: controller.setTarget }
 }
 
 async function albumIdOfTrack(mk: MusicKit.MusicKitInstance, trackId: string) {

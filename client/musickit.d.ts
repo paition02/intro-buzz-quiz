@@ -99,7 +99,7 @@ declare namespace MusicKit {
     playbackTimeDidChange: { currentPlaybackTime: number };
     playbackDurationDidChange: { duration: number };
     playbackProgressDidChange: { progress: number };
-    playbackVolumeDidChange: { volume: number };
+    playbackVolumeDidChange: Event;
     nowPlayingItemWillChange: { item: MediaItem | undefined };
     nowPlayingItemDidChange: { item: MediaItem | undefined };
     queueIsReady: { queue: Queue };

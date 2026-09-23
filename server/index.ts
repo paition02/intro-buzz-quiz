@@ -16,6 +16,7 @@ type InternalGameState = Omit<GameState, 'players'> & {
 }
 
 let state: InternalGameState = {
+  operationId: 'initial',
   phase: 'initialization',
   step: 'idle',
   quizMode: null,
@@ -74,7 +75,10 @@ function emitState() {
 }
 
 function update(mutator: () => void) {
+  const before = [state.phase, state.step, state.roundIndex, state.roundAlbumIndex, state.answererId].join(':')
   mutator()
+  const after = [state.phase, state.step, state.roundIndex, state.roundAlbumIndex, state.answererId].join(':')
+  if (before !== after) state.operationId = crypto.randomUUID()
   emitState()
 }
 
@@ -307,6 +311,34 @@ function consolePlayEnded(): ConsoleActionResult {
   return true
 }
 
+function consoleExcludeTrack(payload: unknown): ConsoleActionResult {
+  if (!payload || typeof payload !== 'object' || !('operationId' in payload) || payload.operationId !== state.operationId || !('trackId' in payload)) return invalidStateError
+  const trackId = payload.trackId
+  if (state.phase !== 'game' || !state.tracks.some(track => track.id === trackId)) return invalidStateError
+  const currentTrack = state.shuffledTrackIds[state.roundIndex]
+  const currentAlbum = state.shuffledAlbumIds[state.roundAlbumIndex]
+  update(() => {
+    state.tracks = state.tracks.filter(track => track.id !== trackId)
+    state.albums = albumsFromTracks(state.tracks)
+    state.shuffledTrackIds = state.shuffledTrackIds.filter(id => id !== trackId)
+    state.shuffledAlbumIds = state.shuffledAlbumIds.filter(id => state.albums.some(album => album.id === id))
+    if (state.quizMode === 'intro') {
+      if (currentTrack !== trackId) state.roundIndex = state.shuffledTrackIds.indexOf(currentTrack!)
+      else {
+        state.answererId = null
+        roundIntroPlayed = false
+        state.step = state.roundIndex < state.shuffledTrackIds.length ? 'beforePlayback' : 'results'
+      }
+    } else if (!state.shuffledAlbumIds.includes(currentAlbum!)) {
+      state.answererId = null
+      state.step = state.roundAlbumIndex < state.shuffledAlbumIds.length ? 'beforePlayback' : 'results'
+    } else state.roundAlbumIndex = state.shuffledAlbumIds.indexOf(currentAlbum!)
+    // Replacing the current item can leave the same numeric index and step.
+    state.operationId = crypto.randomUUID()
+  })
+  return true
+}
+
 function consoleCorrect(): ConsoleActionResult {
   if (state.phase !== 'game' || state.step !== 'answering') return invalidStateError
 
@@ -441,6 +473,7 @@ function consoleReset(): ConsoleActionResult {
   update(() => {
     lastAcceptedActionAtByActorId = {}
     state = {
+      operationId: crypto.randomUUID(),
       phase: 'initialization',
       step: 'idle',
       quizMode: null,
@@ -497,11 +530,30 @@ io.on('connection', (socket) => {
     acknowledge(callback, () => consoleStart(payload as ConsoleStartPayload | null))
   })
   socket.on('console:play', (callback) => acknowledge(callback, consolePlay))
-  socket.on('console:play-ended', (callback) => acknowledge(callback, consolePlayEnded))
+  socket.on('console:exclude-track', (payload, callback) => acknowledge(callback, () => consoleExcludeTrack(payload)))
+  socket.on('console:play-ended', (payloadOrCallback, maybeCallback) => {
+    const { payload, callback } = eventPayloadAndCallback(payloadOrCallback, maybeCallback)
+    acknowledge(callback, () => {
+      if (!payload || typeof payload !== 'object' || !('operationId' in payload) || payload.operationId !== state.operationId) return '古い操作の終了通知です'
+      return consolePlayEnded()
+    })
+  })
   socket.on('console:correct', (callback) => acknowledge(callback, consoleCorrect))
   socket.on('console:wrong', (callback) => acknowledge(callback, consoleWrong))
-  socket.on('console:correct-feedback-ended', (callback) => acknowledge(callback, consoleCorrectFeedbackEnded))
-  socket.on('console:wrong-feedback-ended', (callback) => acknowledge(callback, consoleWrongFeedbackEnded))
+  socket.on('console:correct-feedback-ended', (payloadOrCallback, maybeCallback) => {
+    const { payload, callback } = eventPayloadAndCallback(payloadOrCallback, maybeCallback)
+    acknowledge(callback, () => {
+      if (!payload || typeof payload !== 'object' || !('operationId' in payload) || payload.operationId !== state.operationId) return '古い操作の終了通知です'
+      return consoleCorrectFeedbackEnded()
+    })
+  })
+  socket.on('console:wrong-feedback-ended', (payloadOrCallback, maybeCallback) => {
+    const { payload, callback } = eventPayloadAndCallback(payloadOrCallback, maybeCallback)
+    acknowledge(callback, () => {
+      if (!payload || typeof payload !== 'object' || !('operationId' in payload) || payload.operationId !== state.operationId) return '古い操作の終了通知です'
+      return consoleWrongFeedbackEnded()
+    })
+  })
   socket.on('console:give-up', (callback) => acknowledge(callback, consoleGiveUp))
   socket.on('console:set-jacket-mode', (payload, callback) => acknowledge(callback, () => consoleSetJacketMode(payload)))
   socket.on('console:set-jacket-grayscale', (payload, callback) => acknowledge(callback, () => consoleSetJacketGrayscale(payload)))

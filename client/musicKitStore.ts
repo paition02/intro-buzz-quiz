@@ -58,6 +58,48 @@ async function initializeMusicKit() {
 
 initializeMusicKit()
 
+let muteDepth = 0
+let finishMute: (() => void) | null = null
+
+// SDK volume events also fire when its internal player changes. They cannot
+// distinguish an explicit user write of 0 from our own temporary silence.
+// Preserve public writes separately while holding the actual player at zero.
+function beginTemporaryMute(instance: MusicKit.MusicKitInstance) {
+  const own = Object.getOwnPropertyDescriptor(instance, 'volume')
+  let descriptor = own
+  for (let prototype = Object.getPrototypeOf(instance); !descriptor && prototype; prototype = Object.getPrototypeOf(prototype)) {
+    descriptor = Object.getOwnPropertyDescriptor(prototype, 'volume')
+  }
+  let value = instance.volume
+  let requested = value
+  const read = descriptor?.get ? () => descriptor!.get!.call(instance) as number : () => value
+  const write = descriptor?.set ? (next: number) => descriptor!.set!.call(instance, next) : (next: number) => { value = next }
+  Object.defineProperty(instance, 'volume', {
+    configurable: true,
+    enumerable: descriptor?.enumerable ?? true,
+    get: read,
+    set(next: number) {
+      if (!Number.isFinite(next) || next < 0 || next > 1) throw new RangeError('音量は0から1の範囲で指定してください')
+      requested = next
+      write(0)
+    },
+  })
+  const restoreProperty = () => {
+    if (own) Object.defineProperty(instance, 'volume', own)
+    else Reflect.deleteProperty(instance, 'volume')
+  }
+  try {
+    write(0)
+  } catch (error) {
+    restoreProperty()
+    throw error
+  }
+  return () => {
+    restoreProperty()
+    instance.volume = requested
+  }
+}
+
 export const musicKitInstanceStore = {
   subscribe(listener: () => void) {
     instanceListeners.add(listener)
@@ -70,12 +112,16 @@ export const musicKitInstanceStore = {
     const { instance } = snapshot
     if (instance === null) return
 
-    const previousVolume = instance.volume
-    instance.volume = 0
+    if (muteDepth === 0) finishMute = beginTemporaryMute(instance)
+    muteDepth++
     try {
       await fn()
     } finally {
-      instance.volume = previousVolume
+      if (--muteDepth === 0) {
+        const finish = finishMute
+        finishMute = null
+        finish?.()
+      }
     }
   }
 }

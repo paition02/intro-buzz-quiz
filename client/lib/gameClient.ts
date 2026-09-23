@@ -4,6 +4,7 @@ import type { Socket } from 'socket.io-client'
 import type { GameState, GameStep, Phase } from '../../type/game'
 
 export const initialState: GameState = {
+  operationId: 'initial',
   phase: 'initialization',
   step: 'idle',
   quizMode: null,
@@ -169,6 +170,7 @@ export function useConnected() {
 }
 
 export function consoleAction(event: string, body?: unknown): Promise<void> {
+  if (event.endsWith('-ended') && body === undefined) body = { operationId: latestState.operationId }
   return new Promise((resolve, reject) => {
     const callback = (error: Error | null, response?: { ok: boolean; error?: string }) => {
       if (error) {

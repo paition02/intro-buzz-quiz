@@ -19,6 +19,7 @@ import {
   roundAlbumFromState,
   roundTrackIdFromState,
   useGameState,
+  useConnected,
 } from '../lib/gameClient'
 import { uniqueTracksById } from '../lib/util'
 import { playResultSound, playResultsSound } from '../lib/sounds'
@@ -31,6 +32,8 @@ import { Button } from '../components/Button'
 import { Eyebrow } from '../components/Eyebrow'
 import { RoundInfoDisclosure } from '../components/RoundInfoDisclosure'
 import { AnswerCard, type AnswerCandidate } from '../components/AnswerCard'
+import { watchIntroDeadline } from '../lib/introDeadline'
+import { isUnavailableTrack } from '../lib/unavailableTrack'
 
 const JUDGE_RESULT_DURATION_MS = 1800
 const jacketModeOptions: Array<{ value: JacketMode; label: string }> = [
@@ -46,6 +49,10 @@ export function ConsolePage() {
   const { instance: musicKitInstance, error: musicKitInitError } = useMusicKitInstance()
   const { status: playback, setTarget: setPlaybackTarget } = usePlaybackTarget()
   const musicKitAuth = useMusicKitAuth()
+  const connected = useConnected()
+  const actionVersionRef = useRef(0)
+  const judgingRef = useRef<symbol | null>(null)
+  const playRequestRef = useRef<symbol | null>(null)
   const queryClient = useQueryClient()
   const libraryPlaylistsQuery = useLibraryPlaylistsQuery()
   const loadingLibraryPlaylists = libraryPlaylistsQuery.isPending || libraryPlaylistsQuery.isFetching
@@ -56,21 +63,25 @@ export function ConsolePage() {
   const [playbackSeconds, setPlaybackSeconds] = useState(0.5)
   const [expandedRoundKey, setExpandedRoundKey] = useState<string | null>(null)
   const autoReadyRequestedRef = useRef(false)
-  const playEndedTimeoutIdRef = useRef<number | null>(null)
+  const stopIntroWatchRef = useRef<(() => void) | null>(null)
+  const activeIntroRef = useRef<string | null>(null)
+  const recoveryRef = useRef<string | null>(null)
+  const [activeSeconds, setActiveSeconds] = useState(0.5)
   const feedbackEndedTimeoutIdRef = useRef<number | null>(null)
   const musicKitReady = musicKitInstance !== null
   const playbackError = playback.error
   const musicKitError = musicKitInitError ?? musicKitAuth.error ?? playbackError
 
   const run = async (action: () => Promise<void>) => {
+    const version = ++actionVersionRef.current
     setBusy(true)
     setConsoleMessage(null)
     try {
       await action()
     } catch (error) {
-      setConsoleMessage(error instanceof Error ? error.message : String(error))
+      if (version === actionVersionRef.current && !isPlaybackSuperseded(error)) setConsoleMessage(error instanceof Error ? error.message : String(error))
     } finally {
-      setBusy(false)
+      if (version === actionVersionRef.current) setBusy(false)
     }
   }
 
@@ -88,9 +99,9 @@ export function ConsolePage() {
   }, [libraryPlaylistsQuery])
 
   const clearPlayEndedTimeout = useCallback(() => {
-    if (playEndedTimeoutIdRef.current === null) return
-    window.clearTimeout(playEndedTimeoutIdRef.current)
-    playEndedTimeoutIdRef.current = null
+    stopIntroWatchRef.current?.()
+    stopIntroWatchRef.current = null
+    activeIntroRef.current = null
   }, [])
 
   const clearFeedbackEndedTimeout = useCallback(() => {
@@ -101,28 +112,80 @@ export function ConsolePage() {
 
   const state = useGameState(useCallback((change: Partial<GameState>) => {
     if (change.step !== undefined && change.step !== 'playing') clearPlayEndedTimeout()
+    if (change.operationId !== undefined && activeIntroRef.current !== null && change.operationId !== activeIntroRef.current) clearPlayEndedTimeout()
     if (change.step !== undefined && change.step !== 'correct' && change.step !== 'wrong') clearFeedbackEndedTimeout()
   }, [clearFeedbackEndedTimeout, clearPlayEndedTimeout]))
 
+  useEffect(() => {
+    if (!musicKitInstance) return
+    const failed = (event: MusicKit.Events['mediaPlaybackError']) => {
+      if (!isUnavailableTrack(event.error)) return
+      const current = latestState
+      const trackId = musicKitInstance.nowPlayingItem?.id
+      if (current.phase !== 'game' || !trackId || !current.tracks.some(track => track.id === trackId)) return
+      clearPlayEndedTimeout()
+      void setPlaybackTarget({ kind: 'stopped' }).catch(report)
+      report('再生できない曲を除外しました')
+      void consoleAction('console:exclude-track', { operationId: current.operationId, trackId }).catch(report)
+    }
+    musicKitInstance.addEventListener('mediaPlaybackError', failed)
+    return () => musicKitInstance.removeEventListener('mediaPlaybackError', failed)
+  }, [musicKitInstance, clearPlayEndedTimeout, report, setPlaybackTarget])
+
   // 望ましい再生状態はゲーム状態から導いて宣言するだけ。適用順序や古い状態変化の扱いは usePlaybackTarget が持つ。
   useEffect(() => {
-    if (musicKitInstance === null || !musicKitAuth.authorized) return
-    const target = playbackTargetFromState(state)
-    if (target !== null) setPlaybackTarget(target).catch(() => {})
-  }, [musicKitAuth.authorized, musicKitInstance, setPlaybackTarget, state])
+    if (musicKitInstance === null) return
+    const target = musicKitAuth.authorized ? playbackTargetFromState(state) : { kind: 'stopped' as const }
+    if (target !== null) setPlaybackTarget(target).catch((error: unknown) => {
+      if (!isUnavailableTrack(error) || latestState.operationId !== state.operationId) return
+      const trackId = target.kind === 'album' ? target.trackId : target.kind !== 'stopped' ? target.songId : null
+      if (trackId) {
+        report('再生できない曲を除外しました')
+        void consoleAction('console:exclude-track', { operationId: state.operationId, trackId }).catch(report)
+      }
+    })
+  }, [musicKitAuth.authorized, musicKitInstance, report, setPlaybackTarget, state])
 
+  // A fresh console has no owner for an interrupted intro. Reconcile the
+  // shared game to waiting; never recreate playback from an old state event.
+  useEffect(() => {
+    if (!connected || state.step !== 'playing' || playRequestRef.current || activeIntroRef.current || recoveryRef.current === state.operationId) return
+    const operationId = state.operationId
+    recoveryRef.current = operationId
+    void (async () => {
+      if (musicKitInstance) await setPlaybackTarget({ kind: 'stopped' })
+      if (latestState.operationId === operationId && latestState.step === 'playing') await consoleAction('console:play-ended', { operationId })
+    })().catch(report).finally(() => { recoveryRef.current = null })
+  }, [busy, connected, musicKitInstance, report, setPlaybackTarget, state])
+
+  // Feedback must also complete when the console was reloaded or its ack was
+  // lost. The state identifies the verdict, so this never scores twice.
+  useEffect(() => {
+    if (state.step !== 'correct' && state.step !== 'wrong') return
+    const operationId = state.operationId
+    const step = state.step
+    clearFeedbackEndedTimeout()
+    feedbackEndedTimeoutIdRef.current = window.setTimeout(() => {
+      feedbackEndedTimeoutIdRef.current = null
+      if (latestState.operationId === operationId && latestState.step === step) void consoleAction(`console:${step}-feedback-ended`, { operationId }).catch(report)
+    }, JUDGE_RESULT_DURATION_MS)
+    return clearFeedbackEndedTimeout
+  }, [state.operationId, state.step, clearFeedbackEndedTimeout, report])
+
+  const invalidatePendingActions = useCallback(() => { actionVersionRef.current++ }, [])
   useEffect(() => {
     return () => {
+      invalidatePendingActions()
       clearPlayEndedTimeout()
       clearFeedbackEndedTimeout()
     }
-  }, [clearFeedbackEndedTimeout, clearPlayEndedTimeout])
+  }, [clearFeedbackEndedTimeout, clearPlayEndedTimeout, invalidatePendingActions])
 
   const participatingPlayers = state.players
   const selectedPlaylistIds = state.selectedPlaylistIds
   const selectedPlaylistIdSet = useMemo(() => new Set(selectedPlaylistIds), [selectedPlaylistIds])
   const seconds = playbackSeconds
-  const statusMessage = consoleStatusMessage(state, seconds)
+  const statusMessage = consoleStatusMessage(state, state.step === 'playing' ? activeSeconds : seconds)
   const roundTrackId = roundTrackIdFromState(state)
   const roundTrack = roundTrackFromState(state)
   const isJacket = state.quizMode === 'jacket'
@@ -194,13 +257,15 @@ export function ConsolePage() {
   }
 
   const togglePlaylistSelected = (playlist: MusicPlaylist, allPlaylists: MusicPlaylist[]) => run(async () => {
+    const version = actionVersionRef.current
     const currentSelectedIds = new Set(state.selectedPlaylistIds)
     if (currentSelectedIds.has(playlist.id)) currentSelectedIds.delete(playlist.id)
     else currentSelectedIds.add(playlist.id)
 
     const selectedPlaylists = allPlaylists.filter((p) => currentSelectedIds.has(p.id))
     const trackGroups = await Promise.all(selectedPlaylists.map((selectedPlaylist) => fetchPlaylistTracks(selectedPlaylist)))
-    const tracks = uniqueTracksById(trackGroups.flat())
+    if (version !== actionVersionRef.current || latestState.phase !== 'ready') return
+    const tracks = uniqueTracksById(trackGroups.flatMap(group => group.tracks))
 
     await consoleAction('console:select-playlists', {
       selectedPlaylistIds: selectedPlaylists.map((selectedPlaylist) => selectedPlaylist.id),
@@ -210,7 +275,8 @@ export function ConsolePage() {
     if (selectedPlaylists.length === 0) {
       setConsoleMessage('プレイリストの選択を解除しました')
     } else {
-      setConsoleMessage(`${selectedPlaylists.length}件のプレイリストから${tracks.length}曲を選択しました`)
+      const unavailableCount = trackGroups.reduce((sum, group) => sum + group.unavailableCount, 0)
+      setConsoleMessage(`${selectedPlaylists.length}件のプレイリストから${tracks.length}曲を選択しました${unavailableCount ? `。再生できない${unavailableCount}曲を除外しました` : ''}`)
     }
   })
 
@@ -232,52 +298,73 @@ export function ConsolePage() {
     await consoleAction('console:start', { quizMode })
   })
 
-  const handlePlay = () => run(async () => {
-    if (!canPlayIntro) {
-      setConsoleMessage('曲の準備完了を待っています')
-      return
-    }
-    await consoleAction('console:play')
-    const playing = introTarget(latestState, 'playing')
-    if (playing === null) return
-    try {
-      await setPlaybackTarget(playing)
-    } catch (error) {
-      if (!isPlaybackSuperseded(error)) throw error
-      return
-    }
-    clearPlayEndedTimeout()
-    playEndedTimeoutIdRef.current = window.setTimeout(async () => {
-      playEndedTimeoutIdRef.current = null
-      try {
-        const prepared = introTarget(latestState, 'prepared')
-        if (prepared !== null) await setPlaybackTarget(prepared).catch((error: unknown) => { if (!isPlaybackSuperseded(error)) throw error })
-        await consoleAction('console:play-ended')
-      } catch (error) {
-        report(error)
+  const handlePlay = () => {
+    if (playRequestRef.current) return
+    const request = Symbol('play')
+    playRequestRef.current = request
+    return run(async () => {
+      const version = actionVersionRef.current
+      if (!canPlayIntro) {
+        setConsoleMessage('曲の準備完了を待っています')
+        return
       }
-    }, Math.ceil(seconds * 1000))
-  })
+      await consoleAction('console:play')
+      if (version !== actionVersionRef.current) return
+      setBusy(false)
+      if (latestState.step !== 'playing' || roundPreparationKeyFromState(latestState) !== roundPreparationKey) return
+      const playing = introTarget(latestState, 'playing')
+      if (playing === null) return
+      const operationId = latestState.operationId
+      activeIntroRef.current = operationId
+      setActiveSeconds(seconds)
+      try {
+        await setPlaybackTarget(playing)
+      } catch (error) {
+        if (!isPlaybackSuperseded(error)) {
+          clearPlayEndedTimeout()
+          if (latestState.operationId === operationId && latestState.step === 'playing') {
+            if (isUnavailableTrack(error) && playing.kind === 'playing') await consoleAction('console:exclude-track', { operationId, trackId: playing.songId })
+            else await consoleAction('console:play-ended', { operationId })
+          }
+          throw error
+        }
+        return
+      }
+      clearPlayEndedTimeout()
+      activeIntroRef.current = operationId
+      if (!musicKitInstance || latestState.operationId !== operationId || latestState.step !== 'playing') return
+      stopIntroWatchRef.current = watchIntroDeadline(musicKitInstance, seconds, () => { void (async () => {
+        try {
+          if (latestState.operationId !== operationId || latestState.step !== 'playing') return
+          const prepared = introTarget(latestState, 'prepared')
+          if (prepared !== null) await setPlaybackTarget(prepared).catch((error: unknown) => { if (!isPlaybackSuperseded(error)) throw error })
+          if (latestState.operationId === operationId && latestState.step === 'playing') await consoleAction('console:play-ended', { operationId })
+        } catch (error) {
+          if (latestState.operationId === operationId) report(error)
+        }
+      })() })
+    }).finally(() => {
+      if (playRequestRef.current === request) playRequestRef.current = null
+    })
+  }
 
-  const handleCorrect = () => run(async () => {
-    await consoleAction('console:correct')
-    playResultSound('correct')
-    clearFeedbackEndedTimeout()
-    feedbackEndedTimeoutIdRef.current = window.setTimeout(() => {
-      feedbackEndedTimeoutIdRef.current = null
-      void consoleAction('console:correct-feedback-ended').catch(report)
-    }, JUDGE_RESULT_DURATION_MS)
-  })
-
-  const handleWrong = () => run(async () => {
-    await consoleAction('console:wrong')
-    playResultSound('wrong')
-    clearFeedbackEndedTimeout()
-    feedbackEndedTimeoutIdRef.current = window.setTimeout(() => {
-      feedbackEndedTimeoutIdRef.current = null
-      void consoleAction('console:wrong-feedback-ended').catch(report)
-    }, JUDGE_RESULT_DURATION_MS)
-  })
+  const handleJudgment = (verdict: 'correct' | 'wrong') => {
+    if (judgingRef.current) return
+    const request = Symbol('judgment')
+    judgingRef.current = request
+    return run(async () => {
+      const version = actionVersionRef.current
+      try {
+        await consoleAction(`console:${verdict}`)
+        if (version !== actionVersionRef.current || latestState.step !== verdict) return
+        try { playResultSound(verdict) } catch (error) { report(error) }
+      } finally {
+        if (judgingRef.current === request) judgingRef.current = null
+      }
+    })
+  }
+  const handleCorrect = () => handleJudgment('correct')
+  const handleWrong = () => handleJudgment('wrong')
 
   // 入力回答は候補の id を今ラウンドの正解と突き合わせ、host の正解 / 不正解操作と同じ経路へ流す。
   const handleAnswer = (candidate: AnswerCandidate) => {
@@ -303,6 +390,11 @@ export function ConsolePage() {
   })
 
   const handleReset = () => run(async () => {
+    playRequestRef.current = null
+    judgingRef.current = null
+    clearPlayEndedTimeout()
+    clearFeedbackEndedTimeout()
+    void setPlaybackTarget({ kind: 'stopped' }).catch(report)
     await consoleAction('console:reset')
   })
 
@@ -371,15 +463,15 @@ export function ConsolePage() {
   const primaryProgressButtons = state.quizMode === 'jacket' ? (
     <div className="grid gap-2.5 grid-cols-1 md:grid-cols-2 [&>button]:min-h-14">
       <Button variant="ghost" disabled={busy || state.phase !== 'game' || state.step !== 'beforePlayback' || !roundPrepared} onClick={handleGiveUp}>ギブアップ</Button>
-      <Button disabled={busy || state.step !== 'answering'} onClick={handleCorrect}>正解</Button>
-      <Button disabled={busy || state.step !== 'answering'} onClick={handleWrong}>不正解</Button>
+      <Button disabled={state.step !== 'answering'} onClick={handleCorrect}>正解</Button>
+      <Button disabled={state.step !== 'answering'} onClick={handleWrong}>不正解</Button>
     </div>
   ) : (
     <div className="grid gap-2.5 grid-cols-1 md:grid-cols-2 [&>button]:min-h-14">
       <Button disabled={busy || !canPlayIntro} onClick={handlePlay}>{playButtonLabel}</Button>
       <Button variant="ghost" disabled={busy || state.phase !== 'game' || state.step !== 'beforePlayback' || !roundPrepared} onClick={handleGiveUp}>ギブアップ</Button>
-      <Button disabled={busy || state.step !== 'answering'} onClick={handleCorrect}>正解</Button>
-      <Button disabled={busy || state.step !== 'answering'} onClick={handleWrong}>不正解</Button>
+      <Button disabled={state.step !== 'answering'} onClick={handleCorrect}>正解</Button>
+      <Button disabled={state.step !== 'answering'} onClick={handleWrong}>不正解</Button>
     </div>
   )
 
@@ -397,6 +489,7 @@ export function ConsolePage() {
           <Eyebrow>現在</Eyebrow>
           <h2 className="m-0 mb-2.5 text-2xl font-bold">{phaseLabel(state.phase, state.step)}</h2>
           <p className="mt-0 text-subtle leading-relaxed">{statusMessage}</p>
+          {!connected && <p role="status">接続が切れました。再接続を待っています</p>}
           {consoleMessage && <p className="mt-0 leading-relaxed text-muted">{consoleMessage}</p>}
           {musicKitError && <p className="mt-0 leading-relaxed text-rose font-bold">MusicKit: <span>{musicKitError.message}</span></p>}
         </div>
@@ -486,9 +579,9 @@ export function ConsolePage() {
         <Glass as="section" className="rounded-2xl p-6 min-w-0" aria-label="回答">
           <h2 className="m-0 mb-2.5 text-2xl font-bold">回答</h2>
           <AnswerCard
-            key={roundPreparationKey}
+            key={`${roundPreparationKey}:${state.step === 'answering' ? state.answererId : 'inactive'}`}
             candidates={answerCandidates}
-            disabled={busy || state.step !== 'answering'}
+            disabled={state.step !== 'answering'}
             placeholder={isJacket ? 'アルバム名を入力' : '曲名を入力'}
             onAnswer={handleAnswer}
           />

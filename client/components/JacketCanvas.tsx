@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { JacketMode } from '../../type/game'
 
 type JacketCanvasProps = {
@@ -24,20 +24,24 @@ type Rect = {
 const CANVAS_SIZE = 720
 
 export function JacketCanvas({ src, mode, grayscale, hintPercent, seed, className }: JacketCanvasProps) {
+  const [failedSource, setFailedSource] = useState<string | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
 
+    canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height)
     let cancelled = false
     const image = new Image()
     image.crossOrigin = 'anonymous'
     image.decoding = 'async'
     image.onload = () => {
       if (cancelled) return
+      setFailedSource(null)
       renderJacket(canvas, image, mode, grayscale, hintPercent, seed)
     }
+    image.onerror = () => { if (!cancelled) setFailedSource(src) }
     image.src = src
 
     return () => {
@@ -46,12 +50,15 @@ export function JacketCanvas({ src, mode, grayscale, hintPercent, seed, classNam
   }, [grayscale, hintPercent, mode, seed, src])
 
   return (
+    <>
+    {failedSource === src && <p role="alert">ジャケット画像を読み込めませんでした</p>}
     <canvas
       ref={canvasRef}
       className={className}
       aria-label="ジャケットヒント"
       role="img"
     />
+    </>
   )
 }
 

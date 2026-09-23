@@ -33,7 +33,7 @@ export function AnswerCard({
     [candidates],
   )
   const suggestions = useMemo(
-    () => query.length < 1 ? [] : fuse.search(query, { limit: SUGGESTION_LIMIT }).map((result) => result.item),
+    () => query.trim().length < 1 ? [] : fuse.search(query.trim(), { limit: SUGGESTION_LIMIT }).map((result) => result.item),
     [fuse, query],
   )
   const highlighted = suggestions[highlightedIndex] ?? null

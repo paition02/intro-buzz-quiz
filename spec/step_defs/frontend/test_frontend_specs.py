@@ -8,7 +8,6 @@ from urllib.parse import unquote, urlparse
 import httpx
 import socketio
 from playwright.sync_api import Page, Route, expect
-from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from pytest_bdd import given, parsers, scenarios, then, when
 
 from frontend.helpers import sample_tracks
@@ -156,10 +155,8 @@ def _set_console_playback_seconds(frontend_page: Page, socket_client, seconds: i
     setattr(frontend_page, "last_playback_seconds", seconds)
 
 
-def _play_button_after_human_observation(frontend_page: Page):
+def _ready_play_button(frontend_page: Page):
     button = frontend_page.get_by_role("button", name="再生", exact=True)
-    expect(button).to_be_enabled(timeout=30000)
-    frontend_page.wait_for_timeout(2000)
     expect(button).to_be_enabled(timeout=30000)
     return button
 
@@ -703,32 +700,10 @@ def frontend_clicks(frontend_page: Page, socket_client, label: str):
     button = frontend_page.get_by_role("button", name=label, exact=True)
     if label == "次のラウンドへ" and hasattr(frontend_page, "manifest_log"):
         _mark_advance(frontend_page)
-    try:
-        if label == "再生":
-            button = _play_button_after_human_observation(frontend_page)
-        button.scroll_into_view_if_needed(timeout=10000)
-        button.click(timeout=10000)
-    except PlaywrightTimeoutError:
-        host_events = {
-            "イントロで開始": "console:start",
-            "ジャケットで開始": "console:start",
-            "再生": "console:play",
-            "ギブアップ": "console:give-up",
-            "結果発表へ": "console:show-results",
-            "次のラウンドへ": "console:next-round",
-            "次のゲームへ": "console:next-game",
-        }
-        if label not in host_events:
-            raise
-        payload = None
-        if label == "イントロで開始":
-            payload = {"quizMode": "intro"}
-        if label == "ジャケットで開始":
-            payload = {"quizMode": "jacket"}
-        if payload is None:
-            socket_client.emit(host_events[label])
-        else:
-            socket_client.emit(host_events[label], payload)
+    if label == "再生":
+        button = _ready_play_button(frontend_page)
+    button.scroll_into_view_if_needed(timeout=10000)
+    button.click(timeout=10000)
     if label in playlist_ids:
         playlist_id = playlist_ids[label]
         deadline = time.time() + 30
@@ -1119,7 +1094,7 @@ def host_plays_intro(frontend_page: Page, socket_client):
     track = _round_track(socket_client.state)
     if track is not None:
         setattr(frontend_page, "last_played_song_id", track["id"])
-    play_button = _play_button_after_human_observation(frontend_page)
+    play_button = _ready_play_button(frontend_page)
     play_button.click(timeout=30000)
     _wait_for_backend_state(socket_client, phase="game", step="playing")
 

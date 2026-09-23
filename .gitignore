@@ -27,3 +27,7 @@ dist-ssr
 .env
 .env.*
 !.env.example
+
+# Python test and report caches
+__pycache__/
+*.py[cod]

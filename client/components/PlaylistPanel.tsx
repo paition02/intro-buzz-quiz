@@ -5,7 +5,7 @@ import { ChevronGlyph, CheckGlyph } from './Glyphs'
 
 export function PlaylistTracksPanel({ playlistId }: { playlistId: string }) {
   const tracksQuery = usePlaylistTracksQuery(playlistId)
-  const tracks = tracksQuery.data
+  const tracks = tracksQuery.data?.tracks
   const error = tracksQuery.error
   const loading = tracksQuery.isPending || tracksQuery.isFetching
 
@@ -14,6 +14,7 @@ export function PlaylistTracksPanel({ playlistId }: { playlistId: string }) {
       {loading && <p className="text-muted">曲を読み込み中...</p>}
       {!loading && error && <p className="text-rose font-bold">{error instanceof Error ? error.message : String(error)}</p>}
       {!loading && !error && tracks?.length === 0 && <p className="text-muted">曲がありません</p>}
+      {!loading && !error && !!tracksQuery.data?.unavailableCount && <p className="text-muted">再生できない{tracksQuery.data.unavailableCount}曲を除外しました</p>}
       {!loading && !error && tracks && tracks.length > 0 && (
         <ul className="list-none m-0 p-0 grid gap-2">
           {tracks.map((track, index) => (
