@@ -1,7 +1,6 @@
 Feature: Server contracts across game states
   Backend-only coverage; media playback is tested separately.
 
-  # Source: CONTROL_013
   Scenario Outline: Invalid command <command> in <state> does not mutate state
     Given the contract state is "<state>"
     When the contract sends rejected command "<command>"
@@ -45,8 +44,6 @@ Feature: Server contracts across game states
       | jacket:reveal | set-jacket-grayscale |
       | jacket:results | set-jacket-hint-percent |
 
-
-  # Source: BUZZ_011 BUZZ_015 GAP_006
   Scenario Outline: Rejected buzz in <state> by <actor> preserves the entire state
     Given the contract state is "<state>"
     When contract actor "<actor>" buzzes expecting <status>
@@ -67,8 +64,6 @@ Feature: Server contracts across game states
       | jacket:before | X | 409 |
       | jacket:answering | Q | 204 |
 
-
-  # Source: BUZZ_003 BUZZ_014 JACKET_001
   Scenario Outline: A buzz is accepted in <state>
     Given the contract state is "<state>"
     When contract actor "Q" buzzes expecting 200
@@ -80,8 +75,6 @@ Feature: Server contracts across game states
       | intro:played |
       | jacket:before |
 
-
-  # Source: BUZZ_009
   Scenario Outline: Concurrent buzzing has one winner in <state>
     Given the contract state is "<state>"
     When both contract players buzz concurrently
@@ -92,8 +85,6 @@ Feature: Server contracts across game states
       | intro:playing |
       | jacket:before |
 
-
-  # Source: CONTROL_002 CONTROL_003
   Scenario Outline: Only the first of judgments <first> and <second> is applied
     Given the contract state is "intro:answering"
     When the contract applies competing judgments "<first>" then "<second>"
@@ -106,8 +97,6 @@ Feature: Server contracts across game states
       | correct | wrong |
       | wrong | correct |
 
-
-  # Source: BUZZ_003 BUZZ_004 BUZZ_005 BUZZ_016
   Scenario Outline: Repeated wrong answers <count> allow another player to score
     Given the contract state is "intro:before"
     When the contract repeats wrong answers <count> times
@@ -120,8 +109,6 @@ Feature: Server contracts across game states
       | 10 |
       | 30 |
 
-
-  # Source: ROUND_007 ROUND_008 ROUND_010 ROUND_012 ROUND_014
   Scenario Outline: All <count> rounds in <mode> survive the next game boundary
     Given a contract game with <count> tracks in "<mode>" mode
     When the contract completes every round and starts another game
@@ -142,8 +129,6 @@ Feature: Server contracts across game states
       | 6 | jacket |
       | 51 | jacket |
 
-
-  # Source: RESET_009 RESET_003
   Scenario Outline: Reset from <state> clears game and permits selection
     Given the contract state is "<state>"
     When the contract resets twice
@@ -166,8 +151,6 @@ Feature: Server contracts across game states
       | jacket:reveal |
       | jacket:results |
 
-
-  # Source: JACKET_008 JACKET_009 JACKET_014
   Scenario Outline: Jacket settings <mode> and <gray> survive judging and advancement
     Given the contract state is "jacket:before"
     When the contract sets jacket mode "<mode>" and grayscale "<gray>"
@@ -188,8 +171,6 @@ Feature: Server contracts across game states
       | edgeReveal | true |
       | edgeReveal | false |
 
-
-  # Source: JACKET_015
   Scenario Outline: Jacket hint <value> is validated as <expected>
     Given the contract state is "jacket:before"
     When the contract submits hint JSON <value> expecting <expected>
@@ -208,8 +189,6 @@ Feature: Server contracts across game states
       | {} | rejected |
       | [] | rejected |
 
-
-  # Source: GAP_007
   Scenario: A no-reaction buzz does not consume cooldown
     Given the contract state is "intro:answering"
     When a no-reaction buzz is followed immediately by another answer opportunity

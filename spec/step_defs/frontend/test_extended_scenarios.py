@@ -1,4 +1,4 @@
-"""Real UI and real MusicKit integration for catalogue gaps."""
+"""Real UI and MusicKit integration tests for playback and input boundaries."""
 from __future__ import annotations
 import math
 import re
@@ -22,8 +22,6 @@ def update_round(client,probe):
     probe['round_id']=client.state['shuffledTrackIds'][client.state['roundIndex']]
     probe['round_index']=client.state['roundIndex']
 
-
-# Source: INTRO_012 INTRO_013 ROUND_003 ROUND_001 ROUND_002 ROUND_013
 @pytest.mark.parametrize('operation',['short-track','first-reveal','repeated-reveal','disclosure'])
 def test_short_track_and_reveal_never_leak_the_next_answer(intro,socket_client,playback_probe,operation):
     p=intro;current=playback_probe['round_id']
@@ -53,8 +51,6 @@ def test_short_track_and_reveal_never_leak_the_next_answer(intro,socket_client,p
         assert all(player['score']==0 for player in socket_client.state['players'])
         r.click_actual(p,'結果発表へ');r.no_results_media(p,socket_client)
 
-
-# Source: BUZZ_001 BUZZ_002 BUZZ_003 BUZZ_004 BUZZ_005 BUZZ_011
 @pytest.mark.parametrize('case',['long-interrupt','wrong-new-duration','other-after-wrong','same-after-wrong','unjoined'])
 def test_buzzing_and_wrong_recovery_follow_the_audio(intro,socket_client,http,playback_probe,case):
     p=intro
@@ -80,8 +76,6 @@ def test_buzzing_and_wrong_recovery_follow_the_audio(intro,socket_client,http,pl
     assert next(v['score'] for v in socket_client.state['players'] if v['id']==actor)==1
     r.expected_reveal(p,socket_client)
 
-
-# Source: INTRO_017 UI_001 UI_002 UI_003
 @pytest.mark.parametrize('input_kind',['mouse','touch','keyboard','cancel','second-finger','inside'])
 def test_slider_native_inputs_and_pointer_lifecycle(intro,socket_client,playback_probe,input_kind):
     p=intro;slider=p.get_by_role('slider',name='再生秒数');slider.scroll_into_view_if_needed()
@@ -151,8 +145,6 @@ def test_jacket_reveal_retries_failed_preparation_after_network_recovers(fronten
     assert state['shuffledAlbumIds'][state['roundAlbumIndex']]==album
     r.click_actual(p,'結果発表へ');r.no_results_media(p,socket_client)
 
-
-# Source: JACKET_005 JACKET_007 JACKET_011 JACKET_012 JACKET_013
 @pytest.mark.parametrize('case',['next','hint','image-failure','album-failure','prepared-album-reuse','single-album-track'])
 def test_jacket_progress_survives_display_and_album_boundaries(frontend_page,socket_client,playback_probe,case):
     p=frontend_page;r.selected_track_count(p,socket_client,playback_probe,3)
@@ -204,8 +196,6 @@ def test_jacket_progress_survives_display_and_album_boundaries(frontend_page,soc
         p.wait_for_timeout(2300);r._assert_stopped(p)
     else:r.click_actual(p,'結果発表へ');r.no_results_media(p,socket_client)
 
-
-# Source: ROUND_006 LIBRARY_009 LIBRARY_010 LIBRARY_011 LIBRARY_012
 @pytest.mark.parametrize('metadata',['same-title','no-artwork','no-album','same-album','different-album-artists'])
 def test_metadata_edges_still_use_the_selected_media_ids(frontend_page,socket_client,playback_probe,metadata):
     p=frontend_page;set_musickit_library_data(p,{'playlist-a':['track-1','track-2']})
@@ -228,8 +218,6 @@ def test_metadata_edges_still_use_the_selected_media_ids(frontend_page,socket_cl
         if index==0:r.click_actual(p,'次のラウンドへ');r._wait_state(socket_client,roundIndex=1,step='beforePlayback');expect(p.get_by_role('button',name='再生',exact=True)).to_be_enabled(timeout=5000)
     assert socket_client.state['roundIndex']==1
 
-
-# Source: JACKET_010 UI_011
 @pytest.mark.parametrize('late',['old-image','new-image'])
 def test_late_artwork_cannot_paint_a_different_jacket(frontend_page,socket_client,playback_probe,late):
     import struct,zlib
@@ -260,8 +248,6 @@ def test_late_artwork_cannot_paint_a_different_jacket(frontend_page,socket_clien
     assert canvas.evaluate(pixel)==[0,0,255,255]
     board.close()
 
-
-# Source: CONTROL_012 CONTROL_010
 @pytest.mark.parametrize('first',['phone','physical'])
 def test_phone_and_http_buzzer_share_the_same_acceptance_rule(frontend_page,socket_client,http,playback_probe,first):
     p=frontend_page;r.selected_track_count(p,socket_client,playback_probe,3)
@@ -286,8 +272,6 @@ def test_phone_and_http_buzzer_share_the_same_acceptance_rule(frontend_page,sock
     r.click_actual(p,'不正解');r.playable_again(p,socket_client,playback_probe)
     phone.close();board.close()
 
-
-# Source: FLOW_001 FLOW_002 FLOW_004 FLOW_009 BUZZ_016
 @pytest.mark.parametrize('flow',['reported','minimum','all-wrong','recovered'])
 def test_complete_user_flow_through_results_and_a_new_game(frontend_page,socket_client,http,playback_probe,flow):
     p=frontend_page;r.selected_track_count(p,socket_client,playback_probe,6)
@@ -330,8 +314,6 @@ def test_complete_user_flow_through_results_and_a_new_game(frontend_page,socket_
     assert socket_client.state['players']==[{'id':'Q','score':0}]
     board.close()
 
-
-# Source: LIBRARY_016 LIBRARY_006
 @pytest.mark.parametrize('kind',['playlists','tracks'])
 @pytest.mark.parametrize('failure',['500','401','cycle','invalid-json','missing-data'])
 def test_second_page_fault_does_not_claim_complete_selection_and_can_retry(frontend_page,socket_client,playback_probe,kind,failure):
@@ -372,8 +354,6 @@ def test_second_page_fault_does_not_claim_complete_selection_and_can_retry(front
         r.click_actual(p,'Spec Playlist A');expect(p.get_by_text('1件のプレイリスト、2曲を選択中',exact=True)).to_be_visible(timeout=10000)
         assert {t['id'] for t in socket_client.state['tracks']}=={'track-1','track-2'}
 
-
-# Source: LIBRARY_014
 @pytest.mark.parametrize('count',[1,49,50,51,100,101])
 def test_last_paged_track_is_reachable_and_really_playable(frontend_page,socket_client,playback_probe,count):
     p=frontend_page;r.fifty_item_pages(p);r.selected_track_count(p,socket_client,playback_probe,count)
@@ -388,8 +368,6 @@ def test_last_paged_track_is_reachable_and_really_playable(frontend_page,socket_
     update_round(socket_client,playback_probe);assert playback_probe['round_id']==last
     r.replay_sequence(p,socket_client,playback_probe,'0.5')
 
-
-# Source: BUZZ_016
 @pytest.mark.parametrize('count',[30])
 def test_thirty_wrong_answers_still_allow_the_final_correct_answer(intro,socket_client,http,playback_probe,count):
     p=intro;r.repeated_wrong_ui(p,socket_client,http,playback_probe,count)
@@ -398,8 +376,6 @@ def test_thirty_wrong_answers_still_allow_the_final_correct_answer(intro,socket_
     assert socket_client.state['players']==[{'id':'player-1','score':1}]
     r.expected_reveal(p,socket_client)
 
-
-# Source: JACKET_011
 @pytest.mark.parametrize('failure',['abort','http-404'])
 def test_failed_jacket_artwork_is_explained_to_the_audience(frontend_page,socket_client,playback_probe,failure):
     import re
@@ -410,8 +386,6 @@ def test_failed_jacket_artwork_is_explained_to_the_audience(frontend_page,socket
     expect(board.get_by_text(re.compile('(画像|ジャケット).*(失敗|読み込め|取得でき)'))).to_be_visible(timeout=1500)
     r.click_actual(p,'リセット');r._wait_state(socket_client,phase='ready');board.close()
 
-
-# Source: SESSION_003
 @pytest.mark.parametrize('reload',['reload','reopen'])
 def test_phone_reconnection_preserves_answer_rights_without_another_press(intro,socket_client,http,playback_probe,reload):
     p=intro;phone=p.context.new_page();script="sessionStorage.setItem('intro-buzz-action-actor-id','player-1')";phone.add_init_script(script);phone.goto('/action')
@@ -423,8 +397,6 @@ def test_phone_reconnection_preserves_answer_rights_without_another_press(intro,
     assert socket_client.state==before;r._assert_stopped(p)
     r.click_actual(p,'正解');r._wait_state(socket_client,step='reveal');r.expected_reveal(p,socket_client);phone.close()
 
-
-# Source: SESSION_004
 @pytest.mark.parametrize('offline_ms',[100,1000])
 def test_board_reconnection_catches_up_with_the_latest_reveal(intro,socket_client,playback_probe,browser,server_url,offline_ms):
     p=intro;ctx=browser.new_context(base_url=server_url);board=ctx.new_page();board.goto('/gameboard')
@@ -439,8 +411,6 @@ def test_board_reconnection_catches_up_with_the_latest_reveal(intro,socket_clien
         expect(board.get_by_role('status')).to_have_count(0)
     finally:ctx.close()
 
-
-# Source: UI_012
 @pytest.mark.parametrize('width',[320,390])
 def test_long_japanese_answer_is_selectable_in_the_real_mobile_layout(frontend_page,socket_client,http,playback_probe,width):
     p=frontend_page;p.set_viewport_size({'width':width,'height':844});set_musickit_library_data(p,{'playlist-a':['track-1']})
@@ -456,8 +426,6 @@ def test_long_japanese_answer_is_selectable_in_the_real_mobile_layout(frontend_p
     assert p.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
     r._wait_state(socket_client,step='reveal');r.click_actual(p,'結果発表へ');r.no_results_media(p,socket_client)
 
-
-# Source: CONTROL_010 CONTROL_012
 @pytest.mark.parametrize('judgments',[['不正解','正解']])
 def test_host_board_and_two_phone_buttons_follow_both_answerers(frontend_page,socket_client,playback_probe,judgments):
     p=frontend_page;r.selected_track_count(p,socket_client,playback_probe,3)
@@ -488,8 +456,6 @@ def test_host_board_and_two_phone_buttons_follow_both_answerers(frontend_page,so
     for phone in phones:phone.close()
     board.close()
 
-
-# Source: SESSION_010 SESSION_013
 @pytest.mark.parametrize('step',['beforePlayback','playing','answering','correct','wrong','reveal','results'])
 def test_real_console_reload_restores_progress(intro,socket_client,http,playback_probe,step):
     p=intro
@@ -520,8 +486,6 @@ def test_real_console_reload_restores_progress(intro,socket_client,http,playback
     assert socket_client.state['shuffledTrackIds']==before['shuffledTrackIds']
     assert socket_client.state['answererId']==(None if step=='wrong' else before['answererId'])
 
-
-# Source: INTRO_013 ASYNC_006
 @pytest.mark.parametrize('late_ms',[100,1200])
 def test_late_preload_cannot_play_next_song_at_short_track_end(intro,socket_client,playback_probe,late_ms):
     p=intro;current=playback_probe['round_id']

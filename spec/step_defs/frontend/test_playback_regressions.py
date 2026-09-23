@@ -12,13 +12,25 @@ from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError, ex
 from pytest_bdd import given, parsers, scenarios, then, when
 from frontend.musickit_mock import set_musickit_library_data
 
-scenarios("../../features/playback")
 
 # Real browser events are sampled at 10ms. Duration tolerance is the smaller
 # of 250ms and half the requested duration (50ms for a 100ms intro).
 # Exact 1ms ordering still requires a separate controlled-clock test.
 TIMING_TOLERANCE_SECONDS = 0.25
 STOP_DEADLINE_MS = 1000
+
+
+scenarios(
+    "../../features/frontend/intro_controls.feature",
+    "../../features/frontend/reset_and_logout.feature",
+    "../../features/frontend/games_and_jackets.feature",
+    "../../features/frontend/repetition_and_fault_boundaries.feature",
+    "../../features/frontend/library_inputs.feature",
+    "../../features/frontend/sdk_observable_contract.feature",
+    "../../features/frontend/ui_boundaries.feature",
+    "../../features/frontend/sdk_failures.feature",
+    "../../features/frontend/authorization_recovery.feature",
+)
 
 
 @pytest.fixture

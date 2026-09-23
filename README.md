@@ -170,6 +170,12 @@ MusicKit JS 用の Apple Music developer token を返します。`jose` で ES25
 | `bun run lint` | ESLint |
 | `bun run test` | feature / step defs 回帰テスト |
 
+### テスト
+
+シナリオは `spec/features/backend`・`frontend`・`integration` の Gherkin、実装と補助コードは `spec/step_defs/backend`・`frontend` に配置します。各テストモジュールは担当する feature ファイルを明示して読み込みます。
+
+実サーバーを使うテストでは、専用サーバーのURLを `TEST_BACKEND_URL` に指定して `bun run test` を実行します。普段のゲーム用サーバーは使わないでください。制御テストは補助コードから本番コンポーネントを読み込み、SDK応答・通信・時計を制御して境界を検証します。実MusicKit SDKのテストでもAPI応答と音源にはテストデータを使い、物理スピーカーの音声確認は含みません。
+
 ## 技術スタック
 
 - ランタイム / サーバー: **Bun** (`Bun.serve`)

@@ -7,5 +7,5 @@ const control = Bun.serve({hostname:'127.0.0.1',port:Number(process.env.TEST_CLO
   if(value!==null){ const next=Number(value);if(!Number.isFinite(next))return new Response('',{status:400});now=next }
   return Response.json({now})
 }})
-await import('../../server/index.ts')
+await import('../../../server/index.ts')
 console.log(`TEST_CLOCK_READY ${control.port}`)

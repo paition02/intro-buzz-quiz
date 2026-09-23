@@ -18,8 +18,13 @@ from frontend.musickit_mock import (
     set_musickit_library_song_albums,
 )
 
-scenarios("../../features/frontend")
-scenarios("../../features/integration")
+scenarios(
+    "../../features/frontend/console_page.feature",
+    "../../features/frontend/action_page.feature",
+    "../../features/frontend/apple_music.feature",
+    "../../features/frontend/gameboard_page.feature",
+    "../../features/integration/game_session.feature",
+)
 
 
 def _state(socket_client):

@@ -1,7 +1,6 @@
 Feature: SDK failures through the actual console
   One SDK call is failed or deferred while all other calls still use the real SDK.
 
-  # Source: ASYNC_001 ASYNC_002 ASYNC_011
   Scenario Outline: Preparation failure in <method> is visible and permits reset recovery
     Given a selected intro with an observed MusicKit player and participant "player-1"
     And the next SDK "<method>" operation has fault "reject"
@@ -16,7 +15,6 @@ Feature: SDK failures through the actual console
       | play |
       | pause |
 
-  # Source: ASYNC_005 INTRO_011
   Scenario Outline: Optional preloading <fault> does not block the current track
     Given a selected intro with an observed MusicKit player and participant "player-1"
     And the next SDK "playNext" operation has fault "<fault>"
@@ -29,7 +27,6 @@ Feature: SDK failures through the actual console
       | reject |
       | hold-after |
 
-  # Source: RESET_002 RESET_009 ASYNC_015
   Scenario Outline: Reset supersedes a deferred preparation <method>
     Given a selected intro with an observed MusicKit player and participant "player-1"
     And the next SDK "<method>" operation has fault "hold-before"
@@ -47,7 +44,6 @@ Feature: SDK failures through the actual console
       | pause |
       | playNext |
 
-  # Source: ASYNC_003 ASYNC_004
   Scenario Outline: Intro stop failure in <method> remains visible and recoverable
     Given a prepared intro with an observed MusicKit player and participant "player-1"
     And the next SDK "<method>" operation has fault "reject"

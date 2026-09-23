@@ -9,7 +9,12 @@ from pytest_bdd import given, parsers, scenarios, then, when
 
 from backend.helpers import assert_player, make_tracks, player, round_track
 
-scenarios("../../features/backend")
+scenarios(
+    "../../features/backend/action_api.feature",
+    "../../features/backend/game_flow.feature",
+    "../../features/backend/initial_state.feature",
+    "../../features/backend/console.feature",
+)
 
 
 def _reset(socket_client):

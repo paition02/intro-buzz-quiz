@@ -2,12 +2,12 @@ import { createRoot } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { useLayoutEffect } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { ConsolePage } from '../../client/pages/ConsolePage'
-import { GameboardPage } from '../../client/pages/GameboardPage'
-import { usePlaybackTarget, type PlaybackTarget } from '../../client/usePlaybackTarget'
-import { musicKitInstanceStore } from '../../client/musicKitStore'
-import { initialState } from '../../client/lib/gameClient'
-import { deliver, ack, failAck, pending, subscriptions } from './socket'
+import { ConsolePage } from '../../../client/pages/ConsolePage'
+import { GameboardPage } from '../../../client/pages/GameboardPage'
+import { usePlaybackTarget, type PlaybackTarget } from '../../../client/usePlaybackTarget'
+import { musicKitInstanceStore } from '../../../client/musicKitStore'
+import { initialState } from '../../../client/lib/gameClient'
+import { deliver, ack, failAck, pending, subscriptions } from './controlled_socket'
 
 const queryClient = new QueryClient({defaultOptions:{queries:{retry:false}}})
 let root = createRoot(document.getElementById('root')!)

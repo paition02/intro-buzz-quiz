@@ -19,8 +19,8 @@ ROOT = Path(__file__).resolve().parents[3]
 @pytest.fixture(scope="session")
 def controller_bundle(tmp_path_factory):
     out = tmp_path_factory.mktemp("controller-bundle")
-    subprocess.run(["bun", str(ROOT / "spec/harness/build.ts"), str(out)], cwd=ROOT, check=True, capture_output=True, text=True)
-    return (out / "entry.js").read_text()
+    subprocess.run(["bun", str(ROOT / "spec/step_defs/frontend/build_controller.ts"), str(out)], cwd=ROOT, check=True, capture_output=True, text=True)
+    return (out / "controller.js").read_text()
 
 
 @pytest.fixture
@@ -28,7 +28,7 @@ def controlled_page(browser, controller_bundle, tmp_path):
     context = browser.new_context()
     page = context.new_page()
     page.set_default_timeout(1500)
-    page.add_init_script(path=str(ROOT / "spec/harness/media.js"))
+    page.add_init_script(path=str(ROOT / "spec/step_defs/frontend/controlled_musickit.js"))
     page.add_init_script("""window.__sounds=[]; window.AudioContext=class {
       constructor(){window.__sounds.push('context');this.currentTime=0;this.destination={}}
       createGain(){return {gain:{setValueAtTime(){},exponentialRampToValueAtTime(){}},connect(){}}}
@@ -127,8 +127,6 @@ def start(page,seconds=1):
     ack_command(page,'play',game_state(page,'playing'))
     assert snapshot(page)['playing']
 
-
-# Source: INTRO_003 JACKET_001
 @pytest.mark.parametrize('mode',['intro','jacket'])
 def test_preparation_never_calls_play_at_audible_volume(controlled_page,mode):
     p=controlled_page
@@ -140,8 +138,6 @@ def test_preparation_never_calls_play_at_audible_volume(controlled_page,mode):
     assert not snapshot(p)['playing']
     assert all(v==0 for v in p.evaluate('sdk.volumes'))
 
-
-# Source: ASYNC_006 ASYNC_013 GAP_004 GAP_009
 @pytest.mark.parametrize('stage',['before','after'])
 @pytest.mark.parametrize('completion',['resolve','reject'])
 def test_three_superseding_targets_settle_every_waiter_without_stale_error(controlled_page,stage,completion):
@@ -155,8 +151,6 @@ def test_three_superseding_targets_settle_every_waiter_without_stale_error(contr
     assert s['status']['error'] is None
     assert all(v!='pending' for v in s['outcomes'].values()),s['outcomes']
 
-
-# Source: ASYNC_010
 @pytest.mark.parametrize('unsupported',['missing','reject'])
 def test_preload_unavailable_still_allows_loading_the_next_track(controlled_page,unsupported):
     p=controlled_page
@@ -167,8 +161,6 @@ def test_preload_unavailable_still_allows_loading_the_next_track(controlled_page
     target(p,'playing','B',name='play',next_song=None);advance(p,300)
     assert snapshot(p)['playing'] and snapshot(p)['id']=='B'
 
-
-# Source: ASYNC_016
 @pytest.mark.parametrize('interval',[0,1,100,249,250,251,500])
 def test_debounced_sdk_calls_preserve_requested_play_stop_play(controlled_page,interval):
     p=controlled_page;prepare(p)
@@ -184,8 +176,6 @@ def test_debounced_sdk_calls_preserve_requested_play_stop_play(controlled_page,i
     target(p,'stopped',name='final');advance(p,300)
     assert not snapshot(p)['playing']
 
-
-# Source: GAP_003 ASYNC_015
 @pytest.mark.parametrize('method',['pause','seekToTime'])
 def test_stop_completion_can_remain_pending_while_reset_becomes_usable(controlled_page,method):
     p=controlled_page;prepare(p);target(p,'playing',name='play');advance(p,500)
@@ -197,8 +187,6 @@ def test_stop_completion_can_remain_pending_while_reset_becomes_usable(controlle
     release(p,'stop');advance(p,500)
     assert not snapshot(p)['playing']
 
-
-# Source: RESET_008
 @pytest.mark.parametrize('method',['setQueue','play','pause'])
 def test_unmounted_controller_cannot_start_audio_after_deferred_work(controlled_page,method):
     p=controlled_page;arm(p,method,'old')
@@ -208,8 +196,6 @@ def test_unmounted_controller_cannot_start_audio_after_deferred_work(controlled_
     release(p,'old');advance(p,1000)
     assert not snapshot(p)['playing'],snapshot(p)
 
-
-# Source: GAP_015
 @pytest.mark.parametrize('stage',['before','after'])
 def test_old_stop_for_same_track_cannot_cancel_new_controller_play(controlled_page,stage):
     p=controlled_page;prepare(p);target(p,'playing',name='oldplay');advance(p,500)
@@ -220,8 +206,6 @@ def test_old_stop_for_same_track_cannot_cancel_new_controller_play(controlled_pa
     release(p,'oldstop');advance(p,1000)
     assert snapshot(p)['playing'] and snapshot(p)['outcomes']['newplay']=='resolved'
 
-
-# Source: INTRO_009 CONTROL_006 GAP_008
 @pytest.mark.parametrize('notification',['identical','players','metadata'])
 def test_unrelated_state_updates_preserve_the_original_deadline(controlled_page,notification):
     p=controlled_page;console(p);start(p);advance(p,400)
@@ -233,8 +217,6 @@ def test_unrelated_state_updates_preserve_the_original_deadline(controlled_page,
     advance(p,1);assert not snapshot(p)['playing']
     assert len([c for c in p.evaluate('harness.commands()') if c['event']=='console:play-ended'])==1
 
-
-# Source: INTRO_010 ASYNC_018
 @pytest.mark.parametrize('delay',[0,500,2000,10000])
 def test_start_delay_does_not_consume_requested_media_duration(controlled_page,delay):
     p=controlled_page;console(p);arm(p,'play','start')
@@ -243,8 +225,6 @@ def test_start_delay_does_not_consume_requested_media_duration(controlled_page,d
     release(p,'start');advance(p,499);assert snapshot(p)['playing']
     advance(p,1);assert not snapshot(p)['playing']
 
-
-# Source: BUZZ_012 SESSION_001 GAP_012
 @pytest.mark.parametrize('operation',['play-rejected','play-superseded','judgment-rejected'])
 def test_delayed_or_rejected_ack_cannot_trigger_obsolete_audio(controlled_page,operation):
     p=controlled_page;console(p)
@@ -261,8 +241,6 @@ def test_delayed_or_rejected_ack_cannot_trigger_obsolete_audio(controlled_page,o
     assert p.evaluate('window.__sounds')==[]
     if operation=='play-superseded':assert p.get_by_role('button',name='正解',exact=True).is_enabled()
 
-
-# Source: BUZZ_007 BUZZ_014
 @pytest.mark.parametrize('offset',[0,500,999,1000,1001])
 def test_buzz_at_virtual_deadline_preserves_answer_rights(controlled_page,offset):
     p=controlled_page;console(p);start(p);advance(p,offset)
@@ -271,8 +249,6 @@ def test_buzz_at_virtual_deadline_preserves_answer_rights(controlled_page,offset
     assert p.get_by_role('button',name='正解',exact=True).is_enabled()
     assert not [c for c in p.evaluate('harness.commands()') if c['event']=='console:play-ended' and offset<1000]
 
-
-# Source: ASYNC_014
 @pytest.mark.parametrize('method',['music','playNext'])
 def test_unrelated_metadata_completion_cannot_extend_intro_deadline(controlled_page,method):
     p=controlled_page;console(p)
@@ -285,8 +261,6 @@ def test_unrelated_metadata_completion_cannot_extend_intro_deadline(controlled_p
     release(p,'metadata');advance(p,500)
     assert not snapshot(p)['playing']
 
-
-# Source: GAP_011 ROUND_004 ROUND_015 ROUND_016 JACKET_006
 @pytest.mark.parametrize('destination',['beforePlayback','results'])
 @pytest.mark.parametrize('kind',['intro','jacket'])
 def test_pending_reveal_cannot_leak_into_next_round_or_results(controlled_page,destination,kind):
@@ -306,8 +280,6 @@ def test_pending_reveal_cannot_leak_into_next_round_or_results(controlled_page,d
     assert not snapshot(p)['playing']
     if destination=='beforePlayback':assert snapshot(p)['id']=='B'
 
-
-# Source: FLOW_006
 @pytest.mark.parametrize('wait_ms',[1800000])
 def test_half_hour_idle_has_no_obsolete_deadline(controlled_page,wait_ms):
     p=controlled_page;console(p);start(p);advance(p,1000)
@@ -316,8 +288,6 @@ def test_half_hour_idle_has_no_obsolete_deadline(controlled_page,wait_ms):
     deliver(p,game_state(p,'answering',answererId='P'));advance(p,500)
     assert not snapshot(p)['playing'] and p.get_by_role('button',name='正解',exact=True).is_enabled()
 
-
-# Source: ASYNC_017 ASYNC_018
 @pytest.mark.parametrize('order',['play-event-first','play-promise-first','pause-event-first','pause-promise-first','duplicate'])
 def test_sdk_event_and_promise_orders_do_not_change_media_deadline(controlled_page,order):
     p=controlled_page;console(p)
@@ -345,8 +315,6 @@ def test_sdk_event_and_promise_orders_do_not_change_media_deadline(controlled_pa
     advance(p,300)
     assert len([c for c in p.evaluate('harness.commands()') if c['event']=='console:play-ended'])==1
 
-
-# Source: ASYNC_018
 @pytest.mark.parametrize('delay',[0,250,1000,5000])
 def test_audible_time_excludes_no_promise_completion_delay(controlled_page,delay):
     p=controlled_page;console(p);arm(p,'play','held','after')
@@ -357,8 +325,6 @@ def test_audible_time_excludes_no_promise_completion_delay(controlled_page,delay
     release(p,'held');advance(p,max(0,500-delay))
     assert not snapshot(p)['playing']
 
-
-# Source: LIBRARY_015
 @pytest.mark.parametrize('track,path',[('A','/v1/catalog/us/songs/A'),('i.A','/v1/me/library/songs/i.A/albums')])
 def test_album_lookup_uses_the_track_id_namespace(controlled_page,track,path):
     p=controlled_page
@@ -369,8 +335,6 @@ def test_album_lookup_uses_the_track_id_namespace(controlled_page,track,path):
     assert snapshot(p)['playing']
     target(p,'stopped',name='end');advance(p,500);assert not snapshot(p)['playing']
 
-
-# Source: SESSION_008
 @pytest.mark.parametrize('times',[1,10])
 def test_redundant_authorization_events_preserve_selection_and_playback(controlled_page,times):
     p=controlled_page;console(p);start(p);before=p.evaluate('harness.commands()')
@@ -378,8 +342,6 @@ def test_redundant_authorization_events_preserve_selection_and_playback(controll
     advance(p,1000);assert not snapshot(p)['playing']
     assert [c['event'] for c in p.evaluate('harness.commands()')[len(before):]]==['console:play-ended']
 
-
-# Source: GAP_005
 @pytest.mark.parametrize('pending',[False,True])
 def test_auth_expiry_leaves_reset_and_reauthorization_usable(controlled_page,pending):
     p=controlled_page;console(p)
@@ -391,8 +353,6 @@ def test_auth_expiry_leaves_reset_and_reauthorization_usable(controlled_page,pen
     if pending:release(p,'old')
     advance(p,1000);assert not snapshot(p)['playing']
 
-
-# Source: ROUND_005 FLOW_003
 @pytest.mark.parametrize('old_seconds',[3,30])
 def test_old_intro_timer_cannot_stop_new_round_reveal_or_play(controlled_page,old_seconds):
     p=controlled_page;console(p);start(p,old_seconds);advance(p,1000)
@@ -405,8 +365,6 @@ def test_old_intro_timer_cannot_stop_new_round_reveal_or_play(controlled_page,ol
     assert snapshot(p)['playing'] and snapshot(p)['id']=='B'
     advance(p,2000);assert not snapshot(p)['playing']
 
-
-# Source: UI_007 CONTROL_008 CONTROL_007 UI_012
 @pytest.mark.parametrize('case',['query-change','same-title','click-enter','long-japanese'])
 def test_answer_candidate_identity_and_selection_are_preserved(controlled_page,case):
     p=controlled_page;state=game_state(p,'answering',answererId='P')
@@ -428,8 +386,6 @@ def test_answer_candidate_identity_and_selection_are_preserved(controlled_page,c
     ack_command(p,expected,game_state(p,expected,answererId='P'))
     assert p.get_by_role('button',name='リセット',exact=True).is_enabled()
 
-
-# Source: UI_010 UI_013 CONTROL_010
 @pytest.mark.parametrize('step',['beforePlayback','playing','answering','wrong','correct','reveal','results'])
 def test_gameboard_hides_answers_until_reveal_and_keeps_tied_players(controlled_page,step):
     p=controlled_page;state=game_state(p,step,answererId='P',players=[{'id':'P','score':2},{'id':'Q','score':2},{'id':'R','score':0}])
@@ -441,8 +397,6 @@ def test_gameboard_hides_answers_until_reveal_and_keeps_tied_players(controlled_
         assert text.count('2')>=2 and '0' in text
     assert not snapshot(p)['playing']
 
-
-# Source: FLOW_008 INTRO_016
 @pytest.mark.parametrize('cycles',[10])
 def test_repeated_mounts_release_dom_subscriptions_and_feedback_timers(controlled_page,cycles):
     p=controlled_page
@@ -475,8 +429,6 @@ def library_console(page,selected=None):
     assert page.get_by_role('button',name='List A',exact=True).count()==1
     return state
 
-
-# Source: LIBRARY_002 LIBRARY_003
 @pytest.mark.parametrize('case',['deselect-late','reverse-completion'])
 def test_playlist_response_order_preserves_the_latest_selection(controlled_page,case):
     p=controlled_page
@@ -505,8 +457,6 @@ def test_playlist_response_order_preserves_the_latest_selection(controlled_page,
             assert {t['id'] for t in command['body']['tracks']}=={v.upper() for v in ids}
             state.update(command['body']);ack_command(p,'select-playlists',state);advance(p,10)
 
-
-# Source: LIBRARY_016
 @pytest.mark.parametrize('failure',['second-page-error','cycle','missing-data'])
 def test_malformed_pagination_terminates_with_a_visible_error(controlled_page,failure):
     p=controlled_page
@@ -527,8 +477,6 @@ def test_malformed_pagination_terminates_with_a_visible_error(controlled_page,fa
     assert p.get_by_role('button',name='再読み込み',exact=True).is_enabled()
     assert p.locator('li span.text-rose').count()>0,'malformed or failed page must not be shown as a complete empty library'
 
-
-# Source: JACKET_007
 @pytest.mark.parametrize('ack_order',['forward','reverse'])
 def test_late_hint_acknowledgements_cannot_overwrite_latest_input(controlled_page,ack_order):
     p=controlled_page;state=game_state(p,quizMode='jacket',albums=[{'id':'album','name':'Album','artist':'Artist','trackIds':['A']}],shuffledAlbumIds=['album'],roundAlbumIndex=0)
@@ -544,8 +492,6 @@ def test_late_hint_acknowledgements_cannot_overwrite_latest_input(controlled_pag
         p.evaluate('i=>harness.ack(i)',i);flush(p)
         assert slider.get_attribute('aria-valuenow')=='12'
 
-
-# Source: INTRO_001 INTRO_004 INTRO_005 INTRO_006 INTRO_007 INTRO_015
 @pytest.mark.parametrize('sequence',[
     [.1,.5,1,3,10,30],[30,10,3,1,.5,.1],[.1,30,.1,30,.1],
     [.1,.2,.3,.9,1.1],[1,1,1,1,1],[3,.1,10,.5,2],[5,1],[.5,1,2,3],
@@ -560,8 +506,6 @@ def test_every_catalogue_duration_sequence_uses_its_own_exact_deadline(controlle
         ack_command(p,'play-ended',game_state(p));advance(p,300)
         assert p.get_by_role('button',name='再生',exact=True).is_enabled()
 
-
-# Source: BUZZ_006 GAP_004
 @pytest.mark.parametrize('late',['stop','error'])
 def test_immediate_wrong_judgment_survives_late_stop_or_old_play_error(controlled_page,late):
     p=controlled_page;console(p)
@@ -576,8 +520,6 @@ def test_immediate_wrong_judgment_survives_late_stop_or_old_play_error(controlle
     ack_command(p,'wrong-feedback-ended',game_state(p));advance(p,300)
     assert p.get_by_role('button',name='再生',exact=True).is_enabled()
 
-
-# Source: GAP_001
 @pytest.mark.parametrize('recovery',[1001,5000])
 def test_buffer_recovery_after_explicit_stop_cannot_resume_the_old_intro(controlled_page,recovery):
     p=controlled_page;console(p);start(p)
@@ -589,7 +531,7 @@ def test_buffer_recovery_after_explicit_stop_cannot_resume_the_old_intro(control
       void pause.call(sdk.mk);
     }""");flush(p)
     assert not snapshot(p)['playing']
-    # Waiting no longer consumes the intro duration (GAP_002). End the intro
+    # Waiting does not consume the intro duration. End the intro
     # with an actual user interruption before checking stale buffer recovery.
     deliver(p,game_state(p,'answering',answererId='P'))
     advance(p,recovery)
@@ -597,8 +539,6 @@ def test_buffer_recovery_after_explicit_stop_cannot_resume_the_old_intro(control
     assert not snapshot(p)['playing'],'buffer recovery restarted a completed intro'
     assert p.get_by_role('button',name='リセット',exact=True).is_enabled()
 
-
-# Source: FLOW_011
 @pytest.mark.parametrize('condition',['network-500','next-load-3000','state-100','cpu','cold','warm'])
 def test_four_rounds_under_controlled_latency_and_cache_conditions(controlled_page,condition):
     p=controlled_page;console(p)
@@ -639,8 +579,6 @@ def test_four_rounds_under_controlled_latency_and_cache_conditions(controlled_pa
     p.get_by_role('button',name='結果発表へ',exact=True).click();state.update(step='results',roundIndex=-1);ack_command(p,'show-results',state);advance(p,1000)
     assert not snapshot(p)['playing']
 
-
-# Source: ASYNC_015 RESET_009
 @pytest.mark.parametrize('operation',['setQueue','play','pause','seekToTime','skipToNextItem','playNext','music'])
 def test_each_unresolved_sdk_boundary_allows_reset_without_audio_revival(controlled_page,operation):
     p=controlled_page;prepare(p)
@@ -659,8 +597,6 @@ def test_each_unresolved_sdk_boundary_allows_reset_without_audio_revival(control
     target(p,'prepared','Z',name='newgame',next_song=None);advance(p,1000)
     assert snapshot(p)['id']=='Z' and snapshot(p)['outcomes']['newgame']=='resolved'
 
-
-# Source: FLOW_008
 @pytest.mark.parametrize('games',[10])
 def test_ten_games_in_one_console_do_not_accumulate_callbacks_or_timers(controlled_page,games):
     p=controlled_page;console(p)
@@ -682,8 +618,6 @@ def test_ten_games_in_one_console_do_not_accumulate_callbacks_or_timers(controll
     assert max(timer_counts)-min(timer_counts)<=1,timer_counts
     assert len(p.evaluate('window.__sounds'))==games*2
 
-
-# Source: FLOW_010
 @pytest.mark.parametrize('mode',['intro','jacket'])
 @pytest.mark.parametrize('seed',[1,7,42,20260922])
 def test_seeded_console_actions_match_an_independent_audio_and_score_model(controlled_page,mode,seed):
@@ -737,8 +671,6 @@ def test_seeded_console_actions_match_an_independent_audio_and_score_model(contr
     p.get_by_role('button',name='リセット',exact=True).click();state.update(phase='ready',step='idle',players=[],tracks=[],albums=[],roundIndex=-1,roundAlbumIndex=-1,answererId=None);ack_command(p,'reset',state);advance(p,500)
     assert not snapshot(p)['playing'] and not snapshot(p)['gates']
 
-
-# Source: ASYNC_012
 @pytest.mark.parametrize('volume',[0,.4])
 def test_volume_is_preserved_across_prepare_play_stop_and_next(controlled_page,volume):
     p=controlled_page;p.evaluate('v=>sdk.mk.volume=v',volume)
@@ -746,8 +678,6 @@ def test_volume_is_preserved_across_prepare_play_stop_and_next(controlled_page,v
         target(p,kind,song,name=kind+song);advance(p,500)
         assert snapshot(p)['volume']==volume
 
-
-# Source: INTRO_002 GAP_009 ASYNC_013
 @pytest.mark.parametrize('resolution',['wrong','correct','new-game'])
 def test_third_stop_can_be_superseded_by_the_full_following_operation_chain(controlled_page,resolution):
     p=controlled_page;console(p)
@@ -768,8 +698,6 @@ def test_third_stop_can_be_superseded_by_the_full_following_operation_chain(cont
     if resolution!='correct':assert p.get_by_role('button',name='再生',exact=True).is_enabled()
     if resolution=='new-game':assert snapshot(p)['id']=='C'
 
-
-# Source: ROUND_015 ROUND_016
 @pytest.mark.parametrize('method',['play','pause','seekToTime','music'])
 def test_results_and_next_controls_remain_usable_during_pending_reveal_work(controlled_page,method):
     p=controlled_page;console(p)
@@ -784,8 +712,6 @@ def test_results_and_next_controls_remain_usable_during_pending_reveal_work(cont
     release(p,'old');advance(p,1000)
     assert not snapshot(p)['playing']
 
-
-# Source: LIBRARY_007 LIBRARY_008
 @pytest.mark.parametrize('missing',['id','name'])
 def test_playlist_mapping_drops_incomplete_identity_before_selection(controlled_page,missing):
     p=controlled_page
@@ -801,8 +727,6 @@ def test_playlist_mapping_drops_incomplete_identity_before_selection(controlled_
     assert [(t['id'],t['title']) for t in selection['tracks']]==[('A','Good song')]
     state.update(selection);ack_command(p,'select-playlists',state)
 
-
-# Source: ASYNC_001 ASYNC_003 ASYNC_004
 @pytest.mark.parametrize('operation',['play','seekToTime','pause'])
 def test_failure_at_actual_replay_boundary_is_visible_and_recoverable(controlled_page,operation):
     p=controlled_page;console(p)
@@ -818,8 +742,6 @@ def test_failure_at_actual_replay_boundary_is_visible_and_recoverable(controlled
     deliver(p,game_state(p));advance(p,500);start(p,.5);advance(p,500)
     assert not snapshot(p)['playing']
 
-
-# Source: CONTROL_003
 @pytest.mark.parametrize('first',['correct','wrong'])
 def test_losing_judgment_ack_never_schedules_sound_or_feedback(controlled_page,first):
     p=controlled_page;console(p);deliver(p,game_state(p,'answering',answererId='P'));advance(p,500)
@@ -833,8 +755,6 @@ def test_losing_judgment_ack_never_schedules_sound_or_feedback(controlled_page,f
     feedback=[c['event'] for c in p.evaluate('harness.commands()') if c['event'].endswith('-feedback-ended')]
     assert feedback==['console:'+first+'-feedback-ended']
 
-
-# Source: SESSION_002
 @pytest.mark.parametrize('surface',['console','board'])
 def test_connection_loss_is_visible_and_cannot_extend_the_host_deadline(controlled_page,surface):
     p=controlled_page;console(p);start(p)
@@ -845,8 +765,6 @@ def test_connection_loss_is_visible_and_cannot_extend_the_host_deadline(controll
     p.evaluate("harness.deliver('connect')");flush(p)
     assert '再接続' not in p.locator('body').inner_text()
 
-
-# Source: ROUND_016
 @pytest.mark.parametrize('time_ms',[0,500,1999,2000,2001])
 def test_next_round_at_each_loop_boundary_prepares_only_the_immediate_next_track(controlled_page,time_ms):
     p=controlled_page;console(p);deliver(p,game_state(p,'reveal'));advance(p,300)
@@ -860,8 +778,6 @@ def test_next_round_at_each_loop_boundary_prepares_only_the_immediate_next_track
     assert snapshot(p)['id']=='B' and not snapshot(p)['playing']
     assert p.get_by_role('button',name='再生',exact=True).is_enabled()
 
-
-# Source: ROUND_015
 @pytest.mark.parametrize('method',['setQueue','playNext'])
 def test_results_supersede_reveal_load_and_preload(controlled_page,method):
     p=controlled_page;console(p)
@@ -874,8 +790,6 @@ def test_results_supersede_reveal_load_and_preload(controlled_page,method):
     assert not snapshot(p)['playing']
     assert p.get_by_role('button',name='次のゲームへ',exact=True).is_enabled()
 
-
-# Source: RESET_008 GAP_015
 @pytest.mark.parametrize('new_kind',['stopped','playing'])
 def test_unmounted_console_ack_cannot_reclaim_the_new_audio_owner(controlled_page,new_kind):
     p=controlled_page;console(p)
@@ -893,8 +807,6 @@ def test_unmounted_console_ack_cannot_reclaim_the_new_audio_owner(controlled_pag
     assert after['outcomes']['new-owner']=='resolved'
     if new_kind=='playing':assert after['position']>=before['position']
 
-
-# Source: INTRO_014
 @pytest.mark.parametrize('next_seconds',[.5,5])
 def test_duration_change_applies_only_to_next_play(controlled_page,next_seconds):
     p=controlled_page;console(p);start(p,3);advance(p,1000)
@@ -908,8 +820,6 @@ def test_duration_change_applies_only_to_next_play(controlled_page,next_seconds)
     start(p,next_seconds);advance(p,round(next_seconds*1000)-1);assert snapshot(p)['playing']
     advance(p,1);assert not snapshot(p)['playing']
 
-
-# Source: GAP_002
 @pytest.mark.parametrize('delay',[2000,10000])
 def test_buffer_wait_is_excluded_from_intro_duration(controlled_page,delay):
     p=controlled_page;console(p);start(p,3);advance(p,1000)
@@ -921,8 +831,6 @@ def test_buffer_wait_is_excluded_from_intro_duration(controlled_page,delay):
     advance(p,1);assert not snapshot(p)['playing']
     assert any(c['event']=='console:play-ended' for c in p.evaluate('harness.commands()'))
 
-
-# Source: SESSION_010 SESSION_013 GAP_013
 @pytest.mark.parametrize('step',['beforePlayback','playing','answering','correct','wrong','reveal','results'])
 def test_console_remount_recovers_each_game_step(controlled_page,step):
     p=controlled_page;console(p)
@@ -944,8 +852,6 @@ def test_console_remount_recovers_each_game_step(controlled_page,step):
         assert p.get_by_role('button',name='正解',exact=True).is_enabled()
     else:assert not snapshot(p)['playing']
 
-
-# Source: SESSION_009
 @pytest.mark.parametrize('delivered',[True,False])
 def test_missing_play_ack_returns_to_waiting_without_playing(controlled_page,delivered):
     p=controlled_page;console(p)
@@ -957,8 +863,6 @@ def test_missing_play_ack_returns_to_waiting_without_playing(controlled_page,del
     ack_command(p,'play-ended',game_state(p));advance(p,300)
     assert p.get_by_role('button',name='再生',exact=True).is_enabled()
 
-
-# Source: LIBRARY_013
 @pytest.mark.parametrize('status',[404,410,401,500])
 def test_only_definitive_unavailable_track_errors_exclude_the_track(controlled_page,status):
     p=controlled_page
@@ -968,8 +872,6 @@ def test_only_definitive_unavailable_track_errors_exclude_the_track(controlled_p
     assert bool(commands)==(status in [404,410])
     if commands:assert commands[0]['body']['trackId']=='A'
 
-
-# Source: LIBRARY_013
 @pytest.mark.parametrize('all_unavailable',[False,True])
 def test_known_unavailable_tracks_are_excluded_during_selection(controlled_page,all_unavailable):
     p=controlled_page
@@ -988,8 +890,6 @@ def test_known_unavailable_tracks_are_excluded_during_selection(controlled_page,
     removed=2 if all_unavailable else 1
     assert p.get_by_text(f'1件のプレイリストから{2-removed}曲を選択しました。再生できない{removed}曲を除外しました',exact=True).is_visible()
 
-
-# Source: LIBRARY_013
 @pytest.mark.parametrize('method',['setQueue','play'])
 def test_sdk_error_event_excludes_unavailable_track_while_call_is_pending(controlled_page,method):
     p=controlled_page;arm(p,method,'never-finished')
@@ -1001,8 +901,6 @@ def test_sdk_error_event_excludes_unavailable_track_while_call_is_pending(contro
     release(p,'never-finished');advance(p,300)
     assert not snapshot(p)['playing']
 
-
-# Source: LIBRARY_013
 @pytest.mark.parametrize('status',[404,410])
 def test_unavailable_event_after_play_started_stops_and_excludes_current_track(controlled_page,status):
     p=controlled_page;console(p);start(p,3);advance(p,500)

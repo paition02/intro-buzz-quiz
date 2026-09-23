@@ -27,7 +27,7 @@ def free_port():
 def clock_server(tmp_path_factory):
     port,control=free_port(),free_port()
     log=(tmp_path_factory.mktemp('clock-server')/'server.log').open('w+')
-    process=subprocess.Popen(['bun',str(ROOT/'spec/harness/clock-server.ts')],cwd=ROOT,env={**os.environ,'PORT':str(port),'TEST_CLOCK_PORT':str(control)},stdout=log,stderr=log)
+    process=subprocess.Popen(['bun',str(ROOT/'spec/step_defs/backend/clock_server.ts')],cwd=ROOT,env={**os.environ,'PORT':str(port),'TEST_CLOCK_PORT':str(control)},stdout=log,stderr=log)
     url=f'http://127.0.0.1:{port}';clock=f'http://127.0.0.1:{control}'
     try:
         deadline=time.monotonic()+15
@@ -78,8 +78,6 @@ def game(model,mode='intro',count=6,players=('P','Q','R')):
     command('select-playlists',{'selectedPlaylistIds':['A'],'tracks':make_tracks(count)})
     command('start',{'quizMode':mode});tick()
 
-
-# Source: CONTROL_014 GAP_007
 @pytest.mark.parametrize('elapsed,status',[(0,429),(1,429),(249,429),(250,200),(251,200)])
 def test_cooldown_exact_millisecond_boundaries(model_server,elapsed,status):
     c,h,t,cmd,press,trace=model_server
@@ -88,8 +86,6 @@ def test_cooldown_exact_millisecond_boundaries(model_server,elapsed,status):
     if status==200:c.wait_for_state(players=[])
     else:assert [p['id'] for p in c.state['players']]==['P']
 
-
-# Source: BUZZ_010
 @pytest.mark.parametrize('first',['feedback','buzz'])
 def test_wrong_feedback_and_buzz_in_both_receive_orders(model_server,first):
     c,h,t,cmd,press,trace=model_server;game(model_server)
@@ -98,8 +94,6 @@ def test_wrong_feedback_and_buzz_in_both_receive_orders(model_server,first):
     cmd('wrong-feedback-ended');assert press('Q')==200;c.wait_for_state(answererId='Q')
     assert c.state['roundIndex']==0 and all(p['score']==0 for p in c.state['players'])
 
-
-# Source: RESET_007
 @pytest.mark.parametrize('first',['reset','correct'])
 def test_reset_and_correct_in_both_receive_orders(model_server,first):
     c,h,t,cmd,press,trace=model_server;game(model_server)
@@ -112,8 +106,6 @@ def test_reset_and_correct_in_both_receive_orders(model_server,first):
     game(model_server)
     assert all(p['score']==0 for p in c.state['players'])
 
-
-# Source: CONTROL_005
 @pytest.mark.parametrize('mode',['intro','jacket'])
 def test_repeated_start_keeps_first_shuffle_and_round(model_server,mode):
     c,h,t,cmd,press,trace=model_server;game(model_server,mode)
@@ -121,8 +113,6 @@ def test_repeated_start_keeps_first_shuffle_and_round(model_server,mode):
     for _ in range(5):
         c.emit('console:start',{'quizMode':mode});assert not c.last_ack['ok'];assert c.state==before
 
-
-# Source: SESSION_003 SESSION_004
 @pytest.mark.parametrize('step',['answering','reveal','results','next-round'])
 def test_reconnected_clients_receive_current_answer_and_round(model_server,step):
     c,h,t,cmd,press,trace=model_server;game(model_server)
@@ -136,8 +126,6 @@ def test_reconnected_clients_receive_current_answer_and_round(model_server,step)
     try:assert new.wait_for_state()==c.state
     finally:new.close()
 
-
-# Source: FLOW_007 BUZZ_009
 @pytest.mark.parametrize('mode',['intro','jacket'])
 def test_twenty_players_burst_then_host_can_judge(model_server,mode):
     c,h,t,cmd,press,trace=model_server;actors=[f'P{i}' for i in range(20)];game(model_server,mode,players=actors)
@@ -151,8 +139,6 @@ def test_twenty_players_burst_then_host_can_judge(model_server,mode):
     cmd('wrong');cmd('wrong-feedback-ended')
     assert c.state['answererId'] is None and all(p['score']==0 for p in c.state['players'])
 
-
-# Source: FLOW_010
 @pytest.mark.parametrize('mode',['intro','jacket'])
 @pytest.mark.parametrize('seed',[1,7,42,20260922])
 def test_two_hundred_seeded_commands_preserve_independent_score_and_round_invariants(model_server,mode,seed):
@@ -190,8 +176,6 @@ def test_two_hundred_seeded_commands_preserve_independent_score_and_round_invari
         assert state['roundIndex' if mode=='intro' else 'roundAlbumIndex']==expected_index
     cmd('reset');assert c.state['players']==[]
 
-
-# Source: RESET_004 RESET_005 RESET_006 RESET_010
 @pytest.mark.parametrize('notification',['play-ended','correct-feedback-ended','wrong-feedback-ended'])
 @pytest.mark.parametrize('token',[None,'not-the-current-operation'])
 def test_completion_requires_the_current_operation_token(model_server,notification,token):
@@ -206,8 +190,6 @@ def test_completion_requires_the_current_operation_token(model_server,notificati
     assert not result['ok'];assert c.state==before
     cmd(notification)
 
-
-# Source: INTRO_009 RESET_004 RESET_010
 @pytest.mark.parametrize('replays',[1,3,10])
 def test_previous_play_completion_cannot_stop_a_later_play_in_the_same_round(model_server,replays):
     c,h,t,cmd,press,trace=model_server;game(model_server);cmd('play')
@@ -218,8 +200,6 @@ def test_previous_play_completion_cannot_stop_a_later_play_in_the_same_round(mod
     assert not c.last_ack['ok'];assert c.state==before
     cmd('play-ended');assert c.state['step']=='beforePlayback'
 
-
-# Source: LIBRARY_013
 @pytest.mark.parametrize('count',[1,3])
 @pytest.mark.parametrize('mode',['intro','jacket'])
 def test_unavailable_tracks_are_removed_without_reordering_remaining_rounds(model_server,count,mode):
@@ -237,8 +217,6 @@ def test_unavailable_tracks_are_removed_without_reordering_remaining_rounds(mode
         assert c.state['players']==before['players']
     assert c.state['step']=='results'
 
-
-# Source: LIBRARY_013 RESET_010
 @pytest.mark.parametrize('token',['missing','stale'])
 def test_old_unavailability_cannot_remove_new_game_tracks(model_server,token):
     c,h,t,cmd,press,trace=model_server;game(model_server)

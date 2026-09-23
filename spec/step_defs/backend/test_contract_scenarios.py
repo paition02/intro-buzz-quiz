@@ -1,4 +1,4 @@
-"""Backend portions of the scenario catalogue; deliberately not audio tests."""
+"""Backend state transitions and console command contracts."""
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
@@ -11,7 +11,10 @@ from pytest_bdd import given, when, then, parsers, scenarios
 
 from backend.helpers import make_tracks
 
-scenarios("../../features/contracts")
+scenarios(
+    "../../features/backend/selection_and_stale_events.feature",
+    "../../features/backend/state_boundaries.feature",
+)
 
 
 @pytest.fixture
