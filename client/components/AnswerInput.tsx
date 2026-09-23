@@ -11,8 +11,8 @@ export type AnswerCandidate = {
 const SUGGESTION_LIMIT = 5
 
 // 口頭の回答をホストが入力し、候補から選ぶと正誤判定へ渡す。
-// input は combobox: ↓↑ で候補を選び、Enter で回答、Escape で入力を消す。
-export function AnswerCard({
+// 「回答」ラベルの右に combobox、候補はその下: ↓↑ で候補を選び、Enter で回答、Escape で入力を消す。
+export function AnswerInput({
   candidates,
   disabled,
   placeholder,
@@ -26,6 +26,7 @@ export function AnswerCard({
   const [query, setQuery] = useState('')
   const [highlightedIndex, setHighlightedIndex] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
+  const inputId = useId()
   const listboxId = useId()
 
   const fuse = useMemo(
@@ -76,26 +77,27 @@ export function AnswerCard({
   }
 
   return (
-    <div className="grid gap-2.5">
+    <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-2.5">
+      <label htmlFor={inputId} className="text-cream font-bold">回答</label>
       <input
         ref={inputRef}
+        id={inputId}
         type="text"
         role="combobox"
-        className="w-full rounded-2xl border border-white/10 bg-black/20 text-white px-4 py-3 disabled:opacity-60"
+        className="min-w-0 rounded-2xl border border-white/10 bg-black/20 text-white px-4 py-3 disabled:opacity-60"
         placeholder={disabled ? '解答権の獲得を待っています' : placeholder}
         value={query}
         onChange={(event) => handleQueryChange(event.target.value)}
         onKeyDown={handleKeyDown}
         disabled={disabled}
         autoComplete="off"
-        aria-label="回答"
         aria-autocomplete="list"
         aria-expanded={suggestions.length > 0}
         aria-controls={listboxId}
         aria-activedescendant={highlighted ? optionId(highlighted) : undefined}
       />
       {suggestions.length > 0 && (
-        <ul id={listboxId} role="listbox" className="list-none m-0 p-0 grid gap-2 max-h-80 overflow-y-auto" aria-label="回答候補">
+        <ul id={listboxId} role="listbox" className="col-start-2 list-none m-0 p-0 grid gap-2 max-h-80 overflow-y-auto" aria-label="回答候補">
           {suggestions.map((candidate, index) => {
             const active = index === highlightedIndex
             return (
