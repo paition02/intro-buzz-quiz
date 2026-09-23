@@ -51,7 +51,7 @@ cp .env.example .env
 bun dev
 ```
 
-`bun --hot` で Bun サーバーをホットリロード付きで起動します。`0.0.0.0` で待ち受けるため LAN 内の端末からアクセスできます。実際の URL は起動時のログに表示されます。HTTP のみで配信します。
+`bun --hot` で Bun サーバーをホットリロード付きで起動します。`0.0.0.0` で待ち受けるため LAN 内の端末からアクセスできます。起動時のログには `localhost` のホストコンソールとゲームボードの URL を表示します。LAN 内の端末向けの URL はホストコンソールの「2. 準備」カードからコピーします。HTTP のみで配信します。
 
 ## 遊び方
 
@@ -78,7 +78,7 @@ bun dev
 
 ## ゲーム状態モデル
 
-サーバーは 1 つの `GameState` を保持し、変化のたびに全クライアントへ `state` イベントを emit します。
+サーバーは 1 つの `GameState` を保持し、変化のたびに全クライアントへ `state` イベントを emit します。フェーズ・ステップのほか、ゲームボードで早押しボタンの QR を表示中か (`gameboardQr`) と、選択中の LAN の IP を使ったオリジン (`lanOrigin`、IP が無ければ `null`) を含みます。
 
 ### フェーズ (`phase`)
 
@@ -148,6 +148,8 @@ MusicKit JS 用の Apple Music developer token を返します。`jose` で ES25
 | `console:set-jacket-mode` | ジャケットの隠し方を変更 |
 | `console:set-jacket-grayscale` | ジャケットの白黒 ON/OFF を変更 |
 | `console:set-jacket-hint-percent` | ジャケットのヒントレベルを変更 |
+| `console:set-gameboard-qr` | `{ enabled }` でゲームボードの早押しボタン QR 表示を ON/OFF（準備フェーズのみ） |
+| `console:next-lan` | `lanOrigin` に使う LAN の IP を次の候補へ切り替え |
 | `console:correct` | 正解判定 |
 | `console:wrong` | 不正解判定 |
 | `console:correct-feedback-ended` | 正解フィードバック終了（正解発表へ） |

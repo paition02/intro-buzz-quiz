@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { QRCodeSVG } from 'qrcode.react'
 import { roundAlbumFromState, roundTrackFromState, useConnected, useGameState } from '../lib/gameClient'
 import { playerColor } from '../lib/util'
 import { Glass } from '../components/Glass'
@@ -72,7 +73,30 @@ export function GameboardPage() {
   let content: ReactNode
   let cardClassName = CARD_GB
 
-  if (state.phase === 'initialization') {
+  if (state.gameboardQr) {
+    const actionUrl = state.lanOrigin === null ? null : `${state.lanOrigin}/action`
+    content = actionUrl === null ? (
+      <h1 className={READY_TITLE}>LANのIPアドレスが見つかりません</h1>
+    ) : (
+      <>
+        <h1 className={READY_TITLE}>参加者はこちらから</h1>
+        <div className={STAGE}>
+          <div className="rounded-3xl border border-white/10 bg-black/40 p-6 shadow-inner shadow-black/30">
+            <QRCodeSVG
+              className="block h-auto w-[min(55svh,80vw)]"
+              value={actionUrl}
+              size={512}
+              level="M"
+              bgColor="transparent"
+              fgColor="#f7f2ea"
+              marginSize={2}
+            />
+          </div>
+        </div>
+        <p className="m-0 text-base sm:text-lg text-muted break-all">{actionUrl}</p>
+      </>
+    )
+  } else if (state.phase === 'initialization') {
     content = (
       <>
         <h1 className={READY_TITLE}>ボタンを押してご参加ください</h1>

@@ -101,6 +101,12 @@ def host_selected_tracks(ctx, socket_client, count: int):
     ctx.state, ctx.tracks = _select_tracks(socket_client, count)
 
 
+@given("the action QR is shown on the gameboard")
+def action_qr_shown_given(ctx, socket_client):
+    ctx.state = socket_client.emit("console:set-gameboard-qr", {"enabled": True})
+    assert ctx.state["gameboardQr"] is True
+
+
 @given(parsers.parse('a game is before playback with joined players "{actor_ids}"'))
 def game_before_playback(ctx, socket_client, http, actor_ids: str):
     joined = [item.strip() for item in actor_ids.split(",") if item.strip()]
@@ -298,6 +304,21 @@ def host_sets_jacket_hint_percent(ctx, socket_client, percent: int):
     ctx.state = socket_client.emit("console:set-jacket-hint-percent", {"jacketHintPercent": percent})
 
 
+@when("the host shows the action QR on the gameboard")
+def host_shows_action_qr(ctx, socket_client):
+    ctx.state = socket_client.emit("console:set-gameboard-qr", {"enabled": True})
+
+
+@when("the host hides the action QR on the gameboard")
+def host_hides_action_qr(ctx, socket_client):
+    ctx.state = socket_client.emit("console:set-gameboard-qr", {"enabled": False})
+
+
+@when("the host switches to the next LAN")
+def host_switches_next_lan(ctx, socket_client):
+    ctx.state = socket_client.emit("console:next-lan")
+
+
 @when("the playback timeout expires")
 def playback_timeout_expires(ctx, socket_client):
     ctx.state = socket_client.emit("console:play-ended")
@@ -386,6 +407,25 @@ def then_jacket_grayscale(ctx, socket_client, enabled: str):
 def then_jacket_hint_percent(ctx, socket_client, percent: int):
     state = ctx.state or socket_client.state
     assert state["jacketHintPercent"] == percent
+
+
+@then("the action QR is shown")
+def then_action_qr_shown(ctx, socket_client):
+    state = ctx.state or socket_client.state
+    assert state["gameboardQr"] is True
+
+
+@then("the action QR is hidden")
+def then_action_qr_hidden(ctx, socket_client):
+    state = ctx.state or socket_client.state
+    assert state["gameboardQr"] is False
+
+
+@then("the LAN origin is an http origin or absent")
+def then_lan_origin(ctx, socket_client):
+    state = ctx.state or socket_client.state
+    origin = state["lanOrigin"]
+    assert origin is None or (origin.startswith("http://") and origin.count("/") == 2)
 
 
 @then("there are no players")

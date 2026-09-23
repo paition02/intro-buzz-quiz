@@ -79,6 +79,42 @@ Feature: Host console state transitions
     When the host sets jacket hint percent to 47
     Then the jacket hint percent is 47
 
+  Scenario: Action QR display toggles during the ready phase
+    Given the host console is ready
+    When the host shows the action QR on the gameboard
+    Then the action QR is shown
+    When the host hides the action QR on the gameboard
+    Then the action QR is hidden
+
+  Scenario: Action QR display is ignored before the console is ready
+    Given a fresh server state
+    When the host shows the action QR on the gameboard
+    Then the action QR is hidden
+
+  Scenario: Action QR display is ignored during a game
+    Given a game is before playback with joined players "player-1"
+    When the host shows the action QR on the gameboard
+    Then the action QR is hidden
+
+  Scenario: Starting the game hides the action QR
+    Given the host console is ready
+    And the host has selected 3 tracks
+    And the action QR is shown on the gameboard
+    When the host starts the game
+    Then the phase is "game"
+    And the action QR is hidden
+
+  Scenario: Resetting hides the action QR
+    Given the host console is ready
+    And the action QR is shown on the gameboard
+    When the host resets the game
+    Then the action QR is hidden
+
+  Scenario: Switching to the next LAN keeps a reachable origin
+    Given a fresh server state
+    When the host switches to the next LAN
+    Then the LAN origin is an http origin or absent
+
   Scenario: Jacket settings are ignored during an intro round
     Given a game is before playback with joined players "player-1"
     When the host sets jacket mode to "tileShuffle"
