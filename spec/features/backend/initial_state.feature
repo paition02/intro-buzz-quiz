@@ -9,6 +9,8 @@ Feature: Initial state and routes
     And the step is "idle"
     And there are no players
     And there are no tracks
+    And the action QR is hidden
+    And the LAN origin is an http origin or absent
 
   Scenario: Public state sorts players by id
     Given a fresh server state

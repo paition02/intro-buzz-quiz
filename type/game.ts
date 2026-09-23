@@ -65,4 +65,6 @@ export type GameState = {
   jacketMode: JacketMode
   jacketGrayscale: boolean
   jacketHintPercent: number
+  gameboardQr: boolean
+  lanOrigin: string | null
 }

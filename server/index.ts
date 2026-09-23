@@ -11,7 +11,7 @@ import type { Album, GameState, JacketMode, Player, QuizMode, Track } from '../t
 // Bun が cwd の .env を読む。PORT は数値として渡す。
 const isDevelopment = process.env.NODE_ENV !== 'production'
 
-type InternalGameState = Omit<GameState, 'players'> & {
+type InternalGameState = Omit<GameState, 'players' | 'lanOrigin'> & {
   players: Record<string, Player>
 }
 
@@ -32,6 +32,31 @@ let state: InternalGameState = {
   jacketMode: 'pixelated',
   jacketGrayscale: true,
   jacketHintPercent: 1,
+  gameboardQr: false,
+}
+
+// 選択中の LAN interface の IPv4。候補から消えたら先頭に戻す。
+let selectedLanAddress: string | null = null
+
+function lanAddresses() {
+  const addresses: string[] = []
+  for (const entries of Object.values(networkInterfaces())) {
+    for (const entry of entries ?? []) {
+      if (!entry.internal && entry.family === 'IPv4') addresses.push(entry.address)
+    }
+  }
+  return addresses
+}
+
+function currentLanAddress() {
+  const addresses = lanAddresses()
+  if (selectedLanAddress === null || !addresses.includes(selectedLanAddress)) selectedLanAddress = addresses[0] ?? null
+  return selectedLanAddress
+}
+
+function lanOrigin() {
+  const address = currentLanAddress()
+  return address === null ? null : `http://${address}:${actualPort}`
 }
 
 const actionCooldownMs = 250
@@ -67,6 +92,7 @@ function publicState(): GameState {
   return {
     ...state,
     players: Object.values(state.players).sort((a, b) => a.id.localeCompare(b.id)),
+    lanOrigin: lanOrigin(),
   }
 }
 
@@ -223,6 +249,10 @@ type ConsoleSetJacketHintPercentPayload = {
   jacketHintPercent?: unknown
 }
 
+type ConsoleSetGameboardQrPayload = {
+  enabled?: unknown
+}
+
 function consoleReady(): ConsoleActionResult {
   if (state.phase !== 'initialization') return invalidStateError
   update(() => {
@@ -279,6 +309,7 @@ function consoleStart(payload: ConsoleStartPayload | null = {}): ConsoleActionRe
     state.phase = 'game'
     state.step = 'loading'
     state.quizMode = quizMode
+    state.gameboardQr = false
     Object.values(state.players).forEach((player) => { player.score = 0 })
     resetShuffledTrackIds()
     resetShuffledAlbumIds()
@@ -411,6 +442,25 @@ function consoleSetJacketHintPercent(payload: ConsoleSetJacketHintPercentPayload
   return true
 }
 
+function consoleSetGameboardQr(payload: ConsoleSetGameboardQrPayload | null = {}): ConsoleActionResult {
+  if (state.phase !== 'ready') return invalidStateError
+  const enabled = payload?.enabled
+  if (typeof enabled !== 'boolean') return 'QR 表示の ON/OFF を指定してください'
+  update(() => {
+    state.gameboardQr = enabled
+  })
+  return true
+}
+
+function consoleNextLan(): ConsoleActionResult {
+  const addresses = lanAddresses()
+  if (addresses.length === 0) return 'LAN の IP アドレスが見つかりません'
+  const index = addresses.indexOf(currentLanAddress() ?? '')
+  selectedLanAddress = addresses[(index + 1) % addresses.length] ?? null
+  emitState()
+  return true
+}
+
 function consoleWrongFeedbackEnded(): ConsoleActionResult {
   if (state.phase !== 'game' || state.step !== 'wrong') return invalidStateError
 
@@ -489,6 +539,7 @@ function consoleReset(): ConsoleActionResult {
       jacketMode: 'pixelated',
       jacketGrayscale: true,
       jacketHintPercent: 1,
+      gameboardQr: false,
     }
   })
   return true
@@ -558,6 +609,8 @@ io.on('connection', (socket) => {
   socket.on('console:set-jacket-mode', (payload, callback) => acknowledge(callback, () => consoleSetJacketMode(payload)))
   socket.on('console:set-jacket-grayscale', (payload, callback) => acknowledge(callback, () => consoleSetJacketGrayscale(payload)))
   socket.on('console:set-jacket-hint-percent', (payload, callback) => acknowledge(callback, () => consoleSetJacketHintPercent(payload)))
+  socket.on('console:set-gameboard-qr', (payload, callback) => acknowledge(callback, () => consoleSetGameboardQr(payload)))
+  socket.on('console:next-lan', (callback) => acknowledge(callback, consoleNextLan))
   socket.on('console:next-round', (callback) => acknowledge(callback, consoleNextRound))
   socket.on('console:show-results', (callback) => acknowledge(callback, consoleShowResults))
   socket.on('console:next-game', (callback) => acknowledge(callback, consoleNextGame))
@@ -669,18 +722,5 @@ const actualPort = server.port ?? port
 
 console.log('Intro Buzz Quiz server listening')
 console.log('')
-console.log('Local URL:')
-console.log(`  http://localhost:${actualPort}/`)
-
-let loggedLanHeader = false
-for (const [name, entries] of Object.entries(networkInterfaces())) {
-  for (const entry of entries ?? []) {
-    if (entry.internal || entry.family !== 'IPv4') continue
-    if (!loggedLanHeader) {
-      console.log('')
-      console.log('LAN URLs:')
-      loggedLanHeader = true
-    }
-    console.log(`  ${name}: http://${entry.address}:${actualPort}/`)
-  }
-}
+console.log(`  Console:   http://localhost:${actualPort}/console`)
+console.log(`  Gameboard: http://localhost:${actualPort}/gameboard`)

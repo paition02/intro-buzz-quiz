@@ -20,6 +20,8 @@ export const initialState: GameState = {
   jacketMode: 'pixelated',
   jacketGrayscale: true,
   jacketHintPercent: 1,
+  gameboardQr: false,
+  lanOrigin: null,
 }
 
 const GAME_STATE_KEYS = Object.keys(initialState) as Array<keyof GameState>

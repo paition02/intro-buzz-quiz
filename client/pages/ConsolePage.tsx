@@ -31,6 +31,7 @@ import { Glass } from '../components/Glass'
 import { Button } from '../components/Button'
 import { Eyebrow } from '../components/Eyebrow'
 import { RoundInfoDisclosure } from '../components/RoundInfoDisclosure'
+import { RepeatGlyph } from '../components/Glyphs'
 import { AnswerInput, type AnswerCandidate } from '../components/AnswerInput'
 import { watchIntroDeadline } from '../lib/introDeadline'
 import { isUnavailableTrack } from '../lib/unavailableTrack'
@@ -398,6 +399,26 @@ export function ConsolePage() {
     await consoleAction('console:reset')
   })
 
+  const actionUrl = state.lanOrigin === null ? null : `${state.lanOrigin}/action`
+  const gameboardUrl = state.lanOrigin === null ? null : `${state.lanOrigin}/gameboard`
+
+  const handleCopyUrl = (url: string | null, label: string) => run(async () => {
+    if (url === null) {
+      setConsoleMessage('LANのIPアドレスが見つかりません')
+      return
+    }
+    await navigator.clipboard.writeText(url)
+    setConsoleMessage(`${label}のURLをコピーしました`)
+  })
+
+  const handleGameboardQrChange = (enabled: boolean) => run(async () => {
+    await consoleAction('console:set-gameboard-qr', { enabled })
+  })
+
+  const handleNextLan = () => run(async () => {
+    await consoleAction('console:next-lan')
+  })
+
   const handleJacketModeChange = (jacketMode: JacketMode) => run(async () => {
     await consoleAction('console:set-jacket-mode', { jacketMode })
   })
@@ -547,6 +568,36 @@ export function ConsolePage() {
             {participatingPlayers.length ? participatingPlayers.map((player) => (
               <PlayerBadge id={player.id} label={false} key={player.id} />
             )) : <span className="text-muted">まだいません</span>}
+          </div>
+          <div className="grid gap-3 mt-4 pt-4 border-t border-white/10">
+            <span className="text-cream font-bold">案内</span>
+            <div className="flex flex-wrap gap-2.5 max-md:[&>button]:flex-1">
+              <Button variant="ghost" disabled={busy || actionUrl === null} onClick={() => handleCopyUrl(actionUrl, '早押しボタン')}>早押しボタンのURLをコピー</Button>
+              <Button variant="ghost" disabled={busy || gameboardUrl === null} onClick={() => handleCopyUrl(gameboardUrl, 'ゲームボード')}>ゲームボードのURLをコピー</Button>
+            </div>
+            <div className="flex items-center gap-3">
+              <label className="flex flex-1 items-center justify-between gap-3">
+                <span className="text-cream font-bold">早押しボタンのQRを表示</span>
+                <input
+                  className="size-6 accent-amber"
+                  type="checkbox"
+                  checked={state.gameboardQr}
+                  onChange={(event) => void handleGameboardQrChange(event.currentTarget.checked)}
+                  disabled={busy || state.phase !== 'ready'}
+                  aria-label="早押しボタンのQRを表示"
+                />
+              </label>
+              <button
+                type="button"
+                className="grid size-9 place-items-center rounded-full text-muted transition hover:bg-white/10 hover:text-cream disabled:cursor-not-allowed disabled:opacity-40"
+                disabled={busy || state.lanOrigin === null}
+                onClick={handleNextLan}
+                aria-label="次のLANへ切り替え"
+                title="次のLANへ切り替え"
+              >
+                <RepeatGlyph className="size-5" />
+              </button>
+            </div>
           </div>
         </Glass>
 
