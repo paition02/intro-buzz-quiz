@@ -138,7 +138,7 @@ export function ConsolePage() {
     const target = musicKitAuth.authorized ? playbackTargetFromState(state) : { kind: 'stopped' as const }
     if (target !== null) setPlaybackTarget(target).catch((error: unknown) => {
       if (!isUnavailableTrack(error) || latestState.operationId !== state.operationId) return
-      const trackId = target.kind === 'album' ? target.trackId : target.kind !== 'stopped' ? target.songId : null
+      const trackId = (target.kind === 'album' || target.kind === 'albumPrepared') ? target.trackId : target.kind !== 'stopped' ? target.songId : null
       if (trackId) {
         report('再生できない曲を除外しました')
         void consoleAction('console:exclude-track', { operationId: state.operationId, trackId }).catch(report)

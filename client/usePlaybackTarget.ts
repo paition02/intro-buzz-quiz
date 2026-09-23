@@ -17,6 +17,8 @@ export type PlaybackTarget =
   | { kind: 'looping'; songId: string; nextSongId: string | null }
   // trackId の属するアルバム全体をリピート再生 (ジャケットの正解発表)
   | { kind: 'album'; trackId: string }
+  // アルバムを無音で読み込み、先頭で待機する
+  | { kind: 'albumPrepared'; trackId: string }
 
 export type PlaybackStatus = {
   // 最後に宣言した target
@@ -31,8 +33,9 @@ export function playbackTargetsEqual(a: PlaybackTarget | null, b: PlaybackTarget
   if (a.kind !== b.kind) return false
   switch (a.kind) {
     case 'stopped': return true
-    case 'album': return b.kind === 'album' && a.trackId === b.trackId
-    default: return b.kind !== 'stopped' && b.kind !== 'album' && a.songId === b.songId && a.nextSongId === b.nextSongId
+    case 'album':
+    case 'albumPrepared': return (b.kind === 'album' || b.kind === 'albumPrepared') && a.trackId === b.trackId
+    default: return b.kind !== 'stopped' && b.kind !== 'album' && b.kind !== 'albumPrepared' && a.songId === b.songId && a.nextSongId === b.nextSongId
   }
 }
 
@@ -41,10 +44,10 @@ export function playbackTargetsEqual(a: PlaybackTarget | null, b: PlaybackTarget
 export function playbackTargetFromState(state: GameState): PlaybackTarget | null {
   if (state.phase !== 'game') return { kind: 'stopped' }
   if (state.quizMode === 'jacket') {
-    if (state.step !== 'reveal') return { kind: 'stopped' }
+    if (state.step === 'results' || state.step === 'idle') return { kind: 'stopped' }
     const album = roundAlbumFromState(state)
     const track = album && state.tracks.find((item) => album.trackIds.includes(item.id))
-    return track ? { kind: 'album', trackId: track.id } : { kind: 'stopped' }
+    return track ? { kind: state.step === 'reveal' ? 'album' : 'albumPrepared', trackId: track.id } : { kind: 'stopped' }
   }
   const songId = roundTrackIdFromState(state)
   if (songId == null || state.step === 'results' || state.step === 'idle') return { kind: 'stopped' }
@@ -86,6 +89,7 @@ class PlaybackController {
   pending: Promise<void> | null = null
   attached = false
   repairing = false
+  preparedAlbum: { trackId: string; songIds: string[] } | null = null
 
   readonly mk: MusicKit.MusicKitInstance | null
   constructor(mk: MusicKit.MusicKitInstance | null) { this.mk = mk }
@@ -117,14 +121,16 @@ class PlaybackController {
     // Preparation itself may briefly play muted to acquire the asset. Once
     // settled, however, buffer recovery must never restart a stopped intro.
     const settled = this.snapshot.settled
-    if ((settled?.kind === 'stopped' || settled?.kind === 'prepared') && this.mk && owners.get(this.mk) === this) this.repair()
+    if ((settled?.kind === 'stopped' || settled?.kind === 'prepared' || settled?.kind === 'albumPrepared') && this.mk && owners.get(this.mk) === this) this.repair()
   }
   repair = () => {
     if (!this.mk || owners.get(this.mk) !== this || this.repairing) return
     const target = this.snapshot.target
     if (!target) return
-    const silent = target.kind === 'stopped' || target.kind === 'prepared'
-    const wrongSong = target.kind !== 'stopped' && target.kind !== 'album' && this.mk.nowPlayingItem?.id !== target.songId
+    const silent = target.kind === 'stopped' || target.kind === 'prepared' || target.kind === 'albumPrepared'
+    const wrongSong = target.kind === 'album' || target.kind === 'albumPrepared'
+      ? !this.albumQueueMatches(target.trackId)
+      : target.kind !== 'stopped' && this.mk.nowPlayingItem?.id !== target.songId
     if (silent ? !this.mk.isPlaying && !wrongSong : this.mk.isPlaying && !wrongSong) return
     this.repairing = true
     void this.setTarget(target, true).catch(() => {}).finally(() => { this.repairing = false })
@@ -244,21 +250,47 @@ class PlaybackController {
     }), operation)
     if (waitForCompletion && completion) await this.wait(completion, operation)
   }
+  albumQueueMatches(trackId: string) {
+    const album = this.preparedAlbum
+    const items = this.mk?.queue.items
+    return album?.trackId === trackId && items != null && items.length > 0
+      && items.length === album.songIds.length && items.every((item, index) => item.id === album.songIds[index])
+      && items.some(item => item.id === this.mk?.nowPlayingItem?.id)
+  }
   async apply(target: PlaybackTarget, operation: Operation, repair: boolean) {
     this.check(operation)
     const mk = this.mk!
     if (target.kind === 'stopped') {
+      this.preparedAlbum = null
       if (mk.isPlaying) await musicKitInstanceStore.muteTemporarily(() => this.playback('pause', operation))
       return
     }
-    if (target.kind === 'album') {
-      if (repair && mk.nowPlayingItem) {
-        await this.playback('play', operation)
-        return
+    if (target.kind === 'album' || target.kind === 'albumPrepared') {
+      if (!this.albumQueueMatches(target.trackId)) {
+        // Stop the previous reveal before waiting for album metadata. Preparation
+        // uses the same muted play/pause warm-up as intro tracks.
+        await musicKitInstanceStore.muteTemporarily(async () => {
+          if (mk.isPlaying) await this.playback('pause', operation, true)
+          const album = await this.call(() => albumIdOfTrack(mk, target.trackId), operation)
+          await this.call(() => mk.setQueue({ album, repeatMode: MusicKit.PlayerRepeatMode.all, shuffleMode: MusicKit.PlayerShuffleMode.off, startPlaying: false }), operation)
+          this.check(operation)
+          this.preparedAlbum = { trackId: target.trackId, songIds: mk.queue.items.map(item => item.id) }
+          if (target.kind === 'albumPrepared') {
+            await this.playback('play', operation, true)
+            await this.playback('pause', operation, true)
+            await this.call(() => mk.seekToTime(0), operation)
+          }
+          this.check(operation)
+        })
       }
-      const album = await this.call(() => albumIdOfTrack(mk, target.trackId), operation)
-      await this.call(() => mk.setQueue({ album, repeatMode: MusicKit.PlayerRepeatMode.all, shuffleMode: MusicKit.PlayerShuffleMode.off, startPlaying: false }), operation)
-      await this.playback('play', operation)
+      this.check(operation)
+      if (target.kind === 'albumPrepared') {
+        if (mk.isPlaying) await musicKitInstanceStore.muteTemporarily(() => this.playback('pause', operation, true))
+        if (mk.currentPlaybackTime > 0) await this.call(() => mk.seekToTime(0), operation)
+      } else {
+        mk.repeatMode = MusicKit.PlayerRepeatMode.all
+        await this.playback('play', operation)
+      }
       return
     }
     if (mk.nowPlayingItem?.id !== target.songId) {

@@ -118,41 +118,89 @@ def test_slider_native_inputs_and_pointer_lifecycle(intro,socket_client,playback
     r.replay_sequence(p,socket_client,playback_probe,'2.5')
 
 
+def album_lookup_failure(lookups):
+    def fail(route):
+        headers={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'*'}
+        if route.request.method=='OPTIONS':
+            route.fulfill(status=204,headers=headers)
+        else:
+            lookups.append(route.request.url)
+            route.fulfill(status=500,json={'errors':[{'detail':'Injected album lookup failure'}]},headers=headers)
+    return fail
+
+
+def test_jacket_reveal_retries_failed_preparation_after_network_recovers(frontend_page,socket_client,playback_probe):
+    p=frontend_page;r.selected_track_count(p,socket_client,playback_probe,3)
+    pattern='**/api.music.apple.com/v1/catalog/*/songs/*'
+    lookups=[];fail=album_lookup_failure(lookups)
+    p.route(pattern,fail)
+    r.click_actual(p,'ジャケットで開始')
+    state=r._wait_state(socket_client,step='beforePlayback',quizMode='jacket')
+    album=state['shuffledAlbumIds'][state['roundAlbumIndex']]
+    expect(p.locator('p').filter(has_text='MusicKit:').first).to_be_visible(timeout=10000)
+    assert lookups,'preparation lookup fault was not reached'
+    r._assert_stopped(p)
+    assert not p.evaluate('window.__introProbe.samples.some(s=>s.playing && s.volume>0)')
+    p.unroute(pattern,fail)
+    with p.expect_response(lambda response: '/v1/catalog/' in response.url and '/songs/' in response.url and response.request.method=='GET') as retry:
+        r.click_actual(p,'ギブアップ')
+    assert retry.value.status==200
+    r.expected_reveal(p,socket_client)
+    expect(p.locator('p').filter(has_text='MusicKit:')).to_have_count(0)
+    state=socket_client.state
+    assert state['shuffledAlbumIds'][state['roundAlbumIndex']]==album
+    r.click_actual(p,'結果発表へ');r.no_results_media(p,socket_client)
+
+
 # Source: JACKET_005 JACKET_007 JACKET_011 JACKET_012 JACKET_013
-@pytest.mark.parametrize('case',['next','hint','image-failure','album-failure','single-album-track'])
+@pytest.mark.parametrize('case',['next','hint','image-failure','album-failure','prepared-album-reuse','single-album-track'])
 def test_jacket_progress_survives_display_and_album_boundaries(frontend_page,socket_client,playback_probe,case):
     p=frontend_page;r.selected_track_count(p,socket_client,playback_probe,3)
     if case=='single-album-track':
         mock=getattr(p,'music_kit_api_mock')
         for album in mock.data.albums.values():album.track_ids[:]=album.track_ids[:1]
     if case=='image-failure':p.route('**/example.test/**',lambda route:route.abort())
-    r.start_mode(p,socket_client,playback_probe,'jacket')
+    if case=='album-failure':
+        lookups=[]
+        p.route('**/api.music.apple.com/v1/catalog/*/songs/*', album_lookup_failure(lookups))
+        r.click_actual(p,'ジャケットで開始')
+        r._wait_state(socket_client,step='beforePlayback',quizMode='jacket')
+        expect(p.locator('p').filter(has_text='MusicKit:').first).to_be_visible(timeout=10000)
+        assert lookups,'preparation lookup fault was not reached'
+        r._assert_stopped(p)
+    else:
+        r.start_mode(p,socket_client,playback_probe,'jacket')
     if case=='hint':
         slider=p.get_by_role('slider',name='ヒントレベル')
         for target in [12,47,12]:
             current=int(slider.get_attribute('aria-valuenow'))
             for _ in range(abs(target-current)):slider.press('ArrowRight' if target>current else 'ArrowLeft')
         r._wait_state(socket_client,jacketHintPercent=12);expect(slider).to_have_attribute('aria-valuenow','12')
-    if case=='album-failure':
+    if case=='prepared-album-reuse':
         lookups=[]
-        def fail_album(route):
-            if route.request.method=='OPTIONS':route.fulfill(status=204,headers={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'*'})
-            else:
-                lookups.append(route.request.url)
-                route.fulfill(status=500,json={'errors':[{'detail':'Injected album lookup failure'}]},headers={'Access-Control-Allow-Origin':'*'})
-        p.route('**/api.music.apple.com/v1/catalog/*/songs/*',fail_album)
-    r.click_actual(p,'ギブアップ');r._wait_state(socket_client,step='reveal')
-    if case!='album-failure':r.expected_reveal(p,socket_client)
-    else:
+        p.route('**/api.music.apple.com/v1/catalog/*/songs/*',album_lookup_failure(lookups))
+    if case=='album-failure':
+        before=len(lookups)
+        with p.expect_response(lambda response: '/v1/catalog/' in response.url and '/songs/' in response.url and response.request.method=='GET') as retry:
+            r.click_actual(p,'ギブアップ')
+        assert retry.value.status==500
+        r._wait_state(socket_client,step='reveal')
         expect(p.locator('p').filter(has_text='MusicKit:').first).to_be_visible(timeout=10000)
-        assert lookups,'album lookup fault was not reached'
+        assert len(lookups)>before,'reveal did not retry the failed album lookup'
+        r._assert_stopped(p)
+        assert not p.evaluate('window.__introProbe.samples.some(s=>s.playing && s.volume>0)')
+    else:
+        r.click_actual(p,'ギブアップ');r._wait_state(socket_client,step='reveal')
+        r.expected_reveal(p,socket_client)
+    if case=='prepared-album-reuse':
+        assert not lookups,'prepared reveal unexpectedly fetched album metadata again'
     if case=='single-album-track':
         mark=p.evaluate('window.__introProbe.mark()');p.wait_for_timeout(4300)
         samples=p.evaluate('mark=>window.__introProbe.samples.filter(s=>s.at>=mark&&s.playing)',mark)
         assert len({s['id'] for s in samples})==1
         assert any(b['position']+1<a['position'] for a,b in zip(samples,samples[1:])), 'single-track album did not loop'
     if case=='next':
-        r.click_actual(p,'次のラウンドへ');r._wait_state(socket_client,step='beforePlayback',roundAlbumIndex=1,jacketHintPercent=1);r._assert_stopped(p)
+        r.click_actual(p,'次のラウンドへ');r._wait_state(socket_client,step='beforePlayback',roundAlbumIndex=1,jacketHintPercent=1);r._assert_album_prepared(p,socket_client.state)
         p.wait_for_timeout(2300);r._assert_stopped(p)
     else:r.click_actual(p,'結果発表へ');r.no_results_media(p,socket_client)
 

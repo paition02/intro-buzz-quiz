@@ -448,6 +448,7 @@ def start_mode(frontend_page, socket_client, playback_probe, mode):
     else:
         expect(frontend_page.get_by_role("slider", name="ヒントレベル")).to_be_visible()
         expect(frontend_page.get_by_role("button", name="再生", exact=True)).to_have_count(0)
+        _assert_album_prepared(frontend_page, state)
     _assert_stopped(frontend_page)
 
 
@@ -458,6 +459,24 @@ def _revealed_ids(frontend_page, state):
     track = album["trackIds"][0]
     mock = getattr(frontend_page, "music_kit_api_mock")
     return list(mock.data.albums["album-" + track].track_ids)
+
+
+def _assert_album_prepared(page, state):
+    expected = _revealed_ids(page, state)
+    page.wait_for_function("() => !MusicKit.getInstance().isPlaying || MusicKit.getInstance().volume===0", timeout=STOP_DEADLINE_MS)
+    mark = page.evaluate("window.__introProbe.mark()")
+    # Warm-up is allowed only at zero volume. Wait for the current album's
+    # muted playback and completed rewind, not a transient stop before loading.
+    page.wait_for_function("""ids => {
+      const mk=MusicKit.getInstance();
+      return mk.nowPlayingItem?.id===ids[0] && !mk.isPlaying && mk.volume===1
+        && mk.currentPlaybackTime===0
+        && JSON.stringify(mk.queue.items.map(i=>i.id))===JSON.stringify(ids)
+        && window.__introProbe.samples.some(s=>s.id===ids[0] && s.playing && s.volume===0);
+    }""", arg=expected, timeout=10000)
+    samples=page.evaluate("mark=>window.__introProbe.samples.filter(s=>s.at>=mark && s.playing)", mark)
+    assert all(s['volume']==0 for s in samples), samples
+    _assert_stopped(page)
 
 
 @then("the reveal plays the expected full track or album queue")
@@ -505,7 +524,7 @@ def finish_rounds(frontend_page, socket_client, playback_probe, mode):
             playback_probe["round_id"] = order[index]
             replay_sequence(frontend_page, socket_client, playback_probe, "0.5")
         else:
-            _assert_stopped(frontend_page)
+            _assert_album_prepared(frontend_page, socket_client.state)
         click_actual(frontend_page, "ギブアップ")
         expected_reveal(frontend_page, socket_client)
         if index < len(order) - 1:
@@ -563,7 +582,7 @@ def jacket_wrong_and_next(frontend_page, socket_client, http):
     expected_reveal(frontend_page, socket_client)
     click_actual(frontend_page, "次のラウンドへ")
     _wait_state(socket_client, step="beforePlayback", jacketHintPercent=1)
-    _assert_stopped(frontend_page)
+    _assert_album_prepared(frontend_page, socket_client.state)
     assert socket_client.state["jacketMode"] == settings["jacketMode"]
     assert socket_client.state["jacketGrayscale"] == settings["jacketGrayscale"]
     expect(frontend_page.get_by_role("slider", name="ヒントレベル")).to_have_attribute("aria-valuenow", "1")

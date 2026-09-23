@@ -75,7 +75,7 @@ def snapshot(page):
 
 def target(page, kind='prepared', song='A', name='current', next_song='B'):
     value={'kind':kind}
-    if kind=='album': value['trackId']=song
+    if kind in ('album','albumPrepared'): value['trackId']=song
     elif kind!='stopped': value.update(songId=song,nextSongId=next_song)
     page.evaluate('([value,name]) => harness.target(value,name)',[value,name])
     flush(page)
@@ -1015,3 +1015,43 @@ def test_unavailable_event_after_play_started_stops_and_excludes_current_track(c
     ack_command(p,'exclude-track',next_state);advance(p,300)
     assert snapshot(p)['id']=='B' and not snapshot(p)['playing']
     assert p.get_by_role('button',name='再生',exact=True).is_enabled()
+
+
+@pytest.mark.parametrize('track',['A','i.A'])
+def test_jacket_prepares_silently_and_reveals_without_loading_again(controlled_page,track):
+    p=controlled_page
+    target(p,'albumPrepared',track);advance(p,500)
+    media=snapshot(p)
+    assert not media['playing'] and media['position']==0 and media['volume']==1
+    assert all(e['volume']==0 for e in media['events'] if e['event']=='playbackStateDidChange' and e['payload'].get('state')==2)
+    loads=[c for c in media['calls'] if c['method'] in ('music','setQueue')]
+    # Answering and wrong/correct feedback keep the same preparation target.
+    target(p,'albumPrepared',track);advance(p,300)
+    target(p,'album',track);advance(p,300)
+    media=snapshot(p)
+    assert media['playing'] and media['volume']==1
+    assert len([c for c in media['calls'] if c['method'] in ('music','setQueue')])==len(loads)
+    assert p.evaluate('sdk.mk.repeatMode')==2
+
+
+@pytest.mark.parametrize('method',['music','setQueue','play','pause'])
+@pytest.mark.parametrize('destination',['album','albumPrepared','stopped'])
+def test_late_album_preparation_obeys_latest_target(controlled_page,method,destination):
+    p=controlled_page
+    p.evaluate("sdk.responses['/v1/catalog/us/songs/B']={data:[{relationships:{albums:{data:[{id:'album-B'}]}}}]}")
+    arm(p,method,'preparation')
+    target(p,'albumPrepared',name='old');advance(p,300)
+    target(p,destination,'B' if destination=='albumPrepared' else 'A',name='new');advance(p,500)
+    release(p,'preparation');advance(p,1000)
+    media=snapshot(p)
+    assert media['playing']==(destination=='album')
+    assert media['volume']==1
+    if destination!='stopped':assert media['id']==('album-B' if destination=='albumPrepared' else 'album-A')
+
+
+def test_album_preparation_failure_can_retry_on_reveal(controlled_page):
+    p=controlled_page;arm(p,'music','failed')
+    target(p,'albumPrepared');release(p,'failed','temporary network failure');advance(p,300)
+    assert not snapshot(p)['playing']
+    target(p,'album');advance(p,500)
+    assert snapshot(p)['playing'] and snapshot(p)['volume']==1
