@@ -37,6 +37,7 @@ import { watchIntroDeadline } from '../lib/introDeadline'
 import { isUnavailableTrack } from '../lib/unavailableTrack'
 
 const JUDGE_RESULT_DURATION_MS = 1800
+const DEFAULT_PLAYBACK_SECONDS = 0.5
 const jacketModeOptions: Array<{ value: JacketMode; label: string }> = [
   { value: 'pixelated', label: 'モザイク' },
   { value: 'missingBlocks', label: '穴あき' },
@@ -61,7 +62,7 @@ export function ConsolePage() {
   const [expandedPlaylistIds, setExpandedPlaylistIds] = useState<Set<string>>(() => new Set())
   const [busy, setBusy] = useState(false)
   const [consoleMessage, setConsoleMessage] = useState<string | null>(null)
-  const [playbackSeconds, setPlaybackSeconds] = useState(0.5)
+  const [playbackSeconds, setPlaybackSeconds] = useState(DEFAULT_PLAYBACK_SECONDS)
   const [expandedRoundKey, setExpandedRoundKey] = useState<string | null>(null)
   const autoReadyRequestedRef = useRef(false)
   const stopIntroWatchRef = useRef<(() => void) | null>(null)
@@ -197,6 +198,11 @@ export function ConsolePage() {
     ? state.albums.map((album) => ({ id: album.id, title: album.name, artist: album.artist, artworkUrl: album.artworkChipUrl }))
     : state.tracks.map((track) => ({ id: track.id, title: track.title, artist: track.artist, artworkUrl: track.artworkChipUrl })), [isJacket, state.albums, state.tracks])
   const roundPreparationKey = roundPreparationKeyFromState(state)
+  const [playbackSecondsRoundKey, setPlaybackSecondsRoundKey] = useState(roundPreparationKey)
+  if (playbackSecondsRoundKey !== roundPreparationKey) {
+    setPlaybackSecondsRoundKey(roundPreparationKey)
+    setPlaybackSeconds(DEFAULT_PLAYBACK_SECONDS)
+  }
   const isPreparingNext = playback.target !== null && !playbackTargetsEqual(playback.target, playback.settled)
   const roundPrepared = state.quizMode === 'jacket'
     ? roundPreparationKey !== null
