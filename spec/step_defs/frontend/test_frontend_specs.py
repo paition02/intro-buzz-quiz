@@ -1087,10 +1087,10 @@ def console_page_has_not_scrolled(frontend_page: Page):
     assert frontend_page.evaluate("window.scrollY") == getattr(frontend_page, "scroll_y_before_swipe")
 
 
-@then(parsers.parse("the playback seconds slider shows {seconds:d} seconds"))
-def playback_seconds_slider_shows(frontend_page: Page, seconds: int):
+@then(parsers.parse("the playback seconds slider shows {seconds} seconds"))
+def playback_seconds_slider_shows(frontend_page: Page, seconds: str):
     frontend_page.wait_for_timeout(300)
-    expect(_playback_seconds_slider(frontend_page)).to_have_attribute("aria-valuenow", str(seconds))
+    expect(_playback_seconds_slider(frontend_page)).to_have_attribute("aria-valuenow", seconds)
 
 
 @when("the host plays the intro")

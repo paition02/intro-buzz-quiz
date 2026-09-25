@@ -60,6 +60,18 @@ Feature: Host console page
     And the frontend swipes up on the playback seconds slider ring on a phone viewport
     Then the console page has not scrolled
 
+  Scenario: Console playback seconds reset on a new round
+    Given the frontend console selected playlist "Spec Playlist A"
+    When the frontend clicks "イントロで開始"
+    Then the playback seconds slider shows 0.5 seconds
+    When the frontend sets playback seconds to 10 on the slider ring
+    And the frontend clicks "ギブアップ"
+    Then the playback seconds slider shows 10 seconds
+    When the frontend clicks "次のラウンドへ"
+    Then the playback seconds slider shows 0.5 seconds
+    When the frontend sets playback seconds to 10 on the slider ring
+    Then the playback seconds slider shows 10 seconds
+
   Scenario: Console round track info starts closed and can be reopened per round
     Given the frontend console selected playlist "Spec Playlist A"
     When the frontend clicks "イントロで開始"
