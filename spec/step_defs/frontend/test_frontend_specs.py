@@ -15,6 +15,7 @@ from frontend.musickit_mock import (
     library_song_id,
     set_musickit_library_albums,
     set_musickit_library_data,
+    set_musickit_library_folders,
     set_musickit_library_song_albums,
 )
 
@@ -339,6 +340,110 @@ def frontend_console_logged_in_with_paginated_tracks(frontend_page: Page, socket
     frontend_page.goto("/console")
     frontend_page.get_by_role("button", name="ログイン", exact=True).click()
     expect(frontend_page.get_by_text(playlist, exact=True)).to_be_visible()
+
+
+def _log_in_console(frontend_page: Page):
+    frontend_page.goto("/console")
+    frontend_page.get_by_role("button", name="ログイン", exact=True).click()
+    expect(frontend_page.get_by_text("Spec Playlist A", exact=True)).to_be_visible()
+
+
+@given('the frontend console is logged into mocked MusicKit with playlist "Spec Playlist B" in folder "Spec Folder"')
+def frontend_console_logged_in_with_playlist_folder(frontend_page: Page, socket_client):
+    _ = socket_client
+    set_musickit_library_folders(
+        frontend_page,
+        root_children=["playlist-a", "folder-spec"],
+        folders={"folder-spec": ("Spec Folder", ["playlist-b"])},
+    )
+    _log_in_console(frontend_page)
+
+
+@given('the frontend console is logged into mocked MusicKit with playlist "Spec Playlist B" in subfolder "Spec Sub Folder" of folder "Spec Folder"')
+def frontend_console_logged_in_with_playlist_subfolder(frontend_page: Page, socket_client):
+    _ = socket_client
+    set_musickit_library_folders(
+        frontend_page,
+        root_children=["folder-spec"],
+        folders={
+            "folder-spec": ("Spec Folder", ["playlist-a", "folder-sub"]),
+            "folder-sub": ("Spec Sub Folder", ["playlist-b"]),
+        },
+    )
+    _log_in_console(frontend_page)
+
+
+@given('the frontend console is logged into mocked MusicKit with empty folder "Spec Empty Folder"')
+def frontend_console_logged_in_with_empty_folder(frontend_page: Page, socket_client):
+    _ = socket_client
+    set_musickit_library_folders(
+        frontend_page,
+        root_children=["folder-empty", "playlist-a", "playlist-b"],
+        folders={"folder-empty": ("Spec Empty Folder", [])},
+    )
+    _log_in_console(frontend_page)
+
+
+@given('the frontend console is logged into mocked MusicKit with 101 playlists in folder "Spec Folder"')
+def frontend_console_logged_in_with_paginated_folder(frontend_page: Page, socket_client):
+    _ = socket_client
+    folder_playlist_ids = [f"playlist-filler-{index}" for index in range(1, 101)] + ["playlist-page-2"]
+    set_musickit_library_data(
+        frontend_page,
+        {"playlist-a": ["track-1"], **{playlist_id: [] for playlist_id in folder_playlist_ids}},
+        playlist_names={"playlist-page-2": "Spec Playlist Page 2"},
+    )
+    set_musickit_library_folders(
+        frontend_page,
+        root_children=["folder-spec", "playlist-a"],
+        folders={"folder-spec": ("Spec Folder", folder_playlist_ids)},
+    )
+    _log_in_console(frontend_page)
+
+
+@when(parsers.parse('the frontend opens folder "{folder}"'))
+def frontend_opens_folder(frontend_page: Page, folder: str):
+    folder_button = frontend_page.get_by_role("button", name=folder, exact=True)
+    expect(folder_button).to_be_visible(timeout=30000)
+    # 親フォルダの li も子フォルダのボタンを含むので、同じ行の開閉ボタンをたどる。
+    toggle = folder_button.locator("xpath=following-sibling::button")
+    expect(toggle).to_have_accessible_name("フォルダを開く")
+    toggle.click(timeout=10000)
+    expect(toggle).to_have_accessible_name("フォルダを閉じる", timeout=30000)
+
+
+@when(parsers.parse('the frontend searches playlists for "{text}"'))
+def frontend_searches_playlists(frontend_page: Page, text: str):
+    frontend_page.get_by_placeholder("プレイリスト名で検索").fill(text)
+
+
+def _folder_children_requests(frontend_page: Page, folder_id: str):
+    return [
+        request
+        for request in getattr(frontend_page, "request_log", [])
+        if urlparse(request["url"]).path == f"/v1/me/library/playlist-folders/{folder_id}/children"
+    ]
+
+
+@then(parsers.parse('MusicKit children of library playlist folder "{folder_id}" are requested {count:d} times'))
+def musickit_folder_children_requested_times(frontend_page: Page, folder_id: str, count: int):
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        if len(_folder_children_requests(frontend_page, folder_id)) == count:
+            return
+        frontend_page.wait_for_timeout(100)
+    raise AssertionError(
+        f"expected {count} children requests for {folder_id}; "
+        f"got {len(_folder_children_requests(frontend_page, folder_id))}"
+    )
+
+
+@then(parsers.parse('MusicKit children page 2 of library playlist folder "{folder_id}" is requested'))
+def musickit_folder_children_page_2_requested(frontend_page: Page, folder_id: str):
+    _wait_for_request(
+        frontend_page,
+        lambda request: f"/v1/me/library/playlist-folders/{folder_id}/children" in request["url"] and "offset=100" in request["url"],
+    )
 
 
 @given(parsers.parse('the frontend console is logged into mocked MusicKit with playlist "{playlist}" containing {count:d} tracks'))
@@ -744,6 +849,11 @@ def frontend_opens_playlist(frontend_page: Page, playlist: str):
     expect(playlist_item.get_by_role("button", name="プレイリストを閉じる")).to_be_visible(timeout=30000)
 
 
+@then("backend has no selected playlists")
+def backend_has_no_selected_playlists(frontend_page: Page, socket_client):
+    backend_selected_playlist_ids(frontend_page, socket_client, "")
+
+
 @then(parsers.parse('backend selected playlist ids are "{ids}"'))
 def backend_selected_playlist_ids(frontend_page: Page, socket_client, ids: str):
     expected = [value for value in ids.split(",") if value]
@@ -861,6 +971,16 @@ def musickit_library_playlists_page_2_requested(frontend_page: Page):
     _wait_for_request(
         frontend_page,
         lambda request: "/v1/me/library/playlists" in request["url"] and "offset=100" in request["url"],
+    )
+
+
+@then("MusicKit library playlists page 2 is requested with their folders")
+def musickit_library_playlists_page_2_requested_with_folders(frontend_page: Page):
+    _wait_for_request(
+        frontend_page,
+        lambda request: urlparse(request["url"]).path == "/v1/me/library/playlists"
+        and "offset=100" in request["url"]
+        and "include=parent" in request["url"],
     )
 
 

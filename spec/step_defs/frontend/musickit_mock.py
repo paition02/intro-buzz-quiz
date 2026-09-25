@@ -28,6 +28,8 @@ from musickit_api_mock import (
     CatalogLibrarySong,
     CatalogSong,
     LibraryPlaylist,
+    LibraryPlaylistFolder,
+    LibraryPlaylistFolderChild,
     LicenseResponseSuccess,
     LogoutResponseSuccess,
     LookupContext,
@@ -204,11 +206,9 @@ def _make_library_playlist(
 ) -> LibraryPlaylist:
     return LibraryPlaylist(
         name=name or _playlist_name(playlist_id),
-        can_delete=True,
         can_edit=True,
         is_public=False,
         has_catalog=False,
-        has_collaboration=False,
         track_ids=list(track_ids or []),
         artwork=Artwork(url="https://example.test/library.jpg", width=200, height=200),
     )
@@ -236,37 +236,6 @@ def _build_web_playback(song_ids: Iterable[str], *, error: bool) -> dict[str, We
         )
         for song_id in song_ids
     }
-
-
-def _build_library_playlists_response(
-    playlists: dict[str, LibraryPlaylist],
-    *,
-    limit: int,
-    offset: int,
-) -> dict[str, object]:
-    page_entries = list(playlists.items())[offset : offset + limit]
-    body: dict[str, object] = {
-        "data": [
-            {
-                "id": playlist_id,
-                "type": "library-playlists",
-                "href": f"/v1/me/library/playlists/{playlist_id}",
-                "attributes": {
-                    "name": playlist.name,
-                    "artwork": {
-                        "url": playlist.artwork.url,
-                        "width": playlist.artwork.width,
-                        "height": playlist.artwork.height,
-                    },
-                },
-            }
-            for playlist_id, playlist in page_entries
-        ]
-    }
-    next_offset = offset + limit
-    if next_offset < len(playlists):
-        body["next"] = f"/v1/me/library/playlists?offset={next_offset}&limit={limit}"
-    return body
 
 
 def _configure_library_data(
@@ -317,6 +286,12 @@ def _configure_library_data(
         )
         for playlist_id, track_ids in playlist_tracks.items()
     }
+    # Without folders every playlist sits at the top level of the folder tree.
+    mock.data.library_playlist_folders = {}
+    mock.data.library_playlist_root_children = [
+        LibraryPlaylistFolderChild(type="library-playlists", id=playlist_id)
+        for playlist_id in playlist_tracks
+    ]
 
     def resolve_playlist(ctx: LookupContext) -> Playlist | None:
         if ctx.id not in playlist_tracks:
@@ -348,6 +323,32 @@ def set_musickit_library_data(
         playlist_names=playlist_names,
         song_titles=song_titles,
     )
+
+
+def set_musickit_library_folders(
+    page: Page,
+    *,
+    root_children: list[str],
+    folders: dict[str, tuple[str, list[str]]],
+) -> None:
+    """Arrange the library playlists into folders.
+
+    ``folders`` maps a folder id to its name and child ids. A child id that
+    names a folder is a folder; any other child id is a library playlist.
+    """
+    mock = getattr(page, "music_kit_api_mock", None)
+    if mock is None:
+        raise AssertionError("MusicKit API mock has not been configured for this page")
+
+    def child(child_id: str) -> LibraryPlaylistFolderChild:
+        kind = "library-playlist-folders" if child_id in folders else "library-playlists"
+        return LibraryPlaylistFolderChild(type=kind, id=child_id)
+
+    mock.data.library_playlist_folders = {
+        folder_id: LibraryPlaylistFolder(name=name, children=[child(child_id) for child_id in child_ids])
+        for folder_id, (name, child_ids) in folders.items()
+    }
+    mock.data.library_playlist_root_children = [child(child_id) for child_id in root_children]
 
 
 def library_song_id(catalog_id: str) -> str:
@@ -437,51 +438,6 @@ def set_musickit_library_song_albums(
         )
     mock.data.library_songs = library_songs
     mock.data.library_albums = library_albums
-
-
-def _parse_positive_int(values: list[str] | None, *, default: int) -> int:
-    if not values:
-        return default
-    try:
-        value = int(values[0])
-    except ValueError:
-        return default
-    return value if value > 0 else default
-
-
-def _parse_non_negative_int(values: list[str] | None, *, default: int) -> int:
-    if not values:
-        return default
-    try:
-        value = int(values[0])
-    except ValueError:
-        return default
-    return value if value >= 0 else default
-
-
-def _register_library_playlists_override(page: Page, mock: MusicKitApiMock) -> None:
-    def handler(route: Route) -> None:
-        parsed = urlparse(route.request.url)
-        if parsed.path != "/v1/me/library/playlists":
-            route.fallback()
-            return
-        if route.request.method == "OPTIONS":
-            route.fulfill(status=204, headers=_CORS_PREFLIGHT_HEADERS)
-            return
-        query = parse_qs(parsed.query)
-        limit = min(_parse_positive_int(query.get("limit"), default=100), 100)
-        offset = _parse_non_negative_int(query.get("offset"), default=0)
-        playlists = mock.data.library_playlists
-        if not isinstance(playlists, dict):
-            raise AssertionError("mock.data.library_playlists must be a dict for playlist list responses")
-        route.fulfill(
-            status=200,
-            content_type="application/json",
-            body=json.dumps(_build_library_playlists_response(playlists, limit=limit, offset=offset)),
-            headers={"Access-Control-Allow-Origin": "*"},
-        )
-
-    page.route("**/api.music.apple.com/v1/me/library/playlists*", handler)
 
 
 _LIBRARY_PLAYLIST_TRACKS_PATH = re.compile(r"/v1/me/library/playlists/[^/]+/tracks")
@@ -609,7 +565,6 @@ def configure_musickit_api_mock(
     _serve_musickit_js(page)
     _block_unmocked_musickit_requests(page)
     intercept(mock, page)
-    _register_library_playlists_override(page, mock)
     _register_library_playlist_tracks_include_override(page, mock)
     setattr(page, "music_kit_api_mock", mock)
     return mock

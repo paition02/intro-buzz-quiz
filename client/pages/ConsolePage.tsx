@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
+import { useIsFetching, useQueryClient } from '@tanstack/react-query'
 import { useMusicKitAuth, useMusicKitInstance } from '../useMusicKit'
 import { introTarget, isPlaybackSuperseded, playbackTargetFromState, playbackTargetsEqual, usePlaybackTarget } from '../usePlaybackTarget'
 import {
@@ -23,7 +23,7 @@ import {
 } from '../lib/gameClient'
 import { uniqueTracksById } from '../lib/util'
 import { playResultSound, playResultsSound } from '../lib/sounds'
-import { LibraryPlaylistsSection } from '../components/PlaylistPanel'
+import { LibraryPlaylistsSection, type PlaylistView } from '../components/PlaylistPanel'
 import { PlayerBadge } from '../components/PlayerBadge'
 import { CircularSecondsSlider } from '../components/CircularSecondsSlider'
 import { JacketHintSlider } from '../components/JacketHintSlider'
@@ -31,7 +31,7 @@ import { Glass } from '../components/Glass'
 import { Button } from '../components/Button'
 import { Eyebrow } from '../components/Eyebrow'
 import { RoundInfoDisclosure } from '../components/RoundInfoDisclosure'
-import { RepeatGlyph } from '../components/Glyphs'
+import { ListGlyph, RepeatGlyph, TreeGlyph } from '../components/Glyphs'
 import { AnswerInput, type AnswerCandidate } from '../components/AnswerInput'
 import { watchIntroDeadline } from '../lib/introDeadline'
 import { isUnavailableTrack } from '../lib/unavailableTrack'
@@ -57,9 +57,11 @@ export function ConsolePage() {
   const playRequestRef = useRef<symbol | null>(null)
   const queryClient = useQueryClient()
   const libraryPlaylistsQuery = useLibraryPlaylistsQuery()
-  const loadingLibraryPlaylists = libraryPlaylistsQuery.isPending || libraryPlaylistsQuery.isFetching
+  const fetchingLibraryPlaylists = useIsFetching({ queryKey: ['musicKit', 'libraryPlaylists'] }) > 0
+  const loadingLibraryPlaylists = libraryPlaylistsQuery.isPending || fetchingLibraryPlaylists
   const invalidateLibraryPlaylists = useInvalidateLibraryPlaylists()
   const [expandedPlaylistIds, setExpandedPlaylistIds] = useState<Set<string>>(() => new Set())
+  const [playlistView, setPlaylistView] = useState<PlaylistView>('list')
   const [busy, setBusy] = useState(false)
   const [consoleMessage, setConsoleMessage] = useState<string | null>(null)
   const [playbackSeconds, setPlaybackSeconds] = useState(DEFAULT_PLAYBACK_SECONDS)
@@ -263,11 +265,15 @@ export function ConsolePage() {
     return queryClient.ensureQueryData(playlistTracksQueryOptions(musicKitInstance, musicKitAuth.authorized, playlist.id))
   }
 
-  const togglePlaylistSelected = (playlist: MusicPlaylist, allPlaylists: MusicPlaylist[]) => run(async () => {
+  // 渡したプレイリストがすべて選択済みなら全部解除、そうでなければ全部選択する (フォルダ単位の選択)。
+  const togglePlaylistsSelected = (playlists: MusicPlaylist[], allPlaylists: MusicPlaylist[]) => run(async () => {
     const version = actionVersionRef.current
     const currentSelectedIds = new Set(state.selectedPlaylistIds)
-    if (currentSelectedIds.has(playlist.id)) currentSelectedIds.delete(playlist.id)
-    else currentSelectedIds.add(playlist.id)
+    const allSelected = playlists.every((playlist) => currentSelectedIds.has(playlist.id))
+    for (const playlist of playlists) {
+      if (allSelected) currentSelectedIds.delete(playlist.id)
+      else currentSelectedIds.add(playlist.id)
+    }
 
     const selectedPlaylists = allPlaylists.filter((p) => currentSelectedIds.has(p.id))
     const trackGroups = await Promise.all(selectedPlaylists.map((selectedPlaylist) => fetchPlaylistTracks(selectedPlaylist)))
@@ -545,14 +551,27 @@ export function ConsolePage() {
           <h2 className="m-0 mb-2.5 text-2xl font-bold">2. 準備</h2>
           <div className="flex items-center justify-between gap-3 text-cream font-bold mt-4 mb-3">
             <span>ライブラリプレイリスト</span>
-            <Button variant="ghostSmall" disabled={busy || loadingLibraryPlaylists} onClick={invalidateLibraryPlaylists}>{loadingLibraryPlaylists ? '読み込み中' : '再読み込み'}</Button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="grid size-9 place-items-center rounded-full text-muted transition hover:bg-white/10 hover:text-cream disabled:cursor-not-allowed disabled:opacity-40"
+                disabled={!musicKitAuth.authorized}
+                onClick={() => setPlaylistView((view) => view === 'list' ? 'tree' : 'list')}
+                aria-label={playlistView === 'list' ? 'ツリー表示に切り替え' : 'リスト表示に切り替え'}
+                title={playlistView === 'list' ? 'ツリー表示に切り替え' : 'リスト表示に切り替え'}
+              >
+                {playlistView === 'list' ? <TreeGlyph className="size-5" /> : <ListGlyph className="size-5" />}
+              </button>
+              <Button variant="ghostSmall" disabled={busy || loadingLibraryPlaylists} onClick={invalidateLibraryPlaylists}>{loadingLibraryPlaylists ? '読み込み中' : '再読み込み'}</Button>
+            </div>
           </div>
           {musicKitAuth.authorized ? (
             <LibraryPlaylistsSection
+              view={playlistView}
               busy={busy}
               expandedPlaylistIds={expandedPlaylistIds}
               selectedPlaylistIdSet={selectedPlaylistIdSet}
-              onSelect={togglePlaylistSelected}
+              onSelect={togglePlaylistsSelected}
               onToggleExpanded={togglePlaylistExpanded}
             />
           ) : (
