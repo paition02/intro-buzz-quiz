@@ -20,7 +20,7 @@ Feature: MusicKit integration
     And MusicKit is already authorized
     When the frontend opens "/console" with mocked MusicKit
     Then MusicKit library playlists page 1 is requested
-    And MusicKit library playlists page 2 is requested
+    And MusicKit library playlists page 2 is requested with their folders
     And the frontend shows "Spec Playlist A"
     And the frontend shows "Spec Playlist Page 2"
 
@@ -126,6 +126,100 @@ Feature: MusicKit integration
     Given mocked MusicKit configuration fails with "Token request failed"
     When the frontend opens "/console" with mocked MusicKit
     Then the frontend shows "Token request failed"
+
+  Scenario: Tree view shows library playlists by folder
+    Given the frontend console is logged into mocked MusicKit with playlist "Spec Playlist B" in folder "Spec Folder"
+    When the frontend clicks "ツリー表示に切り替え"
+    Then MusicKit children of library playlist folder "p.playlistsroot" are requested 1 times
+    And the frontend shows "Spec Folder"
+    And the frontend shows "Spec Playlist A"
+    And the frontend does not show "Spec Playlist B"
+    And MusicKit children of library playlist folder "folder-spec" are requested 0 times
+    When the frontend opens folder "Spec Folder"
+    Then MusicKit children of library playlist folder "folder-spec" are requested 1 times
+    And the frontend shows "Spec Playlist B"
+
+  Scenario: Tree view shows an empty folder as empty
+    Given the frontend console is logged into mocked MusicKit with empty folder "Spec Empty Folder"
+    When the frontend clicks "ツリー表示に切り替え"
+    And the frontend opens folder "Spec Empty Folder"
+    Then the frontend shows "プレイリストがありません"
+    And the frontend shows "Spec Playlist A"
+
+  Scenario: Library playlist folder children pagination is followed
+    Given the frontend console is logged into mocked MusicKit with 101 playlists in folder "Spec Folder"
+    When the frontend clicks "ツリー表示に切り替え"
+    And the frontend opens folder "Spec Folder"
+    Then MusicKit children page 2 of library playlist folder "folder-spec" is requested
+    And the frontend shows "Spec Playlist Page 2"
+
+  Scenario: Playlists selected in the list and tree views are selected together
+    Given the frontend console is logged into mocked MusicKit with playlist "Spec Playlist B" in folder "Spec Folder"
+    When the frontend clicks "Spec Playlist A"
+    And the frontend clicks "ツリー表示に切り替え"
+    And the frontend opens folder "Spec Folder"
+    And the frontend clicks "Spec Playlist B"
+    Then backend selected playlist ids are "playlist-a,playlist-b"
+    And the frontend shows "2件のプレイリスト、5曲を選択中"
+
+  Scenario: Selecting a folder selects every playlist in it and its subfolders
+    Given the frontend console is logged into mocked MusicKit with playlist "Spec Playlist B" in subfolder "Spec Sub Folder" of folder "Spec Folder"
+    When the frontend clicks "ツリー表示に切り替え"
+    And the frontend clicks "Spec Folder"
+    Then backend selected playlist ids are "playlist-a,playlist-b"
+    And the frontend shows "2件のプレイリスト、5曲を選択中"
+
+  Scenario: Selecting a fully selected folder deselects its playlists
+    Given the frontend console is logged into mocked MusicKit with playlist "Spec Playlist B" in subfolder "Spec Sub Folder" of folder "Spec Folder"
+    When the frontend clicks "ツリー表示に切り替え"
+    And the frontend clicks "Spec Folder"
+    Then backend selected playlist ids are "playlist-a,playlist-b"
+    When the frontend clicks "Spec Folder"
+    Then backend has no selected playlists
+
+  Scenario: Selecting a partly selected folder selects the rest of its playlists
+    Given the frontend console is logged into mocked MusicKit with playlist "Spec Playlist B" in subfolder "Spec Sub Folder" of folder "Spec Folder"
+    When the frontend clicks "Spec Playlist A"
+    And the frontend clicks "ツリー表示に切り替え"
+    And the frontend clicks "Spec Folder"
+    Then backend selected playlist ids are "playlist-a,playlist-b"
+
+  Scenario: Selecting a subfolder selects only its playlists
+    Given the frontend console is logged into mocked MusicKit with playlist "Spec Playlist B" in subfolder "Spec Sub Folder" of folder "Spec Folder"
+    When the frontend clicks "ツリー表示に切り替え"
+    And the frontend opens folder "Spec Folder"
+    And the frontend clicks "Spec Sub Folder"
+    Then backend selected playlist ids are "playlist-b"
+
+  Scenario: Selecting a folder while searching selects every playlist in it
+    Given the frontend console is logged into mocked MusicKit with playlist "Spec Playlist B" in subfolder "Spec Sub Folder" of folder "Spec Folder"
+    When the frontend clicks "ツリー表示に切り替え"
+    And the frontend searches playlists for "Playlist B"
+    And the frontend clicks "Spec Folder"
+    Then backend selected playlist ids are "playlist-a,playlist-b"
+
+  Scenario: Tree view search shows matching playlists inside folders
+    Given the frontend console is logged into mocked MusicKit with playlist "Spec Playlist B" in folder "Spec Folder"
+    When the frontend clicks "ツリー表示に切り替え"
+    And the frontend searches playlists for "Playlist B"
+    Then the frontend shows "Spec Folder"
+    And the frontend shows "Spec Playlist B"
+    And the frontend does not show "Spec Playlist A"
+
+  Scenario: List view is restored from the tree view
+    Given the frontend console is logged into mocked MusicKit with playlist "Spec Playlist B" in folder "Spec Folder"
+    When the frontend clicks "ツリー表示に切り替え"
+    And the frontend clicks "リスト表示に切り替え"
+    Then the frontend shows "Spec Playlist A"
+    And the frontend shows "Spec Playlist B"
+    And the frontend does not show "Spec Folder"
+
+  Scenario: Reloading in the tree view reloads the folders
+    Given the frontend console is logged into mocked MusicKit with playlist "Spec Playlist B" in folder "Spec Folder"
+    When the frontend clicks "ツリー表示に切り替え"
+    Then the frontend shows "Spec Folder"
+    When the frontend clicks "再読み込み"
+    Then MusicKit children of library playlist folder "p.playlistsroot" are requested 2 times
 
   Scenario: Library playlist loading failure is shown on the console
     Given mocked MusicKit library playlist loading fails with "Library unavailable"

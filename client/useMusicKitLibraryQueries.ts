@@ -3,7 +3,23 @@ import { useCallback } from 'react'
 import { useMusicKitAuth, useMusicKitInstance } from './useMusicKit'
 import type { Track } from '../type/game'
 
+export const PLAYLIST_ROOT_FOLDER_ID = 'p.playlistsroot'
+
 export type MusicPlaylist = {
+  id: string
+  name: string
+  // 入っているフォルダ。フォルダに入っていなければ PLAYLIST_ROOT_FOLDER_ID。
+  parentId: string
+}
+
+export type MusicPlaylistFolder = {
+  id: string
+  name: string
+  parentId: string
+}
+
+export type MusicPlaylistFolderChild = {
+  type: 'folder' | 'playlist'
   id: string
   name: string
 }
@@ -33,9 +49,23 @@ type MusicApiAttributes = {
   playParams?: { id?: string } | null
 }
 
+type MusicApiParentRelationship = {
+  parent?: {
+    data?: Array<{ id: string }>
+  }
+}
+
 type MusicApiPlaylist = {
   id: string
   attributes?: Pick<MusicApiAttributes, 'name'>
+  relationships?: MusicApiParentRelationship
+}
+
+type MusicApiPlaylistFolder = {
+  id: string
+  type: string
+  attributes?: Pick<MusicApiAttributes, 'name'>
+  relationships?: MusicApiParentRelationship
 }
 
 type MusicApiTrack = {
@@ -76,40 +106,81 @@ async function musicApi<T>(mk: MusicKit.MusicKitInstance, url: string, params?: 
   return response.data
 }
 
-async function fetchLibraryPlaylists(mk: MusicKit.MusicKitInstance) {
-  const allPlaylists: MusicApiPlaylist[] = []
-  let url: string | null = '/v1/me/library/playlists'
-  let params: MusicApiParams | undefined = { limit: 100 }
+// next には offset しか残らない (limit や include は引き継がれない) ので、毎ページ params を付け直す。
+async function fetchPages<T>(mk: MusicKit.MusicKitInstance, firstUrl: string, params: MusicApiParams, invalidMessage: string) {
+  const items: T[] = []
+  let url: string | null = firstUrl
   const visited = new Set<string>()
   while (url) {
     if (visited.has(url)) throw new Error('ページ取得が循環しています。再読み込みしてください')
     visited.add(url)
-    const data: MusicApiPage<MusicApiPlaylist> = await musicApi<MusicApiPage<MusicApiPlaylist>>(mk, url, params)
-    if (!Array.isArray(data?.data)) throw new Error('プレイリストの取得結果が不正です')
-    allPlaylists.push(...data.data)
+    const [path, query = ''] = url.split('?')
+    const data: MusicApiPage<T> = await musicApi<MusicApiPage<T>>(mk, path, { ...Object.fromEntries(new URLSearchParams(query)), ...params })
+    if (!Array.isArray(data?.data)) throw new Error(invalidMessage)
+    items.push(...data.data)
     url = data?.next ?? null
-    params = undefined
   }
-  return allPlaylists.map((playlist): MusicPlaylist => ({
+  return items
+}
+
+function parentIdOf(resource: { relationships?: MusicApiParentRelationship }) {
+  return resource.relationships?.parent?.data?.[0]?.id ?? PLAYLIST_ROOT_FOLDER_ID
+}
+
+async function fetchLibraryPlaylists(mk: MusicKit.MusicKitInstance) {
+  const playlists = await fetchPages<MusicApiPlaylist>(mk, '/v1/me/library/playlists', { limit: 100, include: 'parent' }, 'プレイリストの取得結果が不正です')
+  return playlists.map((playlist): MusicPlaylist => ({
     id: playlist.id,
     name: playlist.attributes?.name ?? playlist.id,
+    parentId: parentIdOf(playlist),
   }))
 }
 
-async function fetchPlaylistTracks(mk: MusicKit.MusicKitInstance, playlistId: string) {
-  const allTracks: MusicApiTrack[] = []
-  let url: string | null = `/v1/me/library/playlists/${playlistId}/tracks`
-  let params: MusicApiParams | undefined = { limit: 100, include: 'catalog,albums' }
-  const visited = new Set<string>()
-  while (url) {
-    if (visited.has(url)) throw new Error('ページ取得が循環しています。再読み込みしてください')
-    visited.add(url)
-    const data: MusicApiPage<MusicApiTrack> = await musicApi<MusicApiPage<MusicApiTrack>>(mk, url, params)
-    if (!Array.isArray(data?.data)) throw new Error('曲の取得結果が不正です')
-    allTracks.push(...data.data)
-    url = data?.next ?? null
-    params = undefined
+// フォルダ API は Apple の公開ドキュメントに無いが、music.apple.com が使っている。
+async function fetchLibraryPlaylistFolders(mk: MusicKit.MusicKitInstance) {
+  const folders = await fetchPages<MusicApiPlaylistFolder>(mk, '/v1/me/library/playlist-folders', { limit: 100, include: 'parent' }, 'プレイリストフォルダの取得結果が不正です')
+  return folders.map((folder): MusicPlaylistFolder => ({
+    id: folder.id,
+    name: folder.attributes?.name ?? folder.id,
+    parentId: parentIdOf(folder),
+  }))
+}
+
+function isNotFound(error: unknown) {
+  return typeof error === 'object' && error !== null && (error as { errorCode?: unknown }).errorCode === 'NOT_FOUND'
+}
+
+// フォルダ直下の中身をライブラリ順に取得し、フォルダを前に集める。
+async function fetchPlaylistFolderChildren(mk: MusicKit.MusicKitInstance, folderId: string) {
+  let children: MusicApiPlaylistFolder[]
+  try {
+    children = await fetchPages<MusicApiPlaylistFolder>(
+      mk,
+      `/v1/me/library/playlist-folders/${folderId}/children`,
+      { limit: 100 },
+      'プレイリストフォルダの取得結果が不正です',
+    )
+  } catch (error) {
+    // 空のフォルダの children は 404 になる。
+    if (isNotFound(error)) return []
+    throw error
   }
+  const nodes = children.flatMap((child): MusicPlaylistFolderChild[] => {
+    const name = child.attributes?.name ?? child.id
+    if (child.type === 'library-playlist-folders') return [{ type: 'folder', id: child.id, name }]
+    if (child.type === 'library-playlists') return [{ type: 'playlist', id: child.id, name }]
+    return []
+  })
+  return [...nodes.filter((node) => node.type === 'folder'), ...nodes.filter((node) => node.type === 'playlist')]
+}
+
+async function fetchPlaylistTracks(mk: MusicKit.MusicKitInstance, playlistId: string) {
+  const allTracks = await fetchPages<MusicApiTrack>(
+    mk,
+    `/v1/me/library/playlists/${playlistId}/tracks`,
+    { limit: 100, include: 'catalog,albums' },
+    '曲の取得結果が不正です',
+  )
   const availableTracks = allTracks.filter((track) => {
     const attributes = track.relationships?.catalog?.data?.[0]?.attributes ?? track.attributes
     // An explicit lack of playback parameters means this item cannot play.
@@ -140,6 +211,20 @@ export function libraryPlaylistsQueryOptions(mk: MusicKit.MusicKitInstance | nul
   })
 }
 
+export function libraryPlaylistFoldersQueryOptions(mk: MusicKit.MusicKitInstance | null, authorized: boolean) {
+  return queryOptions({
+    queryKey: ['musicKit', 'libraryPlaylists', 'folders', mk === null ? 'no-instance' : 'instance', authorized],
+    queryFn: () => mk !== null && authorized ? fetchLibraryPlaylistFolders(mk) : [],
+  })
+}
+
+export function playlistFolderChildrenQueryOptions(mk: MusicKit.MusicKitInstance | null, authorized: boolean, folderId: string) {
+  return queryOptions({
+    queryKey: ['musicKit', 'libraryPlaylists', 'folderChildren', mk === null ? 'no-instance' : 'instance', authorized, folderId],
+    queryFn: () => mk !== null && authorized ? fetchPlaylistFolderChildren(mk, folderId) : [],
+  })
+}
+
 export function playlistTracksQueryOptions(mk: MusicKit.MusicKitInstance | null, authorized: boolean, playlistId: string) {
   return queryOptions({
     queryKey: ['musicKit', 'playlistTracks', mk === null ? 'no-instance' : 'instance', authorized, playlistId],
@@ -151,6 +236,18 @@ export function useLibraryPlaylistsQuery() {
   const { instance: mk } = useMusicKitInstance()
   const { authorized } = useMusicKitAuth()
   return useQuery(libraryPlaylistsQueryOptions(mk, authorized))
+}
+
+export function useLibraryPlaylistFoldersQuery() {
+  const { instance: mk } = useMusicKitInstance()
+  const { authorized } = useMusicKitAuth()
+  return useQuery(libraryPlaylistFoldersQueryOptions(mk, authorized))
+}
+
+export function usePlaylistFolderChildrenQuery(folderId: string) {
+  const { instance: mk } = useMusicKitInstance()
+  const { authorized } = useMusicKitAuth()
+  return useQuery(playlistFolderChildrenQueryOptions(mk, authorized, folderId))
 }
 
 export function usePlaylistTracksQuery(playlistId: string) {
