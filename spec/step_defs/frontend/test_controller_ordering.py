@@ -118,11 +118,15 @@ def ack_command(page,event,state=None,ok=True):
     page.evaluate('([i,ok])=>harness.ack(i,ok)',[indices[-1],ok]);flush(page)
 
 
-def start(page,seconds=1):
+def set_seconds(page,seconds):
     slider=page.get_by_role('slider',name='再生秒数')
     current=float(slider.get_attribute('aria-valuenow'))
     for _ in range(round(abs(seconds-current)*10)):
         slider.press('ArrowRight' if seconds>current else 'ArrowLeft')
+
+
+def start(page,seconds=1):
+    set_seconds(page,seconds)
     page.get_by_role('button',name='再生',exact=True).click()
     ack_command(page,'play',game_state(page,'playing'))
     assert snapshot(page)['playing']
@@ -359,6 +363,7 @@ def test_old_intro_timer_cannot_stop_new_round_reveal_or_play(controlled_page,ol
     deliver(p,game_state(p,'answering',answererId='P'));advance(p,500)
     deliver(p,game_state(p,'reveal'));advance(p,300)
     deliver(p,game_state(p,roundIndex=1));advance(p,500)
+    set_seconds(p,old_seconds)
     p.get_by_role('button',name='再生',exact=True).click();ack_command(p,'play',game_state(p,'playing',roundIndex=1));advance(p,100)
     assert snapshot(p)['playing'] and snapshot(p)['id']=='B'
     advance(p,old_seconds*1000-2000)
