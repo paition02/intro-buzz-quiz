@@ -6,6 +6,7 @@ import homeHtml from '../client/index.html'
 import consoleHtml from '../client/console.html'
 import gameboardHtml from '../client/gameboard.html'
 import actionHtml from '../client/action.html'
+import { serve } from './https'
 import type { Album, GameState, JacketMode, Player, QuizMode, Track } from '../type/game'
 
 // Bun が cwd の .env を読む。PORT は数値として渡す。
@@ -706,7 +707,7 @@ function handleAppRequest(req: Request, server: Parameters<typeof engine.handleR
   return new Response('Not Found', { status: 404 })
 }
 
-const server = Bun.serve({
+const server = serve({
   port,
   hostname: '0.0.0.0',
   development: isDevelopment,
