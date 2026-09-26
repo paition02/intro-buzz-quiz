@@ -81,7 +81,7 @@ def test_slider_native_inputs_and_pointer_lifecycle(intro,socket_client,playback
     p=intro;slider=p.get_by_role('slider',name='再生秒数');slider.scroll_into_view_if_needed()
     box=slider.bounding_box();assert box
     def point(value,identifier=1):
-        angle=(value-.1)/29.9*2*math.pi-math.pi/2
+        angle=math.radians(20+(value-.1)/29.9*320-90)
         return {'x':box['x']+box['width']/2+box['width']/2*78/93*math.cos(angle),'y':box['y']+box['height']/2+box['height']/2*78/93*math.sin(angle),'id':identifier}
     if input_kind=='keyboard':r._set_seconds(p,2.5)
     elif input_kind=='mouse':
