@@ -197,7 +197,7 @@ export function ConsolePage() {
   const roundInfo = isJacket ? roundAlbum : roundTrack
   const roundAnswerId = isJacket ? roundAlbum?.id ?? null : roundTrackId
   const answerCandidates = useMemo<AnswerCandidate[]>(() => isJacket
-    ? state.albums.map((album) => ({ id: album.id, title: album.name, artist: album.artist, artworkUrl: album.artworkChipUrl }))
+    ? state.albums.map((album) => ({ id: album.id, title: album.name, artist: album.artist }))
     : state.tracks.map((track) => ({ id: track.id, title: track.title, artist: track.artist, artworkUrl: track.artworkChipUrl })), [isJacket, state.albums, state.tracks])
   const roundPreparationKey = roundPreparationKeyFromState(state)
   const [playbackSecondsRoundKey, setPlaybackSecondsRoundKey] = useState(roundPreparationKey)

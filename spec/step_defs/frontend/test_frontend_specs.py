@@ -1622,6 +1622,18 @@ def each_console_answer_suggestion_shows_artwork_and_artist(frontend_page: Page,
         assert suggestion.locator("span span").nth(1).inner_text() in artists
 
 
+@then("each console answer suggestion shows artist without artwork")
+def each_console_answer_suggestion_shows_artist_without_artwork(frontend_page: Page, socket_client):
+    suggestions = _answer_suggestions(frontend_page)
+    count = suggestions.count()
+    assert count > 0
+    artists = {album["artist"] for album in socket_client.state["albums"]}
+    for index in range(count):
+        suggestion = suggestions.nth(index)
+        expect(suggestion.locator("img")).to_have_count(0)
+        assert suggestion.locator("span span").nth(1).inner_text() in artists
+
+
 def _choose_answer(frontend_page: Page, title: str):
     _answer_input(frontend_page).fill(title)
     _answer_suggestions(frontend_page).filter(has_text=title).first.click(timeout=10000)
