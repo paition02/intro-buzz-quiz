@@ -27,14 +27,14 @@ function CircularValueSlider({
   const knobRadius = 15
   const hitOuter = radius + knobRadius
   const hitInner = radius - knobRadius
+  const gapDegrees = 20
+  const sweepDegrees = 360 - gapDegrees * 2
   const ringPathRef = useRef<SVGPathElement>(null)
   const activePointerIdRef = useRef<number | null>(null)
   const interactionRectRef = useRef<DOMRectReadOnly | null>(null)
   const latestValueRef = useRef(value)
-  const circumference = 2 * Math.PI * radius
   const progress = (value - min) / (max - min)
-  const dashOffset = circumference * (1 - progress)
-  const angle = progress * 360 - 90
+  const angle = gapDegrees + progress * sweepDegrees - 90
   const knobX = center + radius * Math.cos((angle * Math.PI) / 180)
   const knobY = center + radius * Math.sin((angle * Math.PI) / 180)
 
@@ -60,12 +60,20 @@ function CircularValueSlider({
     `a ${hitInner} ${hitInner} 0 1 0 ${-hitInner * 2} 0`,
   ].join(' ')
 
+  const pointAt = (degrees: number) => {
+    const radians = ((degrees - 90) * Math.PI) / 180
+    return `${center + radius * Math.cos(radians)} ${center + radius * Math.sin(radians)}`
+  }
+  const trackPath = `M ${pointAt(gapDegrees)} A ${radius} ${radius} 0 1 1 ${pointAt(360 - gapDegrees)}`
+
   const updateFromPoint = (clientX: number, clientY: number, rect: DOMRectReadOnly) => {
     const x = clientX - rect.left - rect.width / 2
     const y = clientY - rect.top - rect.height / 2
     let degrees = (Math.atan2(y, x) * 180) / Math.PI + 90
     if (degrees < 0) degrees += 360
-    const raw = min + (degrees / 360) * (max - min)
+    const inGap = degrees < gapDegrees || degrees > 360 - gapDegrees
+    const nearerEnd = latestValueRef.current - min < max - latestValueRef.current ? min : max
+    const raw = inGap ? nearerEnd : min + ((degrees - gapDegrees) / sweepDegrees) * (max - min)
     const stepped = Math.round(raw / step) * step
     const precision = step < 1 ? 1 : 0
     const nextValue = Number(Math.min(max, Math.max(min, stepped)).toFixed(precision))
@@ -126,17 +134,14 @@ function CircularValueSlider({
             onCommit?.(nextValue)
           }}
         />
-        <circle className="fill-none stroke-white/15" strokeWidth={trackWidth} cx={center} cy={center} r={radius} />
-        <circle
+        <path className="fill-none stroke-white/15" strokeWidth={trackWidth} strokeLinecap="round" d={trackPath} />
+        <path
           className="fill-none stroke-amber"
           strokeWidth={trackWidth}
           strokeLinecap="round"
-          transform="rotate(-90 96 96)"
-          cx={center}
-          cy={center}
-          r={radius}
-          strokeDasharray={circumference}
-          strokeDashoffset={dashOffset}
+          d={trackPath}
+          pathLength={1}
+          strokeDasharray={`${progress} 2`}
         />
         <circle className="fill-pink stroke-cream peer-focus-visible:stroke-white" strokeWidth={4} cx={knobX} cy={knobY} r={knobRadius} />
         <text className="fill-cream text-3xl font-black" dominantBaseline="middle" x={center} y={center - 4} textAnchor="middle">{formatValue(value)}</text>

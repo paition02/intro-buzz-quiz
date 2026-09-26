@@ -156,7 +156,7 @@ def _set_console_playback_seconds(frontend_page: Page, socket_client, seconds: i
     minimum = 0.1
     maximum = 30
     progress = (seconds - minimum) / (maximum - minimum)
-    slider = _press_playback_seconds_slider(frontend_page, progress * 360, 0.38)
+    slider = _press_playback_seconds_slider(frontend_page, 20 + progress * 320, 0.38)
     expect(slider).to_have_attribute("aria-valuenow", str(seconds), timeout=30000)
     setattr(frontend_page, "last_playback_seconds", seconds)
 
