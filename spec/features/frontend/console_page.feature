@@ -128,11 +128,11 @@ Feature: Host console page
     Then backend phase is "game" and step is "wrong"
     And player "player-1" score is 0
 
-  Scenario: Console answer card suggests albums in jacket mode
+  Scenario: Console answer card suggests albums without artwork in jacket mode
     Given the frontend console has actor "player-1" answering in a jacket game
     When the frontend types "Album" into the answer input
     Then the console answer suggestions are "Album 1,Album 2,Album 3"
-    And each console answer suggestion shows artwork and artist
+    And each console answer suggestion shows artist without artwork
     When the frontend chooses the round album in the answer card
     Then backend phase is "game" and step is "correct"
     And player "player-1" score is 1
