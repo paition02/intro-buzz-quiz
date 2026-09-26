@@ -123,6 +123,10 @@ async function fetchPages<T>(mk: MusicKit.MusicKitInstance, firstUrl: string, pa
   return items
 }
 
+function byName<T extends { name: string }>(a: T, b: T) {
+  return a.name.localeCompare(b.name)
+}
+
 function parentIdOf(resource: { relationships?: MusicApiParentRelationship }) {
   return resource.relationships?.parent?.data?.[0]?.id ?? PLAYLIST_ROOT_FOLDER_ID
 }
@@ -133,7 +137,7 @@ async function fetchLibraryPlaylists(mk: MusicKit.MusicKitInstance) {
     id: playlist.id,
     name: playlist.attributes?.name ?? playlist.id,
     parentId: parentIdOf(playlist),
-  }))
+  })).sort(byName)
 }
 
 // フォルダ API は Apple の公開ドキュメントに無いが、music.apple.com が使っている。
@@ -143,14 +147,14 @@ async function fetchLibraryPlaylistFolders(mk: MusicKit.MusicKitInstance) {
     id: folder.id,
     name: folder.attributes?.name ?? folder.id,
     parentId: parentIdOf(folder),
-  }))
+  })).sort(byName)
 }
 
 function isNotFound(error: unknown) {
   return typeof error === 'object' && error !== null && (error as { errorCode?: unknown }).errorCode === 'NOT_FOUND'
 }
 
-// フォルダ直下の中身をライブラリ順に取得し、フォルダを前に集める。
+// フォルダ直下の中身を取得し、フォルダを前に集めてそれぞれ名前順に並べる。
 async function fetchPlaylistFolderChildren(mk: MusicKit.MusicKitInstance, folderId: string) {
   let children: MusicApiPlaylistFolder[]
   try {
@@ -170,7 +174,7 @@ async function fetchPlaylistFolderChildren(mk: MusicKit.MusicKitInstance, folder
     if (child.type === 'library-playlist-folders') return [{ type: 'folder', id: child.id, name }]
     if (child.type === 'library-playlists') return [{ type: 'playlist', id: child.id, name }]
     return []
-  })
+  }).sort(byName)
   return [...nodes.filter((node) => node.type === 'folder'), ...nodes.filter((node) => node.type === 'playlist')]
 }
 
