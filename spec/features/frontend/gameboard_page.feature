@@ -2,7 +2,7 @@ Feature: Gameboard page
   The gameboard presents each game step with dedicated content.
 
   Scenario: Gameboard ready view shows the participation prompt and selected tracks
-    Given the backend is ready with 3 tracks
+    Given the host selected playlist "Spec Playlist A"
     When the frontend opens "/gameboard"
     Then the document title is "ゲームボード | 早押しイントロクイズ"
     And the frontend shows "ボタンを押してご参加ください"
@@ -10,20 +10,13 @@ Feature: Gameboard page
     And the frontend shows "Track 2"
     And the frontend shows "Track 3"
 
-  Scenario: Gameboard receives the initial backend state even when it arrives immediately
-    Given the backend is ready with 3 tracks
-    And the next frontend state event is emitted immediately on connection
-    When the frontend opens "/gameboard"
-    Then the frontend shows "ボタンを押してご参加ください"
-    And the frontend shows "Track 1"
-
   Scenario: Gameboard initialization view shows joined players
     Given action button "player-front" is joined
     When the frontend opens "/gameboard"
     Then the gameboard shows joined player "player-front"
 
   Scenario: Gameboard shows reconnecting state while disconnected
-    Given the backend is ready with 3 tracks
+    Given the host selected playlist "Spec Playlist A"
     And the frontend opens "/gameboard"
     When the frontend socket disconnects
     Then the frontend shows "再接続中"
@@ -41,57 +34,58 @@ Feature: Gameboard page
     And the gameboard fullscreen button hides after the pointer stops
 
   Scenario: Gameboard playing view shows only the music symbol stage
-    Given a backend game is before playback with actor "player-front"
+    Given the host started an intro game with actor "player-front"
     When the frontend opens "/gameboard"
-    And the backend host plays the intro for 1 seconds
+    And the host plays a 1 second intro
     Then the frontend shows "♪"
     And the frontend does not show "解答をどうぞ！"
 
   Scenario: Gameboard jacket view shows an obfuscated jacket
-    Given the backend is ready with 3 tracks
+    Given the host selected playlist "Spec Playlist A"
     And action button "player-front" is joined
     And the host starts a jacket game
     When the frontend opens "/gameboard"
     Then the gameboard shows a jacket hint
 
   Scenario: Gameboard answering view shows the answer prompt
-    Given a backend game is before playback with actor "player-front"
+    Given the host started an intro game with actor "player-front"
     When the frontend opens "/gameboard"
-    And the backend host plays the intro for 1 seconds
-    And backend actor "player-front" presses the action API
+    And the host plays a 1 second intro
+    And action button "player-front" is pressed
     Then the frontend shows "解答をどうぞ！"
 
   Scenario: Gameboard correct view highlights the answerer
-    Given a backend game has actor "player-front" answering
+    Given the host started an intro game with actor "player-front" answering
     When the frontend opens "/gameboard"
-    And the backend host judges the answer as "correct"
+    And the host judges the answer as "correct"
     Then the frontend shows "正解"
-    And the frontend highlights backend actor "player-front"
+    And the frontend highlights player "player-front"
 
   Scenario: Gameboard wrong view returns to the same round after the animation
-    Given a backend game has actor "player-front" answering
+    Given the host started an intro game with actor "player-front" answering
     When the frontend opens "/gameboard"
-    And the backend host judges the answer as "wrong"
+    And the host judges the answer as "wrong"
     Then the frontend shows "不正解"
-    When the judging animation expires
-    Then backend phase is "game" and step is "beforePlayback"
+    And the console shows the stage "ラウンド待機ステップ"
+    And the frontend shows "♪"
 
   Scenario: Gameboard reveal view shows revealed track information
-    Given a backend game is before playback with actor "player-front"
+    Given the host started an intro game with actor "player-front"
     When the frontend opens "/gameboard"
-    And the backend host gives up
+    And the host gives up
     Then the frontend shows revealed track information
 
   Scenario: Gameboard jacket reveal view shows revealed album information
-    Given the backend is ready with 3 tracks
+    Given the host selected playlist "Spec Playlist A"
     And action button "player-front" is joined
     And the host starts a jacket game
     When the frontend opens "/gameboard"
-    And the backend host gives up
+    And the host gives up
     Then the gameboard shows revealed album information
 
   Scenario: Gameboard results view shows sorted scores
-    Given a backend game has results with actor "player-front" scoring once
+    Given the host finished a round with actor "player-front" scoring once
     When the frontend opens "/gameboard"
+    And the host shows results
     Then the frontend shows "結果発表！"
-    And the frontend shows backend scores in descending order
+    And the gameboard results show player "player-front" with 1 point

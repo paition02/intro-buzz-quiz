@@ -15,13 +15,14 @@ Feature: Action button page
   Scenario: Pressing the action button joins before the game starts
     Given the frontend opens "/action"
     When the frontend action button is pressed
-    Then one joined player is shown in backend state
+    Then the host console shows a participant
 
   Scenario: Pressing during an answerable round marks the answerer on the board
     Given the frontend opens "/action"
+    And the gameboard is open
     When the frontend action button is pressed
-    Then one joined player is shown in backend state
-    When the backend starts a game with the joined action player
-    And the backend host plays the intro for 1 seconds
+    Then the host console shows a participant
+    When the host selects playlist "Spec Playlist A" and starts the game
+    And the host plays a 1 second intro
     And the frontend action button is pressed
-    Then the joined action player has answer rights
+    Then the gameboard asks for an answer

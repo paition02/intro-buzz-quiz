@@ -1,21 +1,51 @@
+"""Console, action, gameboard, and full-session scenarios.
+
+Every step drives the game the way a person does (console buttons, the
+action page, the action API) and verifies what the console, gameboard, and
+action pages show. The server's state is never read.
+"""
+
 from __future__ import annotations
 
 import json
 import math
+import re
 import time
 from urllib.parse import unquote, urlparse
 
-import httpx
-import socketio
 from playwright.sync_api import Page, Route, expect
 from pytest_bdd import given, parsers, scenarios, then, when
 
-from frontend.helpers import sample_tracks
+from frontend.conftest import prepare_page
+from frontend.helpers import (
+    ALBUM_NAME,
+    ARTIST_NAME,
+    STAGE_TIMEOUT_MS,
+    TRACK_TITLE,
+    album_first_track_id,
+    catalog_album_id,
+    click,
+    expect_answerer,
+    expect_no_participants,
+    expect_no_selection,
+    expect_participant,
+    expect_results_score,
+    expect_score,
+    expect_selection,
+    expect_some_participant,
+    expect_stage,
+    expect_stage_in,
+    library_album_id_for,
+    play_button,
+    play_intro,
+    round_info_title,
+    round_track_id,
+)
 from frontend.musickit_mock import (
     library_song_id,
-    set_musickit_library_albums,
     set_musickit_library_data,
     set_musickit_library_folders,
+    set_musickit_library_only_playlist,
     set_musickit_library_song_albums,
 )
 
@@ -27,96 +57,113 @@ scenarios(
     "../../features/integration/game_session.feature",
 )
 
+# The action API accepts one action per player every 250ms; a join followed by a
+# buzz within the cooldown is ignored, so steps that join wait it out.
+ACTION_COOLDOWN_MS = 1100
 
-def _state(socket_client):
-    return socket_client.state
-
-
-def _round_track(state):
-    round_index = state["roundIndex"]
-    if round_index < 0:
-        return None
-    track_ids = state["shuffledTrackIds"]
-    if round_index >= len(track_ids):
-        return None
-    track_id = track_ids[round_index]
-    return next((track for track in state["tracks"] if track["id"] == track_id), None)
+KNOWN_PLAYLISTS = ["Spec Playlist A", "Spec Playlist B"]
 
 
-def _set_ready_tracks(socket_client, count: int = 3):
-    socket_client.emit("console:ready")
-    tracks = sample_tracks(count)
-    return socket_client.emit(
-        "console:select-playlists",
-        {"selectedPlaylistIds": ["playlist-a"], "tracks": tracks},
-    )
+# Pages ----------------------------------------------------------------------
+#
+# ``frontend_page`` is the page a scenario opens itself. A scenario may also need
+# the other surfaces of the same game: the host console, the gameboard, and the
+# action pages. Those open lazily in the same browser context.
 
 
-def _wait_for_joined_count(socket_client, count: int):
-    deadline = time.time() + 5
-    while time.time() < deadline:
-        if len(socket_client.state["players"]) == count:
-            return socket_client.state
-        socket_client.sleep(0.02)
-    raise AssertionError(f"joined player count {count} not observed; latest={socket_client.state}")
+def _pages(frontend_page: Page) -> dict[str, Page]:
+    pages = getattr(frontend_page, "integration_pages", None)
+    if pages is None:
+        pages = {}
+        setattr(frontend_page, "integration_pages", pages)
+    return pages
 
 
-def _wait_for_joined_player(socket_client, actor: str):
-    deadline = time.time() + 5
-    while time.time() < deadline:
-        if any(player["id"] == actor for player in socket_client.state["players"]):
-            return socket_client.state
-        socket_client.sleep(0.02)
-    raise AssertionError(f"joined player {actor} not observed; latest={socket_client.state}")
+def _integration_page(frontend_page: Page, name: str) -> Page:
+    pages = _pages(frontend_page)
+    if name not in pages:
+        pages[name] = frontend_page.context.new_page()
+    return pages[name]
 
 
-def _wait_for_player_joined_state(socket_client, actor: str, joined: bool):
-    deadline = time.time() + 5
-    while time.time() < deadline:
-        players = [player for player in socket_client.state["players"] if player["id"] == actor]
-        if joined and len(players) == 1:
-            return socket_client.state
-        if not joined and len(players) == 0:
-            return socket_client.state
-        socket_client.sleep(0.02)
-    raise AssertionError(f"player {actor} joined={joined} not observed; latest={socket_client.state}")
+def _path(page: Page) -> str:
+    return urlparse(page.url).path
 
 
-def _current_backend_state(socket_client):
-    server_url = socket_client.server_url
-    events = []
-    client = socketio.Client(
-        reconnection=False,
-        logger=False,
-        engineio_logger=False,
-    )
-    client.on("state", lambda payload: events.append(payload))
-    client.connect(server_url, transports=["websocket"], socketio_path="socket.io", wait_timeout=5)
-    try:
-        deadline = time.time() + 5
-        while time.time() < deadline:
-            if events:
-                return events[-1]
-            socket_client.sleep(0.02)
-        raise AssertionError("no backend state received")
-    finally:
-        if client.connected:
-            client.disconnect()
+def _console(frontend_page: Page) -> Page:
+    if _path(frontend_page) == "/console":
+        return frontend_page
+    pages = _pages(frontend_page)
+    if "console" not in pages:
+        page = frontend_page.context.new_page()
+        prepare_page(page)
+        page.goto("/console")
+        pages["console"] = page
+    return pages["console"]
 
 
-def _wait_for_backend_state(socket_client, timeout: float = 30, **expected):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        state = socket_client.state
-        if all(state.get(key) == value for key, value in expected.items()):
-            return state
-        socket_client.sleep(0.05)
-    raise AssertionError(f"state with {expected} not observed; latest={socket_client.state}")
+def _board(frontend_page: Page) -> Page:
+    if _path(frontend_page) == "/gameboard":
+        return frontend_page
+    pages = _pages(frontend_page)
+    if "gameboard" not in pages:
+        page = _integration_page(frontend_page, "gameboard")
+        page.goto("/gameboard")
+    return pages["gameboard"]
+
+
+def _log_in(console: Page):
+    if console.get_by_text("Apple Music ログイン済み", exact=True).count() == 0:
+        console.get_by_role("button", name="ログイン", exact=True).click(timeout=10000)
+    expect(console.get_by_text("Apple Music ログイン済み", exact=True)).to_be_visible(timeout=STAGE_TIMEOUT_MS)
+    expect(console.get_by_text("Spec Playlist A", exact=True)).to_be_visible(timeout=STAGE_TIMEOUT_MS)
+
+
+def _select_playlist(console: Page, playlist: str, tracks: int = 3):
+    _log_in(console)
+    console.get_by_role("button", name=playlist, exact=True).click(timeout=10000)
+    expect_selection(console, 1, tracks)
+
+
+def _join(frontend_page: Page, http, actor: str):
+    response = http.post(f"/api/act/{actor}")
+    assert response.status_code in {200, 204}, response.status_code
+    expect_participant(_console(frontend_page), actor)
+    frontend_page.wait_for_timeout(ACTION_COOLDOWN_MS)
+
+
+def _start(console: Page, mode: str):
+    click(console, "イントロで開始" if mode == "intro" else "ジャケットで開始")
+    expect_stage(console, "ラウンド待機ステップ")
+    if mode == "intro":
+        expect(play_button(console)).to_be_enabled(timeout=STAGE_TIMEOUT_MS)
+    else:
+        expect(console.get_by_role("slider", name="ヒントレベル")).to_be_visible(timeout=STAGE_TIMEOUT_MS)
+
+
+def _buzz(frontend_page: Page, http, actor: str):
+    response = http.post(f"/api/act/{actor}")
+    assert response.status_code == 200, response.status_code
+    expect_stage(_console(frontend_page), "解答ステップ")
+
+
+def _judge(console: Page, result: str):
+    click(console, {"correct": "正解", "wrong": "不正解"}[result])
+    expect_stage(console, {"correct": "正答ステップ", "wrong": "誤答ステップ"}[result])
+
+
+def _selected_track_ids(frontend_page: Page) -> set[str]:
+    """Every track the mocked library can put into the game."""
+    mock = getattr(frontend_page, "music_kit_api_mock")
+    return {track_id for playlist in mock.data.library_playlists.values() for track_id in playlist.track_ids}
+
+
+# Slider geometry -------------------------------------------------------------
 
 
 def _playback_seconds_slider(frontend_page: Page):
     slider = frontend_page.get_by_role("slider", name="再生秒数")
-    expect(slider).to_be_visible(timeout=30000)
+    expect(slider).to_be_visible(timeout=STAGE_TIMEOUT_MS)
     return slider
 
 
@@ -151,20 +198,15 @@ def _touch_swipe_up_on_playback_seconds_slider(frontend_page: Page, degrees: flo
     frontend_page.wait_for_timeout(500)
 
 
-def _set_console_playback_seconds(frontend_page: Page, socket_client, seconds: int):
-    _ = socket_client
+def _set_console_playback_seconds_on_ring(frontend_page: Page, seconds: int):
     minimum = 0.1
     maximum = 30
     progress = (seconds - minimum) / (maximum - minimum)
     slider = _press_playback_seconds_slider(frontend_page, 20 + progress * 320, 0.38)
-    expect(slider).to_have_attribute("aria-valuenow", str(seconds), timeout=30000)
-    setattr(frontend_page, "last_playback_seconds", seconds)
+    expect(slider).to_have_attribute("aria-valuenow", str(seconds), timeout=STAGE_TIMEOUT_MS)
 
 
-def _ready_play_button(frontend_page: Page):
-    button = frontend_page.get_by_role("button", name="再生", exact=True)
-    expect(button).to_be_enabled(timeout=30000)
-    return button
+# MusicKit HTTP mock helpers --------------------------------------------------
 
 
 def _route_json(route: Route, payload: dict, status: int = 200):
@@ -258,26 +300,12 @@ def _wait_for_fullscreen_button_style(page: Page, *, opacity: str, pointer_event
     )
 
 
-def _prepare_game(socket_client, actor: str = "player-front"):
-    _set_ready_tracks(socket_client, 3)
-    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}")
-    assert response.status_code == 200
-    _wait_for_joined_count(socket_client, 1)
-    # The action API intentionally has a cooldown shared by join and buzz.
-    socket_client.sleep(1.05)
-    socket_client.emit("console:start", {"quizMode": "intro"})
-    socket_client.emit("console:next-round")
-    socket_client.wait_for_state(phase="game", step="beforePlayback")
-    return socket_client.state
+# Opening pages ---------------------------------------------------------------
 
 
 @when(parsers.parse('the frontend opens "{path}"'))
-def open_frontend(frontend_page: Page, path: str):
-    frontend_page.goto(path)
-
-
 @given(parsers.parse('the frontend opens "{path}"'))
-def given_open_frontend(frontend_page: Page, path: str):
+def open_frontend(frontend_page: Page, path: str):
     frontend_page.goto(path)
 
 
@@ -316,6 +344,20 @@ def musickit_already_authorized(frontend_page: Page):
     )
 
 
+@given("the gameboard is open")
+def gameboard_is_open(frontend_page: Page):
+    _board(frontend_page)
+
+
+@given(parsers.parse('action button "{actor}" is open'))
+def action_button_is_open(frontend_page: Page, actor: str):
+    page = _integration_page(frontend_page, f"action:{actor}")
+    page.goto("/action")
+
+
+# MusicKit library arrangements ----------------------------------------------
+
+
 @given("mocked MusicKit has paginated library playlists")
 def mocked_musickit_paginated_library_playlists(frontend_page: Page):
     filler_playlists = {
@@ -330,8 +372,7 @@ def mocked_musickit_paginated_library_playlists(frontend_page: Page):
 
 
 @given(parsers.parse('the frontend console is logged into mocked MusicKit with paginated tracks for playlist "{playlist}"'))
-def frontend_console_logged_in_with_paginated_tracks(frontend_page: Page, socket_client, playlist: str):
-    _ = socket_client
+def frontend_console_logged_in_with_paginated_tracks(frontend_page: Page, playlist: str):
     set_musickit_library_data(
         frontend_page,
         {"playlist-a": _track_ids(101)},
@@ -344,13 +385,11 @@ def frontend_console_logged_in_with_paginated_tracks(frontend_page: Page, socket
 
 def _log_in_console(frontend_page: Page):
     frontend_page.goto("/console")
-    frontend_page.get_by_role("button", name="ログイン", exact=True).click()
-    expect(frontend_page.get_by_text("Spec Playlist A", exact=True)).to_be_visible()
+    _log_in(frontend_page)
 
 
 @given('the frontend console is logged into mocked MusicKit with playlist "Spec Playlist B" in folder "Spec Folder"')
-def frontend_console_logged_in_with_playlist_folder(frontend_page: Page, socket_client):
-    _ = socket_client
+def frontend_console_logged_in_with_playlist_folder(frontend_page: Page):
     set_musickit_library_folders(
         frontend_page,
         root_children=["playlist-a", "folder-spec"],
@@ -360,8 +399,7 @@ def frontend_console_logged_in_with_playlist_folder(frontend_page: Page, socket_
 
 
 @given('the frontend console is logged into mocked MusicKit with playlist "Spec Playlist B" in subfolder "Spec Sub Folder" of folder "Spec Folder"')
-def frontend_console_logged_in_with_playlist_subfolder(frontend_page: Page, socket_client):
-    _ = socket_client
+def frontend_console_logged_in_with_playlist_subfolder(frontend_page: Page):
     set_musickit_library_folders(
         frontend_page,
         root_children=["folder-spec"],
@@ -374,8 +412,7 @@ def frontend_console_logged_in_with_playlist_subfolder(frontend_page: Page, sock
 
 
 @given('the frontend console is logged into mocked MusicKit with empty folder "Spec Empty Folder"')
-def frontend_console_logged_in_with_empty_folder(frontend_page: Page, socket_client):
-    _ = socket_client
+def frontend_console_logged_in_with_empty_folder(frontend_page: Page):
     set_musickit_library_folders(
         frontend_page,
         root_children=["folder-empty", "playlist-a", "playlist-b"],
@@ -385,8 +422,7 @@ def frontend_console_logged_in_with_empty_folder(frontend_page: Page, socket_cli
 
 
 @given('the frontend console is logged into mocked MusicKit with 101 playlists in folder "Spec Folder"')
-def frontend_console_logged_in_with_paginated_folder(frontend_page: Page, socket_client):
-    _ = socket_client
+def frontend_console_logged_in_with_paginated_folder(frontend_page: Page):
     folder_playlist_ids = [f"playlist-filler-{index}" for index in range(1, 101)] + ["playlist-page-2"]
     set_musickit_library_data(
         frontend_page,
@@ -404,12 +440,12 @@ def frontend_console_logged_in_with_paginated_folder(frontend_page: Page, socket
 @when(parsers.parse('the frontend opens folder "{folder}"'))
 def frontend_opens_folder(frontend_page: Page, folder: str):
     folder_button = frontend_page.get_by_role("button", name=folder, exact=True)
-    expect(folder_button).to_be_visible(timeout=30000)
+    expect(folder_button).to_be_visible(timeout=STAGE_TIMEOUT_MS)
     # 親フォルダの li も子フォルダのボタンを含むので、同じ行の開閉ボタンをたどる。
     toggle = folder_button.locator("xpath=following-sibling::button")
     expect(toggle).to_have_accessible_name("フォルダを開く")
     toggle.click(timeout=10000)
-    expect(toggle).to_have_accessible_name("フォルダを閉じる", timeout=30000)
+    expect(toggle).to_have_accessible_name("フォルダを閉じる", timeout=STAGE_TIMEOUT_MS)
 
 
 @when(parsers.parse('the frontend searches playlists for "{text}"'))
@@ -447,8 +483,7 @@ def musickit_folder_children_page_2_requested(frontend_page: Page, folder_id: st
 
 
 @given(parsers.parse('the frontend console is logged into mocked MusicKit with playlist "{playlist}" containing {count:d} tracks'))
-def frontend_console_logged_in_with_long_playlist(frontend_page: Page, socket_client, playlist: str, count: int):
-    _ = socket_client
+def frontend_console_logged_in_with_long_playlist(frontend_page: Page, playlist: str, count: int):
     playlist_id = "playlist-long"
     set_musickit_library_data(
         frontend_page,
@@ -461,15 +496,14 @@ def frontend_console_logged_in_with_long_playlist(frontend_page: Page, socket_cl
 
 
 @given(parsers.parse('the frontend console selected mocked playlist "{playlist}" containing {count:d} tracks'))
-def frontend_console_selected_long_playlist(frontend_page: Page, socket_client, playlist: str, count: int):
-    frontend_console_logged_in_with_long_playlist(frontend_page, socket_client, playlist, count)
+def frontend_console_selected_long_playlist(frontend_page: Page, playlist: str, count: int):
+    frontend_console_logged_in_with_long_playlist(frontend_page, playlist, count)
     frontend_page.get_by_role("button", name=playlist, exact=True).click()
-    expect(frontend_page.get_by_text(f"1件のプレイリスト、{count}曲を選択中", exact=True)).to_be_visible(timeout=30000)
+    expect_selection(frontend_page, 1, count)
 
 
 @given(parsers.parse('the frontend console is logged into mocked MusicKit with playlist "{playlist}" on two library albums of one album'))
-def frontend_console_logged_in_with_two_library_albums_of_one_album(frontend_page: Page, socket_client, playlist: str):
-    _ = socket_client
+def frontend_console_logged_in_with_two_library_albums_of_one_album(frontend_page: Page, playlist: str):
     set_musickit_library_song_albums(
         frontend_page,
         {"l.release1": ["track-1", "track-2"], "l.release2": ["track-3"]},
@@ -482,8 +516,7 @@ def frontend_console_logged_in_with_two_library_albums_of_one_album(frontend_pag
 
 
 @given("the frontend console is logged into mocked MusicKit with overlapping playlists")
-def frontend_console_logged_in_with_overlapping_playlists(frontend_page: Page, socket_client):
-    _ = socket_client
+def frontend_console_logged_in_with_overlapping_playlists(frontend_page: Page):
     set_musickit_library_data(
         frontend_page,
         {
@@ -495,6 +528,12 @@ def frontend_console_logged_in_with_overlapping_playlists(frontend_page: Page, s
     frontend_page.get_by_role("button", name="ログイン", exact=True).click()
     expect(frontend_page.get_by_text("Spec Playlist A", exact=True)).to_be_visible()
     expect(frontend_page.get_by_text("Spec Playlist B", exact=True)).to_be_visible()
+
+
+@given(parsers.parse('library playlist "{playlist}" holds library songs without catalog counterparts'))
+def library_playlist_holds_library_songs(frontend_page: Page, playlist: str):
+    assert playlist == "Spec Playlist A"
+    set_musickit_library_only_playlist(frontend_page, "playlist-a")
 
 
 @given(parsers.parse('mocked MusicKit configuration fails with "{message}"'))
@@ -515,17 +554,134 @@ def mocked_musickit_library_loading_fails(frontend_page: Page, message: str):
 
 
 @given(parsers.parse('the frontend console is logged into mocked MusicKit with track loading failure "{message}"'))
-def frontend_console_logged_in_with_track_loading_failure(frontend_page: Page, socket_client, message: str):
-    _ = socket_client
+def frontend_console_logged_in_with_track_loading_failure(frontend_page: Page, message: str):
     _install_playlist_track_error(frontend_page, "playlist-a", message)
     frontend_page.goto("/console")
     frontend_page.get_by_role("button", name="ログイン", exact=True).click()
     expect(frontend_page.get_by_text("Spec Playlist A", exact=True)).to_be_visible()
 
 
+@given("the frontend console is logged into mocked MusicKit")
+@given("the host console is logged into mocked MusicKit")
+def frontend_console_logged_in(frontend_page: Page):
+    _log_in_console(frontend_page)
+
+
+@given(parsers.parse('the frontend console selected playlist "{playlist}"'))
+def frontend_console_selected_playlist(frontend_page: Page, playlist: str):
+    frontend_page.goto("/console")
+    _select_playlist(frontend_page, playlist)
+
+
+@given(parsers.parse('the host selected playlist "{playlist}"'))
+@given(parsers.parse('the host selects playlist "{playlist}"'))
+def host_selected_playlist(frontend_page: Page, playlist: str):
+    _select_playlist(_console(frontend_page), playlist)
+
+
+# Generic page assertions -----------------------------------------------------
+
+
 @then(parsers.parse('the document title is "{title}"'))
 def document_title(frontend_page: Page, title: str):
     expect(frontend_page).to_have_title(title)
+
+
+@then(parsers.parse('the frontend shows "{text}"'))
+def frontend_shows(frontend_page: Page, text: str):
+    if text == "正解":
+        text = "○"
+    if text == "不正解":
+        text = "×"
+    if text == "再接続中":
+        text = "再接続中…"
+    expect(frontend_page.get_by_text(text, exact=True).first).to_be_visible(timeout=STAGE_TIMEOUT_MS)
+
+
+@then(parsers.parse('the frontend does not show "{text}"'))
+def frontend_does_not_show(frontend_page: Page, text: str):
+    expect(frontend_page.get_by_text(text, exact=True)).to_have_count(0)
+
+
+@when("the frontend socket disconnects")
+def frontend_socket_disconnects(frontend_page: Page):
+    frontend_page.context.set_offline(True)
+
+
+@when("the frontend socket reconnects")
+def frontend_socket_reconnects(frontend_page: Page):
+    frontend_page.context.set_offline(False)
+
+
+@when(parsers.parse('the frontend clicks "{label}"'))
+def frontend_clicks(frontend_page: Page, label: str):
+    button = frontend_page.get_by_role("button", name=label, exact=True)
+    if label == "再生":
+        expect(button).to_be_enabled(timeout=STAGE_TIMEOUT_MS)
+    if label == "次のラウンドへ":
+        # Playback steps compare the new round against the round being left.
+        setattr(frontend_page, "previous_round_track_id", round_track_id(frontend_page))
+        if hasattr(frontend_page, "manifest_log"):
+            _mark_advance(frontend_page)
+    button.scroll_into_view_if_needed(timeout=10000)
+    button.click(timeout=10000)
+
+
+@when(parsers.parse('the frontend opens playlist "{playlist}"'))
+def frontend_opens_playlist(frontend_page: Page, playlist: str):
+    playlist_button = frontend_page.get_by_role("button", name=playlist, exact=True)
+    expect(playlist_button).to_be_visible(timeout=STAGE_TIMEOUT_MS)
+    playlist_item = frontend_page.locator("li").filter(has=playlist_button).first
+    playlist_item.get_by_role("button", name="プレイリストを開く").click(timeout=10000)
+    expect(playlist_item.get_by_role("button", name="プレイリストを閉じる")).to_be_visible(timeout=STAGE_TIMEOUT_MS)
+
+
+@then(parsers.parse('the selected playlists are "{names}"'))
+def selected_playlists_are(frontend_page: Page, names: str):
+    expected = [value for value in names.split(",") if value]
+    expect(frontend_page.get_by_text(re.compile(rf"^{len(expected)}件のプレイリスト、\d+曲を選択中$"))).to_be_visible(timeout=STAGE_TIMEOUT_MS)
+    # A playlist inside a closed folder is not on screen; its folder shows the selection instead.
+    for name in KNOWN_PLAYLISTS:
+        button = frontend_page.get_by_role("button", name=name, exact=True)
+        if button.count():
+            expect(button).to_have_attribute("aria-pressed", "true" if name in expected else "false")
+
+
+@then("no playlist is selected")
+def no_playlist_selected(frontend_page: Page):
+    expect_no_selection(frontend_page)
+    for name in KNOWN_PLAYLISTS:
+        button = frontend_page.get_by_role("button", name=name, exact=True)
+        if button.count():
+            expect(button).to_have_attribute("aria-pressed", "false")
+
+
+@then("the console shows no selected playlists")
+def console_shows_no_selected_playlists(frontend_page: Page):
+    expect_no_selection(_console(frontend_page))
+
+
+@then(parsers.parse('the console shows the stage "{stage}"'))
+def console_shows_stage(frontend_page: Page, stage: str):
+    expect_stage(_console(frontend_page), stage)
+
+
+@then("the console returns to waiting after the intro duration")
+def console_returns_to_waiting(frontend_page: Page):
+    expect_stage(_console(frontend_page), "ラウンド待機ステップ")
+
+
+@then("the console shows no participants")
+def console_shows_no_participants(frontend_page: Page):
+    expect_no_participants(_console(frontend_page))
+
+
+@then("the host console shows a participant")
+def host_console_shows_participant(frontend_page: Page):
+    expect_some_participant(_console(frontend_page))
+
+
+# Action page -----------------------------------------------------------------
 
 
 @then("the action button has no visible text")
@@ -535,54 +691,271 @@ def action_button_has_no_visible_text(frontend_page: Page):
     assert button.inner_text().strip() == ""
 
 
+def _press_action_page_button(page: Page):
+    with page.expect_response(lambda response: "/api/act/" in response.url):
+        page.get_by_role("button", name="早押しボタン").click()
+
+
 @then("the action page keeps the same player identity after reload")
-def action_page_keeps_same_player_identity(frontend_page: Page, socket_client):
-    with frontend_page.expect_response(lambda response: "/api/act/" in response.url):
-        frontend_page.get_by_role("button", name="早押しボタン").click()
-    state = _wait_for_joined_count(socket_client, 1)
-    actor = state["players"][0]["id"]
-    socket_client.sleep(1.05)
+def action_page_keeps_same_player_identity(frontend_page: Page):
+    console = _console(frontend_page)
+    _press_action_page_button(frontend_page)
+    expect_some_participant(console)
+    frontend_page.wait_for_timeout(ACTION_COOLDOWN_MS)
     frontend_page.reload()
-    with frontend_page.expect_response(lambda response: "/api/act/" in response.url):
-        frontend_page.get_by_role("button", name="早押しボタン").click()
-    _wait_for_player_joined_state(socket_client, actor, False)
+    # The same identity toggles the same participant off again.
+    _press_action_page_button(frontend_page)
+    expect_no_participants(console)
 
 
 @when("the frontend action button is pressed")
 def press_action_button(frontend_page: Page):
-    with frontend_page.expect_response(lambda response: "/api/act/" in response.url):
-        frontend_page.get_by_role("button", name="早押しボタン").click()
+    _press_action_page_button(frontend_page)
+    frontend_page.wait_for_timeout(ACTION_COOLDOWN_MS)
 
 
-@then("one joined player is shown in backend state")
-def one_joined_player(frontend_page: Page, socket_client):
-    state = _wait_for_joined_count(socket_client, 1)
-    actor = state["players"][0]["id"]
-    setattr(frontend_page, "joined_action_actor", actor)
+@when(parsers.parse('the host selects playlist "{playlist}" and starts the game'))
+def host_selects_playlist_and_starts(frontend_page: Page, playlist: str):
+    console = _console(frontend_page)
+    _select_playlist(console, playlist)
+    _start(console, "intro")
 
 
-@when("the backend starts a game with the joined action player")
-def backend_starts_game_with_joined_action_player(frontend_page: Page, socket_client):
-    actor = getattr(frontend_page, "joined_action_actor", None)
-    if actor is None:
-        state = _wait_for_joined_count(socket_client, 1)
-        actor = state["players"][0]["id"]
-        setattr(frontend_page, "joined_action_actor", actor)
-    _set_ready_tracks(socket_client, 3)
-    socket_client.sleep(1.05)
-    socket_client.emit("console:start", {"quizMode": "intro"})
-    socket_client.wait_for_state(phase="game", step="beforePlayback")
+# Host actions ----------------------------------------------------------------
 
 
-@then("the joined action player has answer rights")
-def joined_action_player_has_answer_rights(frontend_page: Page, socket_client):
-    actor = getattr(frontend_page, "joined_action_actor")
-    _wait_for_backend_state(socket_client, step="answering", answererId=actor)
+@given(parsers.parse('action button "{actor}" is joined'))
+def action_button_is_joined(frontend_page: Page, http, actor: str):
+    _join(frontend_page, http, actor)
 
 
-@given(parsers.parse('the backend is ready with {count:d} tracks'))
-def backend_ready_with_tracks(socket_client, count: int):
-    _set_ready_tracks(socket_client, count)
+@given(parsers.parse('action buttons "{actors}" are joined'))
+def action_buttons_are_joined(frontend_page: Page, http, actors: str):
+    for actor in [value for value in actors.split(",") if value]:
+        _join(frontend_page, http, actor)
+
+
+@given(parsers.parse('the host started an intro game with actor "{actor}"'))
+def host_started_intro_game(frontend_page: Page, http, actor: str):
+    console = _console(frontend_page)
+    _select_playlist(console, "Spec Playlist A")
+    _join(frontend_page, http, actor)
+    _start(console, "intro")
+
+
+@given(parsers.parse('the host started an intro game with actor "{actor}" answering'))
+def host_started_intro_game_answering(frontend_page: Page, http, actor: str):
+    host_started_intro_game(frontend_page, http, actor)
+    play_intro(_console(frontend_page), 1)
+    _buzz(frontend_page, http, actor)
+
+
+@given(parsers.parse('the host finished a round with actor "{actor}" scoring once'))
+def host_finished_round_scoring_once(frontend_page: Page, http, actor: str):
+    host_started_intro_game_answering(frontend_page, http, actor)
+    console = _console(frontend_page)
+    _judge(console, "correct")
+    expect_stage(console, "正解発表ステップ")
+
+
+@when("the host starts the game")
+@given("the host starts the game")
+def host_starts_game(frontend_page: Page):
+    _start(_console(frontend_page), "intro")
+
+
+@when("the host starts a jacket game")
+@given("the host starts a jacket game")
+def host_starts_jacket_game(frontend_page: Page):
+    _start(_console(frontend_page), "jacket")
+
+
+@when(parsers.parse("the host plays a {seconds:d} second intro"))
+def host_plays_seconds(frontend_page: Page, seconds: int):
+    play_intro(_console(frontend_page), seconds)
+
+
+@when("the host plays the intro")
+def host_plays_intro(frontend_page: Page):
+    console = _console(frontend_page)
+    setattr(frontend_page, "last_round_title", round_info_title(console))
+    play_intro(console, 10)
+
+
+@when(parsers.parse('the host judges the answer as "{result}"'))
+def host_judges_answer(frontend_page: Page, result: str):
+    _judge(_console(frontend_page), result)
+
+
+@when("the host gives up")
+def host_gives_up(frontend_page: Page):
+    console = _console(frontend_page)
+    click(console, "ギブアップ")
+    expect_stage(console, "正解発表ステップ")
+
+
+@when("the host shows results")
+@given("the host shows results")
+def host_shows_results(frontend_page: Page):
+    console = _console(frontend_page)
+    click(console, "結果発表へ")
+    expect_stage(console, "結果発表ステップ")
+
+
+@when("the host advances to the next round")
+def host_advances_next_round(frontend_page: Page):
+    console = _console(frontend_page)
+    click(console, "次のラウンドへ")
+    expect_stage(console, "ラウンド待機ステップ")
+
+
+@when("the host starts the next game setup")
+def host_starts_next_game_setup(frontend_page: Page):
+    console = _console(frontend_page)
+    click(console, "次のゲームへ")
+    expect_stage(console, "準備フェーズ")
+
+
+@when("the host resets the game")
+def host_resets_game(frontend_page: Page):
+    console = _console(frontend_page)
+    click(console, "リセット")
+    # A logged-in console readies itself again right after the reset.
+    expect_stage_in(console, ["初期化フェーズ", "準備フェーズ"])
+
+
+@given(parsers.parse('player "{actor}" has scored once'))
+def player_has_scored_once(frontend_page: Page, http, actor: str):
+    console = _console(frontend_page)
+    play_intro(console, 1)
+    _buzz(frontend_page, http, actor)
+    _judge(console, "correct")
+    expect_stage(console, "正解発表ステップ")
+
+
+@when(parsers.parse('action button "{actor}" is pressed'))
+def action_button_is_pressed(frontend_page: Page, http, actor: str):
+    response = http.post(f"/api/act/{actor}")
+    last = getattr(frontend_page, "last_action_responses", {})
+    last[actor] = response.status_code
+    setattr(frontend_page, "last_action_responses", last)
+    if response.status_code == 200:
+        frontend_page.wait_for_timeout(ACTION_COOLDOWN_MS)
+
+
+@then(parsers.parse('action button "{actor}" receives no reaction'))
+def action_button_receives_no_reaction(frontend_page: Page, actor: str):
+    assert getattr(frontend_page, "last_action_responses", {}).get(actor) == 204
+
+
+@when("the intro playback duration expires without a buzz")
+def intro_playback_duration_expires(frontend_page: Page):
+    expect_stage(_console(frontend_page), "ラウンド待機ステップ")
+
+
+@then("the console shows the same track waiting before playback")
+def console_same_track_waiting(frontend_page: Page):
+    console = _console(frontend_page)
+    expect_stage(console, "ラウンド待機ステップ")
+    assert round_info_title(console) == getattr(frontend_page, "last_round_title")
+
+
+@then("the console can play the intro again")
+def console_can_play_intro_again(frontend_page: Page):
+    expect(play_button(_console(frontend_page))).to_be_enabled(timeout=STAGE_TIMEOUT_MS)
+
+
+# Gameboard -------------------------------------------------------------------
+
+
+@then(parsers.parse('the gameboard shows joined player "{actor}"'))
+def gameboard_shows_joined_player(frontend_page: Page, actor: str):
+    expect_participant(_board(frontend_page), actor)
+
+
+@then(parsers.parse('the frontend highlights player "{actor}"'))
+def frontend_highlights_player(frontend_page: Page, actor: str):
+    expect_participant(frontend_page, actor)
+
+
+@then("the gameboard shows the playing stage is ready")
+@then("the gameboard shows the intro is playing")
+def gameboard_shows_music_symbol(frontend_page: Page):
+    expect(_board(frontend_page).get_by_text("♪", exact=True).first).to_be_visible(timeout=STAGE_TIMEOUT_MS)
+
+
+@then("the gameboard asks for an answer")
+def gameboard_asks_for_answer(frontend_page: Page):
+    expect(_board(frontend_page).get_by_role("heading", name="解答をどうぞ！", exact=True)).to_be_visible(timeout=STAGE_TIMEOUT_MS)
+
+
+@then(parsers.parse('the gameboard shows "{actor}" answering'))
+def gameboard_shows_answering(frontend_page: Page, actor: str):
+    expect_answerer(_board(frontend_page), actor)
+
+
+@then(parsers.parse('the gameboard shows "{text}"'))
+def gameboard_shows_text(frontend_page: Page, text: str):
+    if text == "正解":
+        text = "○"
+    if text == "不正解":
+        text = "×"
+    expect(_board(frontend_page).get_by_text(text, exact=True).first).to_be_visible(timeout=STAGE_TIMEOUT_MS)
+
+
+@then(parsers.re(r'the gameboard shows player "(?P<actor>[^"]+)" with (?P<score>\d+) points?'))
+def gameboard_shows_player_score(frontend_page: Page, actor: str, score: str):
+    expect_score(_board(frontend_page), actor, int(score))
+
+
+@then(parsers.re(r'the gameboard results show player "(?P<actor>[^"]+)" with (?P<score>\d+) points?'))
+def gameboard_results_show_player_score(frontend_page: Page, actor: str, score: str):
+    expect_results_score(_board(frontend_page), actor, int(score))
+
+
+@then("the console plays a result sound")
+def console_plays_result_sound(frontend_page: Page):
+    _console(frontend_page).wait_for_function(
+        """
+        () => {
+          return (window.__introBuzzAudioEvents ?? []).some((event) => event.type === 'oscillator.start');
+        }
+        """,
+        timeout=STAGE_TIMEOUT_MS,
+    )
+
+
+@then("the frontend shows revealed track information")
+def frontend_shows_revealed_track(frontend_page: Page):
+    _expect_any_text(frontend_page, ["Track 1", "Track 2", "Track 3"])
+    _expect_any_text(frontend_page, ["Artist 1", "Artist 2", "Artist 3"])
+
+
+@then("the gameboard shows revealed track information")
+def gameboard_shows_revealed_track_information(frontend_page: Page):
+    page = _board(frontend_page)
+    _expect_any_text(page, ["Track 1", "Track 2", "Track 3"])
+    _expect_any_text(page, ["Artist 1", "Artist 2", "Artist 3"])
+
+
+@then("the gameboard shows a jacket hint")
+def gameboard_shows_jacket_hint(frontend_page: Page):
+    expect(_board(frontend_page).get_by_label("ジャケットヒント")).to_be_visible(timeout=STAGE_TIMEOUT_MS)
+
+
+@then("the gameboard shows revealed album information")
+def gameboard_shows_revealed_album_information(frontend_page: Page):
+    _expect_any_text(_board(frontend_page), ["Album 1", "Album 2", "Album 3"])
+
+
+@then("the gameboard shows the participation prompt")
+def gameboard_shows_participation_prompt(frontend_page: Page):
+    expect(_board(frontend_page).get_by_text("ボタンを押してご参加ください", exact=True).first).to_be_visible(timeout=STAGE_TIMEOUT_MS)
+
+
+@then("the gameboard shows large revealed artwork")
+def gameboard_shows_large_artwork(frontend_page: Page):
+    expect(_board(frontend_page).locator('img[src*="/1024x1024.jpg"]').first).to_be_visible(timeout=STAGE_TIMEOUT_MS)
 
 
 @given("the gameboard fullscreen API is mocked")
@@ -607,97 +980,9 @@ def gameboard_fullscreen_api_is_mocked(frontend_page: Page):
     )
 
 
-@given(parsers.parse('a backend game is before playback with actor "{actor}"'))
-def backend_game_before_playback(socket_client, actor: str):
-    _prepare_game(socket_client, actor)
-
-
-@when(parsers.parse('the backend host plays the intro for {seconds:d} seconds'))
-def backend_host_plays(socket_client, seconds: int):
-    socket_client.emit("console:play")
-    socket_client.wait_for_state(phase="game", step="playing")
-
-
-@when(parsers.parse('backend actor "{actor}" presses the action API'))
-def backend_actor_presses(socket_client, actor: str):
-    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}")
-    assert response.status_code == 200
-    socket_client.wait_for_state(step="answering", answererId=actor)
-
-
-@given(parsers.parse('a backend game has actor "{actor}" answering'))
-def backend_game_has_actor_answering(socket_client, actor: str):
-    _prepare_game(socket_client, actor)
-    socket_client.emit("console:play")
-    socket_client.wait_for_state(step="playing")
-    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}")
-    assert response.status_code == 200
-    socket_client.wait_for_state(step="answering", answererId=actor)
-
-
-@when(parsers.parse('the backend host judges the answer as "{result}"'))
-def backend_host_judges(socket_client, result: str):
-    socket_client.emit(f"console:{result}")
-    socket_client.wait_for_state(step=result)
-
-
-@then(parsers.parse('backend answerer is "{actor}"'))
-def backend_answerer_is(socket_client, actor: str):
-    socket_client.wait_for_state(answererId=actor)
-    assert _state(socket_client)["answererId"] == actor
-
-
-@then(parsers.parse('the frontend highlights backend actor "{actor}"'))
-def frontend_highlights_backend_actor(frontend_page: Page, actor: str):
-    expect(frontend_page.get_by_label(actor).first).to_be_visible()
-
-
-@then(parsers.parse('the frontend shows "{text}"'))
-def frontend_shows(frontend_page: Page, text: str):
-    if text == "正解":
-        text = "○"
-    if text == "不正解":
-        text = "×"
-    if text == "再接続中":
-        text = "再接続中…"
-    expect(frontend_page.get_by_text(text, exact=True).first).to_be_visible(timeout=30000)
-
-
-@given("the next frontend state event is emitted immediately on connection")
-def next_frontend_state_event_emitted_immediately():
-    pass
-
-
-@when("the frontend socket disconnects")
-def frontend_socket_disconnects(frontend_page: Page):
-    frontend_page.context.set_offline(True)
-
-
-@when("the frontend socket reconnects")
-def frontend_socket_reconnects(frontend_page: Page):
-    frontend_page.context.set_offline(False)
-
-
-@then(parsers.parse('the frontend does not show "{text}"'))
-def frontend_does_not_show(frontend_page: Page, text: str):
-    expect(frontend_page.get_by_text(text, exact=True)).to_have_count(0)
-
-
-@when("the backend host gives up")
-def backend_host_gives_up(socket_client):
-    socket_client.emit("console:give-up")
-    socket_client.wait_for_state(step="reveal")
-
-
-@then("the frontend shows revealed track information")
-def frontend_shows_revealed_track(frontend_page: Page):
-    _expect_any_text(frontend_page, ["Track 1", "Track 2", "Track 3"])
-    _expect_any_text(frontend_page, ["Artist 1", "Artist 2", "Artist 3"])
-
-
 @then("the gameboard fullscreen button is hidden")
 def gameboard_fullscreen_button_hidden(frontend_page: Page):
-    expect(_fullscreen_button(frontend_page)).to_have_count(1, timeout=30000)
+    expect(_fullscreen_button(frontend_page)).to_have_count(1, timeout=STAGE_TIMEOUT_MS)
     _wait_for_fullscreen_button_style(frontend_page, opacity="0", pointer_events="none")
 
 
@@ -724,7 +1009,7 @@ def gameboard_requests_fullscreen_with_hidden_navigation(frontend_page: Page):
         """
         () => window.__introBuzzFullscreenRequests?.[0] ?? null
         """,
-        timeout=30000,
+        timeout=STAGE_TIMEOUT_MS,
     ).json_value()
     assert request["tagName"] == "MAIN"
     assert request["navigationUI"] == "hide"
@@ -736,179 +1021,100 @@ def gameboard_fullscreen_button_hides_after_pointer_stops(frontend_page: Page):
     _wait_for_fullscreen_button_style(frontend_page, opacity="0", pointer_events="none", timeout=5000)
 
 
+# Console round information ---------------------------------------------------
+
+
+def _track_info(frontend_page: Page):
+    return frontend_page.get_by_role("region", name="曲情報", exact=True)
+
+
 @then("the console round track information is hidden")
-def console_round_track_information_hidden(frontend_page: Page, socket_client):
-    track = _round_track(socket_client.state)
-    assert track is not None
-    track_info = frontend_page.get_by_role("region", name="曲情報", exact=True)
-    expect(track_info.get_by_text(track["title"], exact=True)).to_have_count(0, timeout=30000)
-    expect(track_info.get_by_text(track["artist"], exact=True)).to_have_count(0, timeout=30000)
+def console_round_track_information_hidden(frontend_page: Page):
+    track_info = _track_info(frontend_page)
+    expect(track_info.get_by_role("button", name="曲情報を開く")).to_be_visible(timeout=STAGE_TIMEOUT_MS)
+    expect(track_info.get_by_text(TRACK_TITLE)).to_have_count(0)
+    expect(track_info.get_by_text(ARTIST_NAME)).to_have_count(0)
 
 
 @then("the console round track information is visible")
-def console_round_track_information_visible(frontend_page: Page, socket_client):
-    track = _round_track(socket_client.state)
-    assert track is not None
-    track_info = frontend_page.get_by_role("region", name="曲情報", exact=True)
-    expect(track_info.get_by_text(track["title"], exact=True)).to_be_visible(timeout=30000)
-    expect(track_info.get_by_text(track["artist"], exact=True)).to_be_visible(timeout=30000)
+def console_round_track_information_visible(frontend_page: Page):
+    track_info = _track_info(frontend_page)
+    expect(track_info.get_by_text(TRACK_TITLE)).to_be_visible(timeout=STAGE_TIMEOUT_MS)
+    expect(track_info.get_by_text(ARTIST_NAME)).to_be_visible(timeout=STAGE_TIMEOUT_MS)
 
 
-@when("the judging animation expires")
-def frontend_judging_animation_expires(socket_client):
-    if socket_client.state["step"] == "correct":
-        socket_client.emit("console:correct-feedback-ended")
-        socket_client.wait_for_state(step="reveal")
-        return
-    if socket_client.state["step"] == "wrong":
-        socket_client.emit("console:wrong-feedback-ended")
-        socket_client.wait_for_state(step="beforePlayback")
-        return
-    raise AssertionError(f"no judging feedback is active; latest={socket_client.state}")
+@then("the console round track information shows medium artwork")
+def console_round_track_information_shows_medium_artwork(frontend_page: Page):
+    expect(_track_info(frontend_page).locator('img[src*="/256x256.jpg"]')).to_be_visible(timeout=STAGE_TIMEOUT_MS)
 
 
-@then("the frontend shows backend scores in descending order")
-@then("the gameboard shows backend scores in descending order")
-def frontend_shows_backend_scores_desc(frontend_page: Page, socket_client):
-    pages = getattr(frontend_page, "integration_pages", {})
-    page = pages.get("gameboard", frontend_page)
-    scores = sorted([player["score"] for player in socket_client.state["players"]], reverse=True)
-    for score in scores:
-        expect(page.get_by_text(str(score), exact=True).first).to_be_visible(timeout=30000)
+@then("the frontend shows track chip artwork")
+def frontend_shows_track_chip_artwork(frontend_page: Page):
+    expect(frontend_page.locator('img[src*="/48x48.jpg"]').first).to_be_visible(timeout=STAGE_TIMEOUT_MS)
 
 
-@then("backend track ids are unique")
-def backend_track_ids_unique(socket_client):
-    state = _current_backend_state(socket_client)
-    ids = [track["id"] for track in state["tracks"]]
-    assert len(ids) == len(set(ids))
+def _album_info(frontend_page: Page):
+    return frontend_page.get_by_role("region", name="アルバム情報", exact=True)
 
 
-@given(parsers.parse('a backend game has results with actor "{actor}" scoring once'))
-def backend_game_has_results(socket_client, actor: str):
-    _prepare_game(socket_client, actor)
-    socket_client.emit("console:play")
-    socket_client.wait_for_state(step="playing")
-    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}")
-    assert response.status_code == 200
-    socket_client.wait_for_state(step="answering", answererId=actor)
-    socket_client.emit("console:correct")
-    socket_client.wait_for_state(step="correct")
-    socket_client.emit("console:correct-feedback-ended")
-    socket_client.wait_for_state(step="reveal")
-    socket_client.emit("console:show-results")
-    socket_client.wait_for_state(step="results")
+@then("the album information is collapsed")
+def album_information_collapsed(frontend_page: Page):
+    panel = _album_info(frontend_page)
+    expect(panel.get_by_role("button", name="アルバム情報を開く")).to_have_attribute("aria-expanded", "false")
+    expect(panel.locator("strong")).to_have_count(0)
+    expect(panel.locator("img")).to_have_count(0)
 
 
-@when(parsers.parse('the frontend clicks "{label}"'))
-def frontend_clicks(frontend_page: Page, socket_client, label: str):
-    playlist_ids = {
-        "Spec Playlist A": "playlist-a",
-        "Spec Playlist B": "playlist-b",
-        "Spec Playlist Page 2": "playlist-page-2",
-    }
-    button = frontend_page.get_by_role("button", name=label, exact=True)
-    if label == "次のラウンドへ" and hasattr(frontend_page, "manifest_log"):
-        _mark_advance(frontend_page)
-    if label == "再生":
-        button = _ready_play_button(frontend_page)
-    button.scroll_into_view_if_needed(timeout=10000)
-    button.click(timeout=10000)
-    if label in playlist_ids:
-        playlist_id = playlist_ids[label]
-        deadline = time.time() + 30
-        while time.time() < deadline:
-            state = _current_backend_state(socket_client)
-            if playlist_id in state["selectedPlaylistIds"]:
-                return
-            socket_client.sleep(0.1)
-        final_state = _current_backend_state(socket_client)
-        if playlist_id in final_state["selectedPlaylistIds"]:
-            return
-        text = frontend_page.locator("main").inner_text(timeout=1000)
-        raise AssertionError(
-            f"playlist {playlist_id} was not selected; "
-            f"state={final_state}; "
-            f"page={text}; requests={getattr(frontend_page, 'request_log', [])[-20:]}"
-        )
+def _expect_album_information(frontend_page: Page) -> str:
+    panel = _album_info(frontend_page)
+    expect(panel.locator("strong")).to_have_text(ALBUM_NAME, timeout=STAGE_TIMEOUT_MS)
+    expect(panel.locator("img")).to_have_attribute("src", re.compile(r"/256x256\.jpg$"))
+    return panel.locator("strong").inner_text()
 
 
-@given("the frontend console is logged into mocked MusicKit")
-def frontend_console_logged_in(frontend_page: Page, socket_client):
-    frontend_page.goto("/console")
-    frontend_page.get_by_role("button", name="ログイン", exact=True).click()
-    expect(frontend_page.get_by_text("Spec Playlist A", exact=True)).to_be_visible()
+@then("the album information shows an album with artwork")
+def album_information_shows_album(frontend_page: Page):
+    setattr(frontend_page, "album_information_name", _expect_album_information(frontend_page))
 
 
-@when(parsers.parse('the frontend opens playlist "{playlist}"'))
-def frontend_opens_playlist(frontend_page: Page, playlist: str):
-    playlist_button = frontend_page.get_by_role("button", name=playlist, exact=True)
-    expect(playlist_button).to_be_visible(timeout=30000)
-    playlist_item = frontend_page.locator("li").filter(has=playlist_button).first
-    playlist_item.get_by_role("button", name="プレイリストを開く").click(timeout=10000)
-    expect(playlist_item.get_by_role("button", name="プレイリストを閉じる")).to_be_visible(timeout=30000)
+@then("the album information shows a different album with artwork")
+def album_information_shows_different_album(frontend_page: Page):
+    name = _expect_album_information(frontend_page)
+    assert name != getattr(frontend_page, "album_information_name"), name
 
 
-@then("backend has no selected playlists")
-def backend_has_no_selected_playlists(frontend_page: Page, socket_client):
-    backend_selected_playlist_ids(frontend_page, socket_client, "")
+@then(parsers.parse('the console album information shows "{name}"'))
+def console_album_information_shows(frontend_page: Page, name: str):
+    expect(_album_info(frontend_page).locator("strong")).to_have_text(name, timeout=STAGE_TIMEOUT_MS)
 
 
-@then(parsers.parse('backend selected playlist ids are "{ids}"'))
-def backend_selected_playlist_ids(frontend_page: Page, socket_client, ids: str):
-    expected = [value for value in ids.split(",") if value]
-    deadline = time.time() + 30
-    latest = None
-    while time.time() < deadline:
-        latest = _current_backend_state(socket_client)
-        if latest["selectedPlaylistIds"] == expected:
-            return
-        socket_client.sleep(0.1)
-    assert latest is not None
-    assert latest["selectedPlaylistIds"] == expected
+@then("the console has no further round")
+def console_has_no_further_round(frontend_page: Page):
+    expect(frontend_page.get_by_role("button", name="次のラウンドへ", exact=True)).to_be_disabled(timeout=STAGE_TIMEOUT_MS)
 
 
-@given(parsers.parse('the frontend console selected playlist "{playlist}"'))
-def frontend_console_selected_playlist(frontend_page: Page, socket_client, playlist: str):
-    frontend_page.goto("/console")
-    frontend_page.get_by_role("button", name="ログイン", exact=True).click()
-    expect(frontend_page.get_by_text(playlist, exact=True)).to_be_visible()
-    frontend_page.get_by_role("button", name=playlist, exact=True).click()
-    expect(frontend_page.get_by_text("1件のプレイリスト、3曲を選択中", exact=True)).to_be_visible()
-
-
-@then(parsers.parse('backend phase is "{phase}" and step is "{step}"'))
-def backend_phase_step(socket_client, phase: str, step: str):
-    _wait_for_backend_state(socket_client, phase=phase, step=step)
-    state = _state(socket_client)
-    assert state["phase"] == phase
-    assert state["step"] == step
-
-
-@then(parsers.parse('backend quiz mode is "{quiz_mode}"'))
-def backend_quiz_mode(socket_client, quiz_mode: str):
-    _wait_for_backend_state(socket_client, quizMode=quiz_mode)
-    assert _state(socket_client)["quizMode"] == quiz_mode
+# Jacket controls -------------------------------------------------------------
 
 
 @when(parsers.parse('the frontend selects jacket mode "{jacket_mode}"'))
-def frontend_selects_jacket_mode(frontend_page: Page, socket_client, jacket_mode: str):
-    frontend_page.get_by_role("combobox", name="隠し方").select_option(jacket_mode)
-    _wait_for_backend_state(socket_client, jacketMode=jacket_mode)
+def frontend_selects_jacket_mode(frontend_page: Page, jacket_mode: str):
+    select = frontend_page.get_by_role("combobox", name="隠し方")
+    select.select_option(jacket_mode)
+    expect(select).to_have_value(jacket_mode, timeout=STAGE_TIMEOUT_MS)
 
 
 @when("the frontend toggles jacket grayscale")
-def frontend_toggles_jacket_grayscale(frontend_page: Page, socket_client):
+def frontend_toggles_jacket_grayscale(frontend_page: Page):
     checkbox = frontend_page.get_by_role("checkbox", name="白黒")
     expect(checkbox).to_be_checked()
     checkbox.click()
-    _wait_for_backend_state(socket_client, jacketGrayscale=False)
+    expect(checkbox).not_to_be_checked(timeout=STAGE_TIMEOUT_MS)
 
 
 @when(parsers.parse("the frontend sets jacket hint percent to {percent:d}"))
-def frontend_sets_jacket_hint_percent(frontend_page: Page, socket_client, percent: int):
+def frontend_sets_jacket_hint_percent(frontend_page: Page, percent: int):
     slider = frontend_page.get_by_role("slider", name="ヒントレベル")
-    expect(slider).to_be_visible(timeout=30000)
+    expect(slider).to_be_visible(timeout=STAGE_TIMEOUT_MS)
     slider.focus()
     current = int(slider.get_attribute("aria-valuenow") or "1")
     key = "ArrowRight" if percent > current else "ArrowLeft"
@@ -916,22 +1122,29 @@ def frontend_sets_jacket_hint_percent(frontend_page: Page, socket_client, percen
         frontend_page.keyboard.press(key)
         # Let server echoes interleave with the next key, exposing stale-value races.
         frontend_page.wait_for_timeout(5)
-    _wait_for_backend_state(socket_client, jacketHintPercent=percent)
+    expect(slider).to_have_attribute("aria-valuenow", str(percent), timeout=STAGE_TIMEOUT_MS)
 
 
 @then("the frontend shows jacket controls")
 def frontend_shows_jacket_controls(frontend_page: Page):
-    expect(frontend_page.get_by_role("combobox", name="隠し方")).to_be_visible(timeout=30000)
-    expect(frontend_page.get_by_role("checkbox", name="白黒")).to_be_visible(timeout=30000)
-    expect(frontend_page.get_by_role("slider", name="ヒントレベル")).to_be_visible(timeout=30000)
+    expect(frontend_page.get_by_role("combobox", name="隠し方")).to_be_visible(timeout=STAGE_TIMEOUT_MS)
+    expect(frontend_page.get_by_role("checkbox", name="白黒")).to_be_visible(timeout=STAGE_TIMEOUT_MS)
+    expect(frontend_page.get_by_role("slider", name="ヒントレベル")).to_be_visible(timeout=STAGE_TIMEOUT_MS)
 
 
-@then("the backend jacket settings match the frontend controls")
-def backend_jacket_settings_match_frontend_controls(socket_client):
-    state = socket_client.state
-    assert state["jacketMode"] == "tileShuffle"
-    assert state["jacketGrayscale"] is False
-    assert state["jacketHintPercent"] == 12
+@then(parsers.parse('the jacket controls show mode "{jacket_mode}", grayscale off, and {percent:d} percent'))
+def jacket_controls_show(frontend_page: Page, jacket_mode: str, percent: int):
+    expect(frontend_page.get_by_role("combobox", name="隠し方")).to_have_value(jacket_mode)
+    expect(frontend_page.get_by_role("checkbox", name="白黒")).not_to_be_checked()
+    expect(frontend_page.get_by_role("slider", name="ヒントレベル")).to_have_attribute("aria-valuenow", str(percent))
+
+
+@then(parsers.parse("the jacket hint slider shows {percent:d} percent"))
+def jacket_hint_slider_shows(frontend_page: Page, percent: int):
+    expect(frontend_page.get_by_role("slider", name="ヒントレベル")).to_have_attribute("aria-valuenow", str(percent))
+
+
+# MusicKit requests -----------------------------------------------------------
 
 
 @then("the MusicKit developer token is requested")
@@ -1017,169 +1230,30 @@ def musickit_library_tracks_page_2_requested(frontend_page: Page, playlist_id: s
     )
 
 
-@then("the frontend shows track chip artwork")
-def frontend_shows_track_chip_artwork(frontend_page: Page):
-    expect(frontend_page.locator('img[src*="/48x48.jpg"]').first).to_be_visible(timeout=30000)
+@then("no catalog lookup is sent for library song IDs")
+def no_library_catalog_requests(frontend_page: Page):
+    requests = getattr(frontend_page, "request_log", [])
+    assert any("/v1/me/library/songs/i." in r["url"] and "/albums" in r["url"] for r in requests)
+    assert not any("/v1/me/library/songs/i." in r["url"] and "/catalog" in r["url"] for r in requests)
+    assert not any("/catalog/" in r["url"] and "/songs/i." in r["url"] for r in requests)
 
 
-@then("the selected round artwork URLs are sized for their display contexts")
-def selected_round_artwork_urls_are_sized_for_their_display_contexts(socket_client):
-    state = _current_backend_state(socket_client)
-    assert any("/1024x1024.jpg" in (track.get("artworkRevealUrl") or "") for track in state["tracks"])
-    assert any("/256x256.jpg" in (track.get("artworkInfoUrl") or "") for track in state["tracks"])
-    assert any("/48x48.jpg" in (track.get("artworkChipUrl") or "") for track in state["tracks"])
-
-
-@then("the selected tracks include album names")
-def selected_tracks_include_album_names(socket_client):
-    state = _current_backend_state(socket_client)
-    assert all(track.get("albumName") for track in state["tracks"])
-
-
-@when("the frontend observes the current round")
-def frontend_observes_current_round(frontend_page: Page, socket_client):
-    socket_client.wait_for_state(phase="game", step="beforePlayback")
-    frontend_page.wait_for_timeout(200)
+# Playback controls -----------------------------------------------------------
 
 
 @then(parsers.parse('the frontend play button shows "{label}" and is disabled'))
 def frontend_play_button_shows_label_and_is_disabled(frontend_page: Page, label: str):
-    expect(frontend_page.get_by_role("button", name=label, exact=True)).to_be_disabled(timeout=30000)
+    expect(frontend_page.get_by_role("button", name=label, exact=True)).to_be_disabled(timeout=STAGE_TIMEOUT_MS)
 
 
 @then("the frontend play button becomes enabled")
 def frontend_play_button_enabled(frontend_page: Page):
-    expect(frontend_page.get_by_role("button", name="再生", exact=True)).to_be_enabled(timeout=30000)
-
-
-@then("the backend returns before playback after the intro duration")
-def backend_returns_before_playback_after_intro(frontend_page: Page, socket_client):
-    _wait_for_backend_state(socket_client, timeout=20, phase="game", step="beforePlayback")
-
-
-# Integration feature steps -------------------------------------------------
-
-
-def _integration_page(frontend_page: Page, name: str) -> Page:
-    pages = getattr(frontend_page, "integration_pages", None)
-    if pages is None:
-        pages = {}
-        setattr(frontend_page, "integration_pages", pages)
-    if name not in pages:
-        pages[name] = frontend_page.context.new_page()
-    return pages[name]
-
-
-def _gameboard_page(frontend_page: Page) -> Page:
-    return _integration_page(frontend_page, "gameboard")
-
-
-def _visible_gameboard_page(frontend_page: Page) -> Page:
-    pages = getattr(frontend_page, "integration_pages", None)
-    if pages and "gameboard" in pages:
-        return pages["gameboard"]
-    return frontend_page
-
-
-@given("the host console is logged into mocked MusicKit")
-def host_console_logged_into_musickit(frontend_page: Page, socket_client):
-    frontend_console_logged_in(frontend_page, socket_client)
-
-
-@given(parsers.parse('the host selects playlist "{playlist}"'))
-def host_selects_playlist(frontend_page: Page, socket_client, playlist: str):
-    playlist_ids = {
-        "Spec Playlist A": "playlist-a",
-        "Spec Playlist B": "playlist-b",
-    }
-    playlist_id = playlist_ids[playlist]
-    button = frontend_page.get_by_role("button", name=playlist, exact=True)
-    expect(button).to_be_visible(timeout=30000)
-    button.click(timeout=10000)
-    _wait_for_backend_state(socket_client, phase="ready", selectedPlaylistIds=[playlist_id])
-    assert len(socket_client.state["tracks"]) > 0
-
-
-@given("the gameboard is open")
-def gameboard_is_open(frontend_page: Page):
-    _gameboard_page(frontend_page).goto("/gameboard")
-
-
-@given(parsers.parse('action button "{actor}" is open'))
-def action_button_is_open(frontend_page: Page, actor: str):
-    page = _integration_page(frontend_page, f"action:{actor}")
-    page.goto("/action")
-
-
-@given(parsers.parse('action button "{actor}" is joined'))
-def action_button_is_joined(socket_client, actor: str):
-    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}")
-    assert response.status_code in {200, 204}
-    _wait_for_joined_count(socket_client, len(socket_client.state["players"]) + (0 if any(p["id"] == actor for p in socket_client.state["players"]) else 1))
-    socket_client.sleep(1.05)
-
-
-@given(parsers.parse('action buttons "{actors}" are joined'))
-def action_buttons_are_joined(socket_client, actors: str):
-    for actor in [value for value in actors.split(",") if value]:
-        response = httpx.post(f"{socket_client.server_url}/api/act/{actor}")
-        assert response.status_code in {200, 204}
-        socket_client.sleep(1.05)
-    expected = len([value for value in actors.split(",") if value])
-    _wait_for_joined_count(socket_client, expected)
-
-
-@when(parsers.parse('action button "{actor}" is pressed'))
-def action_button_is_pressed(frontend_page: Page, socket_client, actor: str):
-    state = socket_client.state
-    expects_answer = state.get("phase") == "game" and (
-        state.get("step") == "playing"
-        or (state.get("quizMode") == "jacket" and state.get("step") == "beforePlayback")
-    )
-    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}")
-    last = getattr(frontend_page, "last_action_responses", {})
-    last[actor] = response.status_code
-    setattr(frontend_page, "last_action_responses", last)
-    if response.status_code == 200:
-        if expects_answer:
-            _wait_for_backend_state(socket_client, step="answering", answererId=actor)
-        else:
-            _wait_for_joined_player(socket_client, actor)
-            socket_client.sleep(1.05)
-
-
-@then(parsers.parse('the gameboard shows joined player "{actor}"'))
-def gameboard_shows_joined_player(frontend_page: Page, actor: str):
-    expect(_visible_gameboard_page(frontend_page).get_by_label(actor).first).to_be_visible(timeout=30000)
-
-
-@when("the host starts the game")
-@given("the host starts the game")
-def host_starts_game(socket_client):
-    socket_client.emit("console:start", {"quizMode": "intro"})
-    socket_client.wait_for_state(phase="game", step="beforePlayback")
-
-
-@when("the host starts a jacket game")
-@given("the host starts a jacket game")
-def host_starts_jacket_game(socket_client):
-    socket_client.emit("console:start", {"quizMode": "jacket"})
-    socket_client.wait_for_state(phase="game", step="beforePlayback")
-
-
-@then("the console shows the game is before playback")
-def console_shows_before_playback(socket_client):
-    socket_client.wait_for_state(phase="game", step="beforePlayback")
-
-
-@then("the gameboard shows the playing stage is ready")
-def gameboard_shows_playing_ready(frontend_page: Page):
-    expect(_gameboard_page(frontend_page).get_by_text("♪", exact=True).first).to_be_visible(timeout=30000)
+    expect(play_button(frontend_page)).to_be_enabled(timeout=STAGE_TIMEOUT_MS)
 
 
 @when(parsers.parse("the frontend sets playback seconds to {seconds:d} on the slider ring"))
-def frontend_sets_playback_seconds_on_ring(frontend_page: Page, socket_client, seconds: int):
-    _set_console_playback_seconds(frontend_page, socket_client, seconds)
+def frontend_sets_playback_seconds_on_ring(frontend_page: Page, seconds: int):
+    _set_console_playback_seconds_on_ring(frontend_page, seconds)
 
 
 @when("the frontend presses inside the playback seconds slider ring")
@@ -1213,227 +1287,7 @@ def playback_seconds_slider_shows(frontend_page: Page, seconds: str):
     expect(_playback_seconds_slider(frontend_page)).to_have_attribute("aria-valuenow", seconds)
 
 
-@when("the host plays the intro")
-def host_plays_intro(frontend_page: Page, socket_client):
-    _set_console_playback_seconds(frontend_page, socket_client, 10)
-    track = _round_track(socket_client.state)
-    if track is not None:
-        setattr(frontend_page, "last_played_song_id", track["id"])
-    play_button = _ready_play_button(frontend_page)
-    play_button.click(timeout=30000)
-    _wait_for_backend_state(socket_client, phase="game", step="playing")
-
-
-@then("the gameboard shows the intro is playing")
-def gameboard_shows_intro_playing(frontend_page: Page):
-    expect(_gameboard_page(frontend_page).get_by_text("♪", exact=True).first).to_be_visible(timeout=30000)
-
-
-@then("the gameboard asks for an answer")
-def gameboard_asks_for_answer(frontend_page: Page):
-    expect(_gameboard_page(frontend_page).get_by_text("解答をどうぞ！", exact=True)).to_be_visible(timeout=30000)
-
-
-@when(parsers.parse('the host judges the answer as "{result}"'))
-def host_judges_answer(frontend_page: Page, socket_client, result: str):
-    label = {"correct": "正解", "wrong": "不正解"}[result]
-    frontend_page.get_by_role("button", name=label, exact=True).click(timeout=10000)
-    socket_client.wait_for_state(step=result)
-
-
-@then(parsers.parse('the gameboard shows "{text}"'))
-def gameboard_shows_text(frontend_page: Page, text: str):
-    if text == "正解":
-        text = "○"
-    if text == "不正解":
-        text = "×"
-    expect(_gameboard_page(frontend_page).get_by_text(text, exact=True).first).to_be_visible(timeout=30000)
-
-
-@then("the console plays a result sound")
-def console_plays_result_sound(frontend_page: Page):
-    frontend_page.wait_for_function(
-        """
-        () => {
-          return (window.__introBuzzAudioEvents ?? []).some((event) => event.type === 'oscillator.start');
-        }
-        """,
-        timeout=30000,
-    )
-
-
-@then(parsers.parse('player "{actor}" score is {score:d}'))
-def player_score_is(socket_client, actor: str, score: int):
-    deadline = time.time() + 5
-    while time.time() < deadline:
-        player = next((p for p in socket_client.state["players"] if p["id"] == actor), None)
-        if player and player["score"] == score:
-            return
-        socket_client.sleep(0.05)
-    assert next(p for p in socket_client.state["players"] if p["id"] == actor)["score"] == score
-
-
-@then("the gameboard shows revealed track information")
-def gameboard_shows_revealed_track_information(frontend_page: Page):
-    page = _gameboard_page(frontend_page)
-    _expect_any_text(page, ["Track 1", "Track 2", "Track 3"])
-    _expect_any_text(page, ["Artist 1", "Artist 2", "Artist 3"])
-
-
-@then("the gameboard shows a jacket hint")
-def gameboard_shows_jacket_hint(frontend_page: Page):
-    expect(_visible_gameboard_page(frontend_page).get_by_label("ジャケットヒント")).to_be_visible(timeout=30000)
-
-
-@then("the gameboard shows revealed album information")
-def gameboard_shows_revealed_album_information(frontend_page: Page):
-    page = _visible_gameboard_page(frontend_page)
-    _expect_any_text(page, ["Album 1", "Album 2", "Album 3"])
-
-
-@when("the host shows results")
-@given("the host shows results")
-def host_shows_results(socket_client):
-    socket_client.emit("console:show-results")
-    socket_client.wait_for_state(step="results")
-
-
-@then(parsers.parse('action button "{actor}" receives no reaction'))
-def action_button_receives_no_reaction(frontend_page: Page, actor: str):
-    assert getattr(frontend_page, "last_action_responses", {}).get(actor) == 204
-
-
-@then(parsers.parse('the gameboard highlights joined player "{actor}"'))
-def gameboard_highlights_joined_player(frontend_page: Page, actor: str):
-    expect(_gameboard_page(frontend_page).get_by_label(actor).first).to_be_visible(timeout=30000)
-
-
-@when("the intro playback duration expires without a buzz")
-def intro_playback_duration_expires(frontend_page: Page, socket_client):
-    timeout = 15
-    _wait_for_backend_state(socket_client, timeout=timeout, phase="game", step="beforePlayback")
-
-
-@then("the backend is waiting before playback for the same track")
-def backend_waiting_before_playback_for_same_track(frontend_page: Page, socket_client):
-    state = _wait_for_backend_state(socket_client, phase="game", step="beforePlayback")
-    track = _round_track(state)
-    assert track is not None
-    assert track["id"] == getattr(frontend_page, "last_played_song_id")
-
-
-@then("the console can play the intro again")
-def console_can_play_intro_again(frontend_page: Page, socket_client):
-    _wait_for_backend_state(socket_client, phase="game", step="beforePlayback")
-    expect(frontend_page.get_by_role("button", name="再生", exact=True)).to_be_enabled(timeout=30000)
-
-
-@when("the host gives up")
-def host_gives_up(socket_client):
-    socket_client.emit("console:give-up")
-    socket_client.wait_for_state(step="reveal")
-
-
-@when("the host advances to the next round")
-def host_advances_next_round(socket_client):
-    socket_client.emit("console:next-round")
-    socket_client.wait_for_state(step="beforePlayback")
-
-
-@given(parsers.parse('player "{actor}" has scored once'))
-def player_has_scored_once(socket_client, actor: str):
-    socket_client.emit("console:play")
-    socket_client.wait_for_state(step="playing")
-    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}")
-    assert response.status_code == 200
-    socket_client.wait_for_state(step="answering", answererId=actor)
-    socket_client.emit("console:correct")
-    socket_client.wait_for_state(step="correct")
-    socket_client.emit("console:correct-feedback-ended")
-    socket_client.wait_for_state(step="reveal")
-
-
-@when("the host starts the next game setup")
-def host_starts_next_game_setup(socket_client):
-    socket_client.emit("console:next-game")
-    socket_client.wait_for_state(phase="ready", step="idle")
-
-
-@then("the console shows the ready phase")
-def console_shows_ready_phase(socket_client):
-    socket_client.wait_for_state(phase="ready")
-
-
-@then("the gameboard shows the participation prompt")
-def gameboard_shows_participation_prompt(frontend_page: Page):
-    expect(_gameboard_page(frontend_page).get_by_text("ボタンを押してご参加ください", exact=True).first).to_be_visible(timeout=30000)
-
-
-@then("there are no joined players")
-def no_joined_players(socket_client):
-    assert socket_client.state["players"] == []
-
-
-@then(parsers.parse('selected playlist ids are "{ids}"'))
-def selected_playlist_ids_are(socket_client, ids: str):
-    expected = [value for value in ids.split(",") if value]
-    assert socket_client.state["selectedPlaylistIds"] == expected
-
-
-@then(parsers.parse("the selected track count is {count:d}"))
-def selected_track_count_is(socket_client, count: int):
-    assert len(socket_client.state["tracks"]) == count
-
-
-@then(parsers.parse('the selected tracks carry album artist "{artist}"'))
-def selected_tracks_carry_album_artist(socket_client, artist: str):
-    tracks = socket_client.state["tracks"]
-    assert [track["albumArtist"] for track in tracks] == [artist] * len(tracks)
-
-
-@then(parsers.parse("the selected album count is {count:d}"))
-def selected_album_count_is(socket_client, count: int):
-    assert len(socket_client.state["albums"]) == count
-
-
-@when("the host resets the game")
-def host_resets_game(socket_client):
-    socket_client.emit("console:reset")
-    socket_client.wait_for_state(phase="initialization", step="idle")
-
-
-@then("the console shows the initialization phase")
-def console_shows_initialization(socket_client):
-    socket_client.wait_for_state(phase="initialization")
-
-
-@then("there are no selected tracks")
-def no_selected_tracks(socket_client):
-    assert socket_client.state["tracks"] == []
-
-
-@then(parsers.parse("the jacket hint slider shows {percent:d} percent"))
-def jacket_hint_slider_shows(frontend_page: Page, percent: int):
-    expect(frontend_page.get_by_role("slider", name="ヒントレベル")).to_have_attribute("aria-valuenow", str(percent))
-
-
-@then("the album information is collapsed")
-def album_information_collapsed(frontend_page: Page):
-    panel = frontend_page.get_by_role("region", name="アルバム情報", exact=True)
-    expect(panel.get_by_role("button", name="アルバム情報を開く")).to_have_attribute("aria-expanded", "false")
-    expect(panel.locator("strong")).to_have_count(0)
-    expect(panel.locator("img")).to_have_count(0)
-
-
-@then("the album information matches the current backend album")
-def album_information_matches(frontend_page: Page, socket_client):
-    state = _current_backend_state(socket_client)
-    album_id = state["shuffledAlbumIds"][state["roundAlbumIndex"]]
-    album = next(album for album in state["albums"] if album["id"] == album_id)
-    panel = frontend_page.get_by_role("region", name="アルバム情報", exact=True)
-    expect(panel.locator("strong")).to_have_text(album["name"])
-    expect(panel.get_by_text(album["artist"], exact=True)).to_be_visible()
-    expect(panel.locator("img")).to_have_attribute("src", album["artworkInfoUrl"])
+# Jacket album playback -------------------------------------------------------
 
 
 @when("album queue requests are observed")
@@ -1449,13 +1303,7 @@ def observe_album_queues(frontend_page: Page):
     }""")
 
 
-def _revealed_track(state):
-    album_id = state["shuffledAlbumIds"][state["roundAlbumIndex"]]
-    album = next(a for a in state["albums"] if a["id"] == album_id)
-    return next(t for t in state["tracks"] if t["id"] == album["trackIds"][0])
-
-
-def _expect_entire_album_playback(frontend_page: Page, state, queue_album_id: str):
+def _expect_entire_album_playback(frontend_page: Page, queue_album_id: str):
     frontend_page.wait_for_function("""({id, selected}) => {
         const mk = MusicKit.getInstance();
         const request = window.__albumQueueRequests.at(-1);
@@ -1463,19 +1311,20 @@ def _expect_entire_album_playback(frontend_page: Page, state, queue_album_id: st
             request.repeatMode === MusicKit.PlayerRepeatMode.all &&
             mk.repeatMode === MusicKit.PlayerRepeatMode.all && mk.isPlaying &&
             mk.queue.items.length === 2 && mk.queue.items.some(item => !selected.includes(item.id));
-    }""", arg={"id": queue_album_id, "selected": [t["id"] for t in state["tracks"]]})
+    }""", arg={"id": queue_album_id, "selected": sorted(_selected_track_ids(frontend_page))})
 
 
 @then("MusicKit plays the entire revealed album with repeat all")
-def entire_album_playback(frontend_page: Page, socket_client):
-    state = _current_backend_state(socket_client)
-    _expect_entire_album_playback(frontend_page, state, "album-" + _revealed_track(state)["id"])
+def entire_album_playback(frontend_page: Page):
+    expect_stage(frontend_page, "正解発表ステップ")
+    _expect_entire_album_playback(frontend_page, catalog_album_id(round_info_title(frontend_page)))
 
 
 @then("MusicKit plays the entire revealed library album with repeat all")
-def entire_library_album_playback(frontend_page: Page, socket_client):
-    state = _current_backend_state(socket_client)
-    _expect_entire_album_playback(frontend_page, state, _library_album_id(_revealed_track(state)["id"]))
+def entire_library_album_playback(frontend_page: Page):
+    expect_stage(frontend_page, "正解発表ステップ")
+    first_track = library_song_id(album_first_track_id(round_info_title(frontend_page)))
+    _expect_entire_album_playback(frontend_page, library_album_id_for(first_track))
 
 
 @then("album playback is stopped")
@@ -1483,33 +1332,7 @@ def album_playback_stopped(frontend_page: Page):
     frontend_page.wait_for_function("() => !MusicKit.getInstance().isPlaying")
 
 
-def _library_album_id(track_id: str) -> str:
-    return "l." + "".join(ch for ch in "album" + track_id.removeprefix("i.") if ch.isalnum())
-
-
-@given("the selected tracks have library IDs")
-def selected_library_ids(frontend_page: Page, socket_client):
-    mock = getattr(frontend_page, "music_kit_api_mock")
-    state = _current_backend_state(socket_client)
-    tracks = [dict(t) for t in state["tracks"]]
-    album_tracks = {}
-    for track in tracks:
-        catalog_id = track["id"]
-        track["id"] = library_song_id(catalog_id)
-        album_tracks[_library_album_id(catalog_id)] = list(mock.data.albums["album-" + catalog_id].track_ids)
-    set_musickit_library_albums(frontend_page, album_tracks)
-    socket_client.emit("console:select-playlists", {"selectedPlaylistIds": state["selectedPlaylistIds"], "tracks": tracks})
-
-
-@then("no catalog lookup is sent for library song IDs")
-def no_library_catalog_requests(frontend_page: Page):
-    requests = getattr(frontend_page, "request_log", [])
-    assert any("/v1/me/library/songs/i." in r["url"] and "/albums" in r["url"] for r in requests)
-    assert not any("/v1/me/library/songs/i." in r["url"] and "/catalog" in r["url"] for r in requests)
-    assert not any("/catalog/" in r["url"] and "/songs/i." in r["url"] for r in requests)
-
-
-# Console answer card steps ------------------------------------------------
+# Console answer card ---------------------------------------------------------
 
 
 def _answer_input(frontend_page: Page):
@@ -1524,61 +1347,46 @@ def _suggestion_title(suggestion) -> str:
     return suggestion.locator("span span").first.inner_text()
 
 
-def _round_album(state):
-    round_index = state["roundAlbumIndex"]
-    if round_index < 0:
-        return None
-    album_ids = state["shuffledAlbumIds"]
-    if round_index >= len(album_ids):
-        return None
-    album_id = album_ids[round_index]
-    return next((album for album in state["albums"] if album["id"] == album_id), None)
-
-
-def _console_actor_answering(frontend_page: Page, socket_client, actor: str, quiz_mode: str):
-    action_button_is_joined(socket_client, actor)
-    socket_client.emit("console:start", {"quizMode": quiz_mode})
-    socket_client.wait_for_state(phase="game", step="beforePlayback")
+def _console_actor_answering(frontend_page: Page, http, actor: str, quiz_mode: str):
+    _join(frontend_page, http, actor)
+    _start(frontend_page, quiz_mode)
     if quiz_mode == "intro":
-        socket_client.emit("console:play")
-        socket_client.wait_for_state(step="playing")
-    response = httpx.post(f"{socket_client.server_url}/api/act/{actor}")
-    assert response.status_code == 200
-    socket_client.wait_for_state(step="answering", answererId=actor)
-    expect(_answer_input(frontend_page)).to_be_enabled(timeout=30000)
+        play_intro(frontend_page, 1)
+    _buzz(frontend_page, http, actor)
+    expect(_answer_input(frontend_page)).to_be_enabled(timeout=STAGE_TIMEOUT_MS)
 
 
 @given(parsers.parse('the frontend console has actor "{actor}" answering in an intro game'))
-def frontend_console_actor_answering_intro(frontend_page: Page, socket_client, actor: str):
-    frontend_console_selected_playlist(frontend_page, socket_client, "Spec Playlist A")
-    _console_actor_answering(frontend_page, socket_client, actor, "intro")
+def frontend_console_actor_answering_intro(frontend_page: Page, http, actor: str):
+    frontend_console_selected_playlist(frontend_page, "Spec Playlist A")
+    _console_actor_answering(frontend_page, http, actor, "intro")
 
 
 @given(parsers.parse('the frontend console has actor "{actor}" answering in an intro game with {count:d} tracks'))
-def frontend_console_actor_answering_intro_with_tracks(frontend_page: Page, socket_client, actor: str, count: int):
-    frontend_console_selected_long_playlist(frontend_page, socket_client, "Spec Playlist Long", count)
-    _console_actor_answering(frontend_page, socket_client, actor, "intro")
+def frontend_console_actor_answering_intro_with_tracks(frontend_page: Page, http, actor: str, count: int):
+    frontend_console_selected_long_playlist(frontend_page, "Spec Playlist Long", count)
+    _console_actor_answering(frontend_page, http, actor, "intro")
 
 
 @given(parsers.parse('the frontend console has actor "{actor}" answering in a jacket game'))
-def frontend_console_actor_answering_jacket(frontend_page: Page, socket_client, actor: str):
-    frontend_console_selected_playlist(frontend_page, socket_client, "Spec Playlist A")
-    _console_actor_answering(frontend_page, socket_client, actor, "jacket")
+def frontend_console_actor_answering_jacket(frontend_page: Page, http, actor: str):
+    frontend_console_selected_playlist(frontend_page, "Spec Playlist A")
+    _console_actor_answering(frontend_page, http, actor, "jacket")
 
 
 @then("the console answer input is disabled")
 def console_answer_input_disabled(frontend_page: Page):
-    expect(_answer_input(frontend_page)).to_be_disabled(timeout=30000)
+    expect(_answer_input(frontend_page)).to_be_disabled(timeout=STAGE_TIMEOUT_MS)
 
 
 @then("the console answer input is enabled")
 def console_answer_input_enabled(frontend_page: Page):
-    expect(_answer_input(frontend_page)).to_be_enabled(timeout=30000)
+    expect(_answer_input(frontend_page)).to_be_enabled(timeout=STAGE_TIMEOUT_MS)
 
 
 @then("the console answer input is empty")
 def console_answer_input_empty(frontend_page: Page):
-    expect(_answer_input(frontend_page)).to_have_value("", timeout=30000)
+    expect(_answer_input(frontend_page)).to_have_value("", timeout=STAGE_TIMEOUT_MS)
 
 
 @when(parsers.parse('the frontend types "{text}" into the answer input'))
@@ -1595,43 +1403,42 @@ def frontend_clears_answer_input(frontend_page: Page):
 def console_answer_suggestions_are(frontend_page: Page, titles: str):
     expected = sorted(value for value in titles.split(",") if value)
     suggestions = _answer_suggestions(frontend_page)
-    expect(suggestions).to_have_count(len(expected), timeout=30000)
+    expect(suggestions).to_have_count(len(expected), timeout=STAGE_TIMEOUT_MS)
     shown = sorted(_suggestion_title(suggestions.nth(index)) for index in range(len(expected)))
     assert shown == expected, shown
 
 
 @then(parsers.parse('the first console answer suggestion is "{title}"'))
 def first_console_answer_suggestion_is(frontend_page: Page, title: str):
-    expect(_answer_suggestions(frontend_page).first.get_by_text(title, exact=True)).to_be_visible(timeout=30000)
+    expect(_answer_suggestions(frontend_page).first.get_by_text(title, exact=True)).to_be_visible(timeout=STAGE_TIMEOUT_MS)
 
 
 @then(parsers.parse("the console shows {count:d} answer suggestions"))
 def console_shows_answer_suggestions(frontend_page: Page, count: int):
-    expect(_answer_suggestions(frontend_page)).to_have_count(count, timeout=30000)
+    expect(_answer_suggestions(frontend_page)).to_have_count(count, timeout=STAGE_TIMEOUT_MS)
 
 
 @then("each console answer suggestion shows artwork and artist")
-def each_console_answer_suggestion_shows_artwork_and_artist(frontend_page: Page, socket_client):
+def each_console_answer_suggestion_shows_artwork_and_artist(frontend_page: Page):
     suggestions = _answer_suggestions(frontend_page)
     count = suggestions.count()
     assert count > 0
-    artists = {track["artist"] for track in socket_client.state["tracks"]}
     for index in range(count):
         suggestion = suggestions.nth(index)
-        expect(suggestion.locator('img[src*="/48x48.jpg"]')).to_be_visible(timeout=30000)
-        assert suggestion.locator("span span").nth(1).inner_text() in artists
+        expect(suggestion.locator('img[src*="/48x48.jpg"]')).to_be_visible(timeout=STAGE_TIMEOUT_MS)
+        number = _suggestion_title(suggestion).removeprefix("Track ")
+        expect(suggestion.locator("span span").nth(1)).to_have_text(f"Artist {number}")
 
 
-@then("each console answer suggestion shows artist without artwork")
-def each_console_answer_suggestion_shows_artist_without_artwork(frontend_page: Page, socket_client):
+@then("each console answer suggestion shows only the album name")
+def each_console_answer_suggestion_shows_only_album_name(frontend_page: Page):
     suggestions = _answer_suggestions(frontend_page)
     count = suggestions.count()
     assert count > 0
-    artists = {album["artist"] for album in socket_client.state["albums"]}
     for index in range(count):
         suggestion = suggestions.nth(index)
         expect(suggestion.locator("img")).to_have_count(0)
-        assert suggestion.locator("span span").nth(1).inner_text() in artists
+        expect(suggestion.locator("span span")).to_have_count(1)
 
 
 def _choose_answer(frontend_page: Page, title: str):
@@ -1639,43 +1446,32 @@ def _choose_answer(frontend_page: Page, title: str):
     _answer_suggestions(frontend_page).filter(has_text=title).first.click(timeout=10000)
 
 
+def _choose_other_answer(frontend_page: Page, query: str, round_title: str):
+    _answer_input(frontend_page).fill(query)
+    other = _answer_suggestions(frontend_page).filter(has_not_text=round_title).first
+    expect(other).to_be_visible(timeout=STAGE_TIMEOUT_MS)
+    other.click(timeout=10000)
+
+
 @when("the frontend chooses the round track in the answer card")
-def frontend_chooses_round_track(frontend_page: Page, socket_client):
-    track = _round_track(socket_client.state)
-    assert track is not None
-    _choose_answer(frontend_page, track["title"])
+@when("the frontend chooses the round album in the answer card")
+def frontend_chooses_round_answer(frontend_page: Page):
+    _choose_answer(frontend_page, round_info_title(frontend_page))
 
 
 @when("the frontend chooses a track other than the round track in the answer card")
-def frontend_chooses_other_track(frontend_page: Page, socket_client):
-    state = socket_client.state
-    track = _round_track(state)
-    assert track is not None
-    other = next(item for item in state["tracks"] if item["id"] != track["id"])
-    _choose_answer(frontend_page, other["title"])
-
-
-@when("the frontend chooses the round album in the answer card")
-def frontend_chooses_round_album(frontend_page: Page, socket_client):
-    album = _round_album(socket_client.state)
-    assert album is not None
-    _choose_answer(frontend_page, album["name"])
+def frontend_chooses_other_track(frontend_page: Page):
+    _choose_other_answer(frontend_page, "Track", round_info_title(frontend_page))
 
 
 @when("the frontend chooses an album other than the round album in the answer card")
-def frontend_chooses_other_album(frontend_page: Page, socket_client):
-    state = socket_client.state
-    album = _round_album(state)
-    assert album is not None
-    other = next(item for item in state["albums"] if item["id"] != album["id"])
-    _choose_answer(frontend_page, other["name"])
+def frontend_chooses_other_album(frontend_page: Page):
+    _choose_other_answer(frontend_page, "Album", round_info_title(frontend_page))
 
 
 @when("the frontend types the round track title into the answer input")
-def frontend_types_round_track_title(frontend_page: Page, socket_client):
-    track = _round_track(socket_client.state)
-    assert track is not None
-    _answer_input(frontend_page).fill(track["title"])
+def frontend_types_round_track_title(frontend_page: Page):
+    _answer_input(frontend_page).fill(round_info_title(frontend_page))
 
 
 @when(parsers.parse('the frontend presses "{key}" in the answer input'))
@@ -1692,7 +1488,7 @@ def frontend_presses_key_times_in_answer_input(frontend_page: Page, key: str, co
 @then(parsers.parse("the console highlights answer suggestion {position:d}"))
 def console_highlights_answer_suggestion(frontend_page: Page, position: int):
     suggestion = _answer_suggestions(frontend_page).nth(position - 1)
-    expect(suggestion).to_have_attribute("aria-selected", "true", timeout=30000)
+    expect(suggestion).to_have_attribute("aria-selected", "true", timeout=STAGE_TIMEOUT_MS)
     selected = _answer_suggestions(frontend_page).and_(frontend_page.locator('[aria-selected="true"]'))
     expect(selected).to_have_count(1)
     option_id = suggestion.get_attribute("id")
@@ -1705,24 +1501,18 @@ def frontend_answers_with_highlighted_suggestion(frontend_page: Page):
     highlighted = _answer_suggestions(frontend_page).and_(frontend_page.locator('[aria-selected="true"]'))
     expect(highlighted).to_have_count(1)
     setattr(frontend_page, "highlighted_answer_title", _suggestion_title(highlighted))
+    setattr(frontend_page, "round_title_before_answer", round_info_title(frontend_page))
     _answer_input(frontend_page).press("Enter")
 
 
-@then("the backend judged the highlighted suggestion")
-def backend_judged_highlighted_suggestion(frontend_page: Page, socket_client):
+@then("the console shows the judgment of the highlighted suggestion")
+def console_shows_judgment_of_highlighted_suggestion(frontend_page: Page):
     title = getattr(frontend_page, "highlighted_answer_title")
-    track = _round_track(socket_client.state)
-    assert track is not None
-    expected = "correct" if track["title"] == title else "wrong"
-    _wait_for_backend_state(socket_client, phase="game", step=expected)
+    round_title = getattr(frontend_page, "round_title_before_answer")
+    expect_stage(frontend_page, "正答ステップ" if round_title == title else "誤答ステップ")
 
 
-# Playback target steps -----------------------------------------------------
-
-
-def _backend_round_track_id(socket_client, offset: int = 0) -> str:
-    state = _current_backend_state(socket_client)
-    return state["shuffledTrackIds"][state["roundIndex"] + offset]
+# Playback target steps -------------------------------------------------------
 
 
 @given("MusicKit playback is observed")
@@ -1753,30 +1543,30 @@ def _mark_advance(frontend_page: Page):
     setattr(frontend_page, "advance_marked_at", time.time())
 
 
-@then("MusicKit has loaded the backend round track")
-def musickit_loaded_round_track(frontend_page: Page, socket_client):
+@then("MusicKit has loaded the round track")
+def musickit_loaded_round_track(frontend_page: Page):
     frontend_page.wait_for_function(
         "(id) => { const mk = MusicKit.getInstance(); return !mk.isPlaying && mk.nowPlayingItem && mk.nowPlayingItem.id === id; }",
-        arg=_backend_round_track_id(socket_client),
+        arg=round_track_id(frontend_page),
     )
 
 
-@then("MusicKit is playing the backend round track")
-def musickit_playing_round_track(frontend_page: Page, socket_client):
+@then("MusicKit is playing the round track")
+def musickit_playing_round_track(frontend_page: Page):
     frontend_page.wait_for_function(
         "(id) => { const mk = MusicKit.getInstance(); return mk.isPlaying && mk.nowPlayingItem && mk.nowPlayingItem.id === id; }",
-        arg=_backend_round_track_id(socket_client),
+        arg=round_track_id(frontend_page),
     )
 
 
-@then("MusicKit is still playing the backend round track after the track duration")
-def musickit_still_playing_round_track(frontend_page: Page, socket_client):
+@then("MusicKit is still playing the round track after the track duration")
+def musickit_still_playing_round_track(frontend_page: Page):
     duration_ms = frontend_page.evaluate("() => MusicKit.getInstance().currentPlaybackDuration * 1000")
     frontend_page.wait_for_timeout(duration_ms + 200)
     # 曲末で queue の次の曲へ進まず、同じ曲を頭からループしている (ループ時の再読込は数百 ms かかる)
     frontend_page.wait_for_function(
         "(id) => { const mk = MusicKit.getInstance(); return mk.isPlaying && mk.nowPlayingItem && mk.nowPlayingItem.id === id && mk.currentPlaybackTime < mk.currentPlaybackDuration / 2; }",
-        arg=_backend_round_track_id(socket_client),
+        arg=round_track_id(frontend_page),
         timeout=5000,
     )
 
@@ -1784,40 +1574,48 @@ def musickit_still_playing_round_track(frontend_page: Page, socket_client):
 # 次のラウンドへ の state が届いた後に前の曲の再生命令が実行されると、mark から十分遅れて
 # playing へ遷移する (旧実装は seek 待ちの後 ~500ms)。mark 直前に出した命令の event 伝播は 100ms で吸収する。
 @then("MusicKit does not start the previous round track after advancing")
-def musickit_no_late_previous_track_start(frontend_page: Page, socket_client):
-    previous_id = _backend_round_track_id(socket_client, -1)
+def musickit_no_late_previous_track_start(frontend_page: Page):
+    previous_id = getattr(frontend_page, "previous_round_track_id")
     frontend_page.wait_for_timeout(1500)
     events = frontend_page.evaluate("() => window.__playbackEvents.filter((event) => event.at >= window.__playbackMark + 100)")
     late = [event for event in events if event["state"] == 2 and event["itemId"] == previous_id and event["volume"] > 0]
     assert late == [], events
 
 
-@then("MusicKit has queued the next backend round track")
-def musickit_queued_next_track(frontend_page: Page, socket_client):
-    frontend_page.wait_for_function(
-        "(id) => { const mk = MusicKit.getInstance(); const next = mk.queue.items[mk.nowPlayingItemIndex + 1]; return !!next && next.id === id; }",
-        arg=_backend_round_track_id(socket_client, 1),
-    )
+@then("MusicKit has queued another selected track next")
+def musickit_queued_another_track(frontend_page: Page):
+    current_id = round_track_id(frontend_page)
+    selected = _selected_track_ids(frontend_page)
+    next_id = frontend_page.wait_for_function(
+        "() => { const mk = MusicKit.getInstance(); const next = mk.queue.items[mk.nowPlayingItemIndex + 1]; return next ? next.id : null; }",
+    ).json_value()
+    assert next_id in selected and next_id != current_id, (next_id, current_id)
+    setattr(frontend_page, "queued_next_track_id", next_id)
 
 
 def _manifest_urls_since(frontend_page: Page, since: float) -> list[str]:
     return [str(entry["url"]) for entry in getattr(frontend_page, "manifest_log") if entry["at"] >= since]
 
 
-@then("MusicKit has fetched the manifest of the next backend round track")
-def musickit_fetched_next_manifest(frontend_page: Page, socket_client):
-    next_id = _backend_round_track_id(socket_client, 1)
+@then("MusicKit has fetched the manifest of the queued next track")
+def musickit_fetched_next_manifest(frontend_page: Page):
+    next_id = getattr(frontend_page, "queued_next_track_id")
     deadline = time.time() + 10
     while time.time() < deadline:
         if any(f"/{next_id}/index.m3u8" in url for url in _manifest_urls_since(frontend_page, 0)):
             return
-        socket_client.sleep(0.1)
+        frontend_page.wait_for_timeout(100)
     raise AssertionError(f"manifest for {next_id} was not fetched: {_manifest_urls_since(frontend_page, 0)}")
 
 
-@then("MusicKit has not fetched the manifest of the backend round track since advancing")
-def musickit_no_manifest_since_advancing(frontend_page: Page, socket_client):
-    round_id = _backend_round_track_id(socket_client)
+@then("the round track is the previously queued next track")
+def round_track_is_queued_next(frontend_page: Page):
+    assert round_track_id(frontend_page) == getattr(frontend_page, "queued_next_track_id")
+
+
+@then("MusicKit has not fetched the manifest of the round track since advancing")
+def musickit_no_manifest_since_advancing(frontend_page: Page):
+    round_id = round_track_id(frontend_page)
     since = getattr(frontend_page, "advance_marked_at")
     fetched = [url for url in _manifest_urls_since(frontend_page, since) if f"/{round_id}/index.m3u8" in url]
     assert fetched == [], fetched

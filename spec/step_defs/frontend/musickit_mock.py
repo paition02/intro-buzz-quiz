@@ -38,6 +38,7 @@ from musickit_api_mock import (
     Playlist,
     SongMetadataFallback,
     Storefront,
+    UploadedLibrarySong,
     StorefrontResponseSuccess,
     WebPlaybackAsset,
     WebPlaybackResponse,
@@ -402,6 +403,63 @@ def set_musickit_library_albums(page: Page, album_tracks: dict[str, list[str]]) 
     mock.data.library_songs = library_songs
     mock.data.library_albums = library_albums
     mock.endpoints.web_playback = web_playback
+
+
+def set_musickit_library_only_playlist(page: Page, playlist_id: str) -> None:
+    """Turn the playlist's songs into uploaded library songs that have no catalog counterpart.
+
+    The SPA then identifies each track by its library song id and plays the
+    library album the song belongs to. Each library album holds the same
+    tracks as the catalog album the song came from.
+    """
+    mock = getattr(page, "music_kit_api_mock", None)
+    if mock is None:
+        raise AssertionError("MusicKit API mock has not been configured for this page")
+    playlist = mock.data.library_playlists[playlist_id]
+    catalog_ids = list(playlist.track_ids)
+    library_songs = dict(mock.data.library_songs)
+    library_albums = dict(mock.data.library_albums or {})
+    web_playback = dict(mock.endpoints.web_playback)
+    silence_path = Path(tempfile.gettempdir()) / "intro_buzz_musickit_silence.m4a"
+    _silence_song()
+
+    def library_album_id(catalog_id: str) -> str:
+        return "l." + "".join(ch for ch in "album" + catalog_id if ch.isalnum())
+
+    def uploaded(catalog_id: str, album_id: str) -> UploadedLibrarySong:
+        source = mock.data.songs[catalog_id]
+        song = UploadedLibrarySong.from_file(str(silence_path))
+        song.name = source.title
+        song.artist_name = source.artist
+        song.album_name = source.album
+        song.artwork = source.artwork
+        song.album_ids = [album_id]
+        return song
+
+    for catalog_id in catalog_ids:
+        album_id = library_album_id(catalog_id)
+        album_catalog_ids = list(mock.data.albums[f"album-{catalog_id}"].track_ids)
+        track_ids = [library_song_id(album_catalog_id) for album_catalog_id in album_catalog_ids]
+        for album_catalog_id, track_id in zip(album_catalog_ids, track_ids, strict=True):
+            library_songs[track_id] = uploaded(album_catalog_id, album_id)
+            web_playback[track_id] = _web_playback_library_entry(album_catalog_id)
+        first = library_songs[track_ids[0]]
+        library_albums[album_id] = CatalogLibraryAlbum(
+            name=first.album_name or album_id,
+            artist_name=first.artist_name or "",
+            artwork=first.artwork,
+            genre_names=list(first.genre_names),
+            track_count=len(track_ids),
+            catalog_id=f"album-{catalog_id}",
+            track_ids=track_ids,
+        )
+    mock.data.library_songs = library_songs
+    mock.data.library_albums = library_albums
+    mock.endpoints.web_playback = web_playback
+    mock.data.library_playlists = {
+        **mock.data.library_playlists,
+        playlist_id: replace(playlist, track_ids=[library_song_id(catalog_id) for catalog_id in catalog_ids]),
+    }
 
 
 def set_musickit_library_song_albums(
