@@ -200,7 +200,6 @@ export function GameboardPage() {
         ) : roundTrack ? <TrackArtwork track={roundTrack} /> : null}
         <strong className="block text-3xl sm:text-5xl font-bold leading-tight">{primaryAnswer}</strong>
         {state.quizMode === 'intro' && roundTrack && <span className="block mt-2.5 text-subtle">{roundTrack.artist}</span>}
-        {state.quizMode === 'jacket' && roundAlbum?.artist && <span className="block mt-2.5 text-subtle">{roundAlbum.artist}</span>}
       </div>
     )
   } else if (state.step === 'results') {

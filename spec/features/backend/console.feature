@@ -24,19 +24,56 @@ Feature: Host console state transitions
     When the host sends tracks with missing id or title
     Then the track count is 1
 
-  Scenario: Jacket album candidates are grouped by album name and album artist
+  Scenario: Jacket album candidates are grouped by album name regardless of case, spacing and track artist
     Given the host console is ready
-    When the host selects tracks of one album with differing track artists and artwork
+    When the host selects tracks of one album with differing track artists and name spacing
     Then the track count is 3
     And the album count is 1
     And the album lists 3 tracks
-    And the album artist is "Shared Artist"
 
-  Scenario: Jacket album candidates without an album artist are grouped by name and track artist
+  Scenario: Tracks sharing an album name form one jacket album
     Given the host console is ready
     When the host selects multiple tracks from one album
     Then the track count is 3
     And the album count is 1
+
+  Scenario: Jacket album candidates ignore EP and Single suffixes
+    Given the host console is ready
+    When the host selects tracks of albums "Shared Album - Single" and "Shared Album - EP"
+    Then the album count is 1
+    And the album name is "Shared Album - EP"
+
+  Scenario: Jacket album candidates share a library album
+    Given the host console is ready
+    When the host selects tracks of albums "Disc Album [Disc 2]" and "Disc Album [Disc 1]" in one library album
+    Then the album count is 1
+    And the album name is "Disc Album [Disc 1]"
+
+  Scenario: Jacket album candidates share a catalog album
+    Given the host console is ready
+    When the host selects tracks of albums "Catalog Album" and "Catalog Album (Deluxe)" in one catalog album
+    Then the album count is 1
+    And the album name is "Catalog Album"
+
+  Scenario: Jacket album candidates share an identical jacket image
+    Given the host console is ready
+    When the host selects tracks of albums "First Album" and "Second Album" with the same jacket image
+    Then the album count is 1
+    And the album name is "First Album"
+
+  Scenario: Jacket album candidates with different jacket images stay apart
+    Given the host console is ready
+    When the host selects tracks of albums "First Album" and "Second Album" with different jacket images
+    Then the album count is 2
+
+  Scenario: Jacket start waits for jacket analysis
+    Given the host console is ready
+    When the host selects a track whose jacket image is still loading
+    Then the jacket albums are being analyzed
+    When the host starts a jacket game
+    Then the console action is rejected with "ジャケットを解析中です"
+    When the jacket image finishes loading
+    Then the album count is 1
 
   Scenario: Starting without tracks does not enter game
     Given the host console is ready

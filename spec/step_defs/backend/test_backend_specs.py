@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import uuid
 from typing import Any
 from datetime import datetime
 
@@ -220,17 +221,92 @@ def when_host_selects_tracks_from_one_album(ctx, socket_client):
     )
 
 
-@when("the host selects tracks of one album with differing track artists and artwork")
+@when("the host selects tracks of one album with differing track artists and name spacing")
 def when_host_selects_tracks_of_one_album(ctx, socket_client):
     tracks = make_tracks(3)
     for index, track in enumerate(tracks):
         track["albumName"] = ["Shared Album", "shared album", "Shared  Album "][index]
-        track["albumArtist"] = "Shared Artist"
     ctx.tracks = tracks
     ctx.state = socket_client.emit(
         "console:select-playlists",
         {"selectedPlaylistIds": ["playlist-a"], "tracks": tracks},
     )
+
+
+def _select_album_tracks(ctx, socket_client, names: list[str], **fields: list[str]):
+    tracks = make_tracks(len(names))
+    for index, track in enumerate(tracks):
+        track["albumName"] = names[index]
+        for key, values in fields.items():
+            track[key] = values[index]
+    ctx.tracks = tracks
+    ctx.state = socket_client.emit(
+        "console:select-playlists",
+        {"selectedPlaylistIds": ["playlist-a"], "tracks": tracks},
+    )
+
+
+@when(parsers.parse('the host selects tracks of albums "{first}" and "{second}"'))
+def when_host_selects_tracks_of_albums(ctx, socket_client, first: str, second: str):
+    _select_album_tracks(ctx, socket_client, [first, second])
+
+
+@when(parsers.parse('the host selects tracks of albums "{first}" and "{second}" in one catalog album'))
+def when_host_selects_tracks_of_one_catalog_album(ctx, socket_client, first: str, second: str):
+    _select_album_tracks(ctx, socket_client, [first, second], catalogAlbumId=["1234567890", "1234567890"])
+
+
+@when(parsers.parse('the host selects tracks of albums "{first}" and "{second}" in one library album'))
+def when_host_selects_tracks_of_one_library_album(ctx, socket_client, first: str, second: str):
+    _select_album_tracks(ctx, socket_client, [first, second], libraryAlbumId=["l.shared", "l.shared"])
+
+
+@when(parsers.parse('the host selects tracks of albums "{first}" and "{second}" with the same jacket image'))
+def when_host_selects_tracks_with_same_jacket(ctx, socket_client, artwork_server, first: str, second: str):
+    run = uuid.uuid4().hex
+    urls = [artwork_server.url(f"gradient-a.png?run={run}"), artwork_server.url(f"gradient-b.png?run={run}")]
+    _select_album_tracks(ctx, socket_client, [first, second], artworkInfoUrl=urls)
+
+
+@when(parsers.parse('the host selects tracks of albums "{first}" and "{second}" with different jacket images'))
+def when_host_selects_tracks_with_different_jackets(ctx, socket_client, artwork_server, first: str, second: str):
+    run = uuid.uuid4().hex
+    urls = [artwork_server.url(f"gradient.png?run={run}"), artwork_server.url(f"checker.png?run={run}")]
+    _select_album_tracks(ctx, socket_client, [first, second], artworkInfoUrl=urls)
+
+
+@when("the host selects a track whose jacket image is still loading")
+def when_host_selects_track_with_loading_jacket(ctx, socket_client, artwork_server):
+    artwork_server.held.clear()
+    tracks = make_tracks(1)
+    tracks[0]["artworkInfoUrl"] = artwork_server.url(f"held/gradient.png?run={uuid.uuid4().hex}")
+    ctx.tracks = tracks
+    socket_client.send("console:select-playlists", {"selectedPlaylistIds": ["playlist-a"], "tracks": tracks})
+
+
+@when("the jacket image finishes loading")
+def when_jacket_image_finishes_loading(ctx, socket_client, artwork_server):
+    artwork_server.held.set()
+    ctx.state = socket_client.wait_for_albums()
+
+
+@then("the jacket albums are being analyzed")
+def then_jacket_albums_are_being_analyzed(ctx, socket_client):
+    deadline = time.time() + 5
+    while [track["id"] for track in socket_client.state["tracks"]] != [ctx.tracks[0]["id"]] and time.time() < deadline:
+        time.sleep(0.02)
+    assert socket_client.state["albums"] is None, socket_client.state
+
+
+@then(parsers.parse('the console action is rejected with "{error}"'))
+def then_console_action_is_rejected(socket_client, error: str):
+    assert socket_client.last_ack == {"ok": False, "error": error}
+
+
+@then(parsers.parse('the album name is "{name}"'))
+def then_album_name(ctx, socket_client, name: str):
+    state = ctx.state or socket_client.state
+    assert state["albums"][0]["name"] == name
 
 
 @when("the host starts the game")
@@ -515,12 +591,6 @@ def then_album_count(ctx, socket_client, count: int):
 def then_album_track_count(ctx, socket_client, count: int):
     state = ctx.state or socket_client.state
     assert state["albums"][0]["trackIds"] == [track["id"] for track in ctx.tracks[:count]]
-
-
-@then(parsers.parse('the album artist is "{artist}"'))
-def then_album_artist(ctx, socket_client, artist: str):
-    state = ctx.state or socket_client.state
-    assert state["albums"][0]["artist"] == artist
 
 
 @then("the current track is cleared")

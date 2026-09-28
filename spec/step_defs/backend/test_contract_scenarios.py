@@ -314,11 +314,10 @@ def select_metadata(socket_client, contract, variant):
     elif variant == "same-album":
         for t in tracks:
             t["albumName"] = "Shared"
-            t["albumArtist"] = "Shared artist"
-    elif variant == "same-name-different-album-artist":
-        for i, t in enumerate(tracks):
+            t["artist"] = "Shared artist"
+    elif variant == "same-name-different-artist":
+        for t in tracks:
             t["albumName"] = "Shared"
-            t["albumArtist"] = f"Artist {i}"
     else:
         raise AssertionError(variant)
     accepted(socket_client, "select-playlists", {"selectedPlaylistIds": ["A"], "tracks": tracks})

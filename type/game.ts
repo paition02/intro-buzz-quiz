@@ -32,7 +32,8 @@ export type Track = {
   title: string
   artist: string
   albumName: string
-  albumArtist?: string
+  catalogAlbumId?: string
+  libraryAlbumId?: string
   artworkChipUrl?: string
   artworkInfoUrl?: string
   artworkRevealUrl?: string
@@ -41,7 +42,6 @@ export type Track = {
 export type Album = {
   id: string
   name: string
-  artist: string
   artworkChipUrl?: string
   artworkInfoUrl?: string
   artworkRevealUrl?: string
@@ -56,7 +56,8 @@ export type GameState = {
   selectedPlaylistIds: string[]
   players: Player[]
   tracks: Track[]
-  albums: Album[]
+  // null: ジャケット解析中
+  albums: Album[] | null
   shuffledTrackIds: string[]
   shuffledAlbumIds: string[]
   roundIndex: number
