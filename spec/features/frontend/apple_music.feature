@@ -47,55 +47,61 @@ Feature: MusicKit integration
 
   Scenario: Library playlist tracks expose purpose-sized artwork
     Given the frontend console is logged into mocked MusicKit
+    And the gameboard is open
     When the frontend opens playlist "Spec Playlist A"
     Then the frontend shows track chip artwork
     When the frontend clicks "Spec Playlist A"
     And the frontend clicks "イントロで開始"
-    Then the selected round artwork URLs are sized for their display contexts
-    And the selected tracks include album names
+    And the frontend clicks "曲情報を開く"
+    Then the console round track information shows medium artwork
+    When the frontend clicks "ギブアップ"
+    Then the gameboard shows large revealed artwork
 
   Scenario: Library playlist tracks of one album across two library albums form one jacket album
     Given the frontend console is logged into mocked MusicKit with playlist "Spec Playlist A" on two library albums of one album
     When the frontend clicks "Spec Playlist A"
     Then MusicKit tracks for library playlist "playlist-a" are requested with their library albums
-    And the selected track count is 3
-    And the selected tracks carry album artist "Shared Artist"
-    And the selected album count is 1
+    And the frontend shows "1件のプレイリスト、3曲を選択中"
+    When the frontend clicks "ジャケットで開始"
+    And the frontend clicks "アルバム情報を開く"
+    Then the console album information shows "Shared Album"
+    When the frontend clicks "ギブアップ"
+    Then the console shows the stage "正解発表ステップ"
+    And the console has no further round
 
-  Scenario: Selecting a playlist sends the selected tracks to the backend
+  Scenario: Selecting a playlist shows its tracks on the gameboard
     Given the frontend console is logged into mocked MusicKit
+    And the gameboard is open
     When the frontend clicks "Spec Playlist A"
-    Then backend selected playlist ids are "playlist-a"
-    And the selected track count is 3
+    Then the frontend shows "1件のプレイリスト、3曲を選択中"
+    And the gameboard shows "Track 1"
+    And the gameboard shows "Track 3"
 
-  Scenario: Selecting more than 50 tracks sends the selected tracks to the backend
+  Scenario: Selecting more than 50 tracks counts every track
     Given the frontend console is logged into mocked MusicKit with playlist "Spec Long Playlist" containing 55 tracks
     When the frontend clicks "Spec Long Playlist"
-    Then backend selected playlist ids are "playlist-long"
-    And the selected track count is 55
+    Then the frontend shows "1件のプレイリスト、55曲を選択中"
 
   Scenario: Starting a selected game prepares the first round without playback
     Given the frontend console selected playlist "Spec Playlist A"
     When the frontend clicks "イントロで開始"
-    Then backend phase is "game" and step is "beforePlayback"
-    And backend quiz mode is "intro"
+    Then the console shows the stage "ラウンド待機ステップ"
     And the frontend play button becomes enabled
 
   Scenario: Starting jacket mode shows jacket controls
     Given the frontend console selected playlist "Spec Playlist A"
     When the frontend clicks "ジャケットで開始"
-    Then backend phase is "game" and step is "beforePlayback"
-    And backend quiz mode is "jacket"
+    Then the console shows the stage "ラウンド待機ステップ"
     And the frontend shows jacket controls
     And the frontend does not show "再生"
 
-  Scenario: Jacket controls update backend settings
+  Scenario: Jacket controls keep the values the host sets
     Given the frontend console selected playlist "Spec Playlist A"
     When the frontend clicks "ジャケットで開始"
     And the frontend selects jacket mode "tileShuffle"
     And the frontend toggles jacket grayscale
     And the frontend sets jacket hint percent to 12
-    Then the backend jacket settings match the frontend controls
+    Then the jacket controls show mode "tileShuffle", grayscale off, and 12 percent
 
   Scenario: Play is available when the current round is ready
     Given the frontend console selected playlist "Spec Playlist A"
@@ -106,14 +112,14 @@ Feature: MusicKit integration
     Given the frontend console selected playlist "Spec Playlist A"
     When the frontend clicks "イントロで開始"
     And the frontend clicks "再生"
-    Then backend phase is "game" and step is "playing"
-    And the backend returns before playback after the intro duration
+    Then the console shows the stage "再生中ステップ"
+    And the console returns to waiting after the intro duration
 
   Scenario: Revealing a round shows the current track
     Given the frontend console selected playlist "Spec Playlist A"
     When the frontend clicks "イントロで開始"
     And the frontend clicks "ギブアップ"
-    Then backend phase is "game" and step is "reveal"
+    Then the console shows the stage "正解発表ステップ"
     When the frontend clicks "曲情報を開く"
     Then the frontend shows revealed track information
 
@@ -159,44 +165,44 @@ Feature: MusicKit integration
     And the frontend clicks "ツリー表示に切り替え"
     And the frontend opens folder "Spec Folder"
     And the frontend clicks "Spec Playlist B"
-    Then backend selected playlist ids are "playlist-a,playlist-b"
+    Then the selected playlists are "Spec Playlist A,Spec Playlist B"
     And the frontend shows "2件のプレイリスト、5曲を選択中"
 
   Scenario: Selecting a folder selects every playlist in it and its subfolders
     Given the frontend console is logged into mocked MusicKit with playlist "Spec Playlist B" in subfolder "Spec Sub Folder" of folder "Spec Folder"
     When the frontend clicks "ツリー表示に切り替え"
     And the frontend clicks "Spec Folder"
-    Then backend selected playlist ids are "playlist-a,playlist-b"
+    Then the selected playlists are "Spec Playlist A,Spec Playlist B"
     And the frontend shows "2件のプレイリスト、5曲を選択中"
 
   Scenario: Selecting a fully selected folder deselects its playlists
     Given the frontend console is logged into mocked MusicKit with playlist "Spec Playlist B" in subfolder "Spec Sub Folder" of folder "Spec Folder"
     When the frontend clicks "ツリー表示に切り替え"
     And the frontend clicks "Spec Folder"
-    Then backend selected playlist ids are "playlist-a,playlist-b"
+    Then the selected playlists are "Spec Playlist A,Spec Playlist B"
     When the frontend clicks "Spec Folder"
-    Then backend has no selected playlists
+    Then no playlist is selected
 
   Scenario: Selecting a partly selected folder selects the rest of its playlists
     Given the frontend console is logged into mocked MusicKit with playlist "Spec Playlist B" in subfolder "Spec Sub Folder" of folder "Spec Folder"
     When the frontend clicks "Spec Playlist A"
     And the frontend clicks "ツリー表示に切り替え"
     And the frontend clicks "Spec Folder"
-    Then backend selected playlist ids are "playlist-a,playlist-b"
+    Then the selected playlists are "Spec Playlist A,Spec Playlist B"
 
   Scenario: Selecting a subfolder selects only its playlists
     Given the frontend console is logged into mocked MusicKit with playlist "Spec Playlist B" in subfolder "Spec Sub Folder" of folder "Spec Folder"
     When the frontend clicks "ツリー表示に切り替え"
     And the frontend opens folder "Spec Folder"
     And the frontend clicks "Spec Sub Folder"
-    Then backend selected playlist ids are "playlist-b"
+    Then the selected playlists are "Spec Playlist B"
 
   Scenario: Selecting a folder while searching selects every playlist in it
     Given the frontend console is logged into mocked MusicKit with playlist "Spec Playlist B" in subfolder "Spec Sub Folder" of folder "Spec Folder"
     When the frontend clicks "ツリー表示に切り替え"
     And the frontend searches playlists for "Playlist B"
     And the frontend clicks "Spec Folder"
-    Then backend selected playlist ids are "playlist-a,playlist-b"
+    Then the selected playlists are "Spec Playlist A,Spec Playlist B"
 
   Scenario: Tree view search shows matching playlists inside folders
     Given the frontend console is logged into mocked MusicKit with playlist "Spec Playlist B" in folder "Spec Folder"
@@ -252,7 +258,7 @@ Feature: MusicKit integration
     When the frontend clicks "ジャケットで開始"
     Then the album information is collapsed
     When the frontend clicks "アルバム情報を開く"
-    Then the album information matches the current backend album
+    Then the album information shows an album with artwork
     When the frontend clicks "アルバム情報を閉じる"
     Then the album information is collapsed
     When the frontend clicks "アルバム情報を開く"
@@ -260,7 +266,7 @@ Feature: MusicKit integration
     And the frontend clicks "次のラウンドへ"
     Then the album information is collapsed
     When the frontend clicks "アルバム情報を開く"
-    Then the album information matches the current backend album
+    Then the album information shows a different album with artwork
 
 
   Scenario: Jacket reveal uses a complete MusicKit album queue
@@ -278,8 +284,8 @@ Feature: MusicKit integration
 
 
   Scenario: Jacket reveal plays the library album for library song IDs
-    Given the frontend console selected playlist "Spec Playlist A"
-    And the selected tracks have library IDs
+    Given library playlist "Spec Playlist A" holds library songs without catalog counterparts
+    And the frontend console selected playlist "Spec Playlist A"
     When the frontend clicks "ジャケットで開始"
     And album queue requests are observed
     And the frontend clicks "ギブアップ"
@@ -291,17 +297,17 @@ Feature: MusicKit integration
     When the frontend clicks "イントロで開始"
     Then the frontend play button becomes enabled
     When the frontend clicks "再生"
-    Then the backend returns before playback after the intro duration
+    Then the console returns to waiting after the intro duration
     When the frontend clicks "ギブアップ"
     And the frontend clicks "次のラウンドへ"
     Then the frontend play button becomes enabled
-    And MusicKit has loaded the backend round track
+    And MusicKit has loaded the round track
     When the frontend clicks "再生"
-    Then the backend returns before playback after the intro duration
+    Then the console returns to waiting after the intro duration
     When the frontend clicks "ギブアップ"
     And the frontend clicks "次のラウンドへ"
     Then the frontend play button becomes enabled
-    And MusicKit has loaded the backend round track
+    And MusicKit has loaded the round track
 
   Scenario: Advancing right after the reveal does not start the revealed track later
     Given the frontend console selected mocked playlist "Spec Long" containing 4 tracks
@@ -309,7 +315,7 @@ Feature: MusicKit integration
     When the frontend clicks "イントロで開始"
     Then the frontend play button becomes enabled
     When the frontend clicks "再生"
-    Then the backend returns before playback after the intro duration
+    Then the console returns to waiting after the intro duration
     When the frontend clicks "ギブアップ"
     And the frontend clicks "次のラウンドへ"
     Then the frontend play button becomes enabled
@@ -320,18 +326,19 @@ Feature: MusicKit integration
     And MusicKit playback is observed
     When the frontend clicks "イントロで開始"
     Then the frontend play button becomes enabled
-    And MusicKit has queued the next backend round track
-    And MusicKit has fetched the manifest of the next backend round track
+    And MusicKit has queued another selected track next
+    And MusicKit has fetched the manifest of the queued next track
     When the frontend clicks "ギブアップ"
     And the frontend clicks "次のラウンドへ"
     Then the frontend play button becomes enabled
-    And MusicKit has loaded the backend round track
-    And MusicKit has not fetched the manifest of the backend round track since advancing
+    And MusicKit has loaded the round track
+    And the round track is the previously queued next track
+    And MusicKit has not fetched the manifest of the round track since advancing
 
   Scenario: The intro reveal loops the round track without advancing the queue
     Given the frontend console selected mocked playlist "Spec Long" containing 4 tracks
     When the frontend clicks "イントロで開始"
     Then the frontend play button becomes enabled
     When the frontend clicks "ギブアップ"
-    Then MusicKit is playing the backend round track
-    And MusicKit is still playing the backend round track after the track duration
+    Then MusicKit is playing the round track
+    And MusicKit is still playing the round track after the track duration

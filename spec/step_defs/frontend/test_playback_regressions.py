@@ -1,15 +1,41 @@
-"""UI-only playback regressions. No fallback socket actions or human-delay sleeps."""
+"""UI-only playback regressions. No fallback socket actions or human-delay sleeps.
+
+Game progress is read from the host console (stage heading, round
+information, controls) and the gameboard (answerer, scores). Media state is
+read from the real MusicKit SDK through the playback observer.
+"""
 
 from __future__ import annotations
 
 import json
-import time
+import re
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import pytest
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError, expect
 from pytest_bdd import given, parsers, scenarios, then, when
+
+from frontend.helpers import (
+    TRACK_TITLE,
+    album_first_track_id,
+    click,
+    expect_answerer,
+    expect_no_answerer,
+    expect_no_participants,
+    expect_no_selection,
+    expect_participant,
+    expect_results_score,
+    expect_score,
+    expect_selection,
+    expect_stage,
+    expect_stage_in,
+    play_button,
+    round_info_title,
+    round_track_id,
+    selection_summary,
+    track_id_for_title,
+)
 from frontend.musickit_mock import set_musickit_library_data
 
 
@@ -34,25 +60,68 @@ scenarios(
 
 
 @pytest.fixture
-def playback_probe(frontend_page: Page, socket_client, tmp_path):
-    probe = {"completed": [], "round_id": None, "active": None}
+def playback_probe(frontend_page: Page, tmp_path):
+    probe = {"completed": [], "round_id": None, "round_title": None, "active": None, "actors": []}
     yield probe
     # Keep evidence for failures, without recording tokens, requests, or SDK internals.
     if not frontend_page.is_closed():
         snapshot = frontend_page.evaluate("() => window.__introProbe ? ({samples: window.__introProbe.samples, errors: window.__introProbe.errors}) : null")
         (tmp_path / "playback-observation.json").write_text(
-            json.dumps({"probe": probe, "media": snapshot, "state": socket_client.state}, ensure_ascii=False, indent=2)
+            json.dumps({"probe": probe, "media": snapshot}, ensure_ascii=False, indent=2)
         )
         frontend_page.evaluate("() => { window.__introProbe?.releasePlay?.(); window.__introProbe?.releaseAll(); window.__introProbe?.dispose(); }")
 
 
-def _wait_state(socket_client, **expected):
-    deadline = time.monotonic() + 5
-    while time.monotonic() < deadline:
-        if all(socket_client.state.get(key) == value for key, value in expected.items()):
-            return socket_client.state
-        socket_client.sleep(0.02)
-    raise AssertionError(f"expected {expected}, received {socket_client.state}")
+def board(frontend_page: Page) -> Page:
+    """The gameboard of the same game, opened on first use."""
+    page = getattr(frontend_page, "board_page", None)
+    if page is None or page.is_closed():
+        page = frontend_page.context.new_page()
+        page.goto("/gameboard")
+        setattr(frontend_page, "board_page", page)
+    return page
+
+
+def join(frontend_page: Page, http, probe, actor: str):
+    response = http.post(f"/api/act/{actor}")
+    assert response.status_code == 200, response.status_code
+    expect_participant(frontend_page, actor)
+    if actor not in probe["actors"]:
+        probe["actors"].append(actor)
+
+
+def set_round(frontend_page: Page, probe):
+    """Remember the current round from the host's 曲情報.
+
+    The song id follows the test data ("Track N" is "track-N"). A scenario
+    that renames its songs identifies the prepared song through the player.
+    """
+    probe["round_title"] = round_info_title(frontend_page)
+    if TRACK_TITLE.match(probe["round_title"]):
+        probe["round_id"] = track_id_for_title(probe["round_title"])
+    else:
+        probe["round_id"] = frontend_page.evaluate("() => MusicKit.getInstance().nowPlayingItem?.id ?? null")
+
+
+def expect_same_round(frontend_page: Page, probe):
+    assert round_info_title(frontend_page) == probe["round_title"]
+
+
+def expect_scores(frontend_page: Page, probe, score: int):
+    for actor in probe["actors"]:
+        expect_score(board(frontend_page), actor, score)
+
+
+def selected_track_total(frontend_page: Page) -> int:
+    summary = selection_summary(frontend_page)
+    expect(summary).to_be_visible(timeout=5000)
+    match = re.search(r"(\d+)曲を選択中", summary.inner_text())
+    assert match
+    return int(match.group(1))
+
+
+def is_intro(frontend_page: Page) -> bool:
+    return play_button(frontend_page).count() > 0
 
 
 def _set_seconds(page: Page, seconds: float):
@@ -82,26 +151,24 @@ def _assert_stopped(page: Page):
 
 
 @given(parsers.parse('a selected intro with an observed MusicKit player and participant "{actor}"'))
-def selected_intro(frontend_page, socket_client, http, playback_probe, actor):
+def selected_intro(frontend_page, http, playback_probe, actor):
     frontend_page.goto("/console")
     frontend_page.get_by_role("button", name="ログイン", exact=True).click()
     playlist = frontend_page.get_by_role("button", name="Spec Playlist A", exact=True)
     expect(playlist).to_be_visible()
     playlist.click()
-    expect(frontend_page.get_by_text("1件のプレイリスト、3曲を選択中", exact=True)).to_be_visible()
-    response = http.post(f"/api/act/{actor}")
-    assert response.status_code == 200
+    expect_selection(frontend_page, 1, 3)
+    join(frontend_page, http, playback_probe, actor)
     frontend_page.evaluate(Path(__file__).with_name("playback_observer.js").read_text())
 
 
 @given(parsers.parse('a prepared intro with an observed MusicKit player and participant "{actor}"'))
-def prepared_intro(frontend_page, socket_client, http, playback_probe, actor):
-    selected_intro(frontend_page, socket_client, http, playback_probe, actor)
+def prepared_intro(frontend_page, http, playback_probe, actor):
+    selected_intro(frontend_page, http, playback_probe, actor)
     frontend_page.get_by_role("button", name="イントロで開始", exact=True).click()
-    expect(frontend_page.get_by_role("button", name="再生", exact=True)).to_be_enabled(timeout=10000)
-    state = _wait_state(socket_client, phase="game", step="beforePlayback")
-    playback_probe["round_id"] = state["shuffledTrackIds"][state["roundIndex"]]
-    playback_probe["round_index"] = state["roundIndex"]
+    expect(play_button(frontend_page)).to_be_enabled(timeout=10000)
+    expect_stage(frontend_page, "ラウンド待機ステップ")
+    set_round(frontend_page, playback_probe)
     _assert_stopped(frontend_page)
 
 
@@ -130,21 +197,19 @@ def sdk_error(frontend_page, method):
 
 
 @then("the prepared track remains playable despite the optional preload fault")
-def playable_without_preload(frontend_page, socket_client, playback_probe):
-    state = _wait_state(socket_client, phase="game", step="beforePlayback")
-    playback_probe["round_id"] = state["shuffledTrackIds"][state["roundIndex"]]
-    playback_probe["round_index"] = state["roundIndex"]
-    expect(frontend_page.get_by_role("button", name="再生", exact=True)).to_be_enabled(timeout=3000)
-    replay_sequence(frontend_page, socket_client, playback_probe, "0.5")
+def playable_without_preload(frontend_page, playback_probe):
+    expect_stage(frontend_page, "ラウンド待機ステップ")
+    set_round(frontend_page, playback_probe)
+    expect(play_button(frontend_page)).to_be_enabled(timeout=3000)
+    replay_sequence(frontend_page, playback_probe, "0.5")
 
 
 @then("a released obsolete load cannot audibly restart the reset game")
-def obsolete_load_silent(frontend_page, socket_client):
+def obsolete_load_silent(frontend_page):
     frontend_page.wait_for_timeout(1000)
     _assert_stopped(frontend_page)
-    state = socket_client.state
-    assert state["tracks"] == [] and state["answererId"] is None
-    assert state["phase"] in {"ready", "initialization"}
+    expect_stage_in(frontend_page, ["初期化フェーズ", "準備フェーズ"])
+    expect_no_selection(frontend_page)
     samples = frontend_page.evaluate("() => window.__introProbe.samples.filter(s => s.at >= window.__resetMark)")
     assert not any(s["playing"] and s["volume"] > 0 for s in samples), samples
 
@@ -156,33 +221,32 @@ def mark_reset(frontend_page):
 
 
 @then("the actual console permits selecting and starting a new game")
-def new_game_after_reset(frontend_page, socket_client, playback_probe):
-    _wait_state(socket_client, phase="ready")
+def new_game_after_reset(frontend_page, playback_probe):
+    expect_stage(frontend_page, "準備フェーズ")
     button = frontend_page.get_by_role("button", name="Spec Playlist A", exact=True)
     button.click(timeout=3000)
-    expect(frontend_page.get_by_text("1件のプレイリスト、3曲を選択中", exact=True)).to_be_visible(timeout=5000)
+    expect_selection(frontend_page, 1, 3)
     click_actual(frontend_page, "イントロで開始")
-    state = _wait_state(socket_client, step="beforePlayback")
-    playback_probe["round_id"] = state["shuffledTrackIds"][state["roundIndex"]]
-    playback_probe["round_index"] = state["roundIndex"]
-    expect(frontend_page.get_by_role("button", name="再生", exact=True)).to_be_enabled(timeout=5000)
-    replay_sequence(frontend_page, socket_client, playback_probe, "0.5")
+    expect_stage(frontend_page, "ラウンド待機ステップ")
+    set_round(frontend_page, playback_probe)
+    expect(play_button(frontend_page)).to_be_enabled(timeout=5000)
+    replay_sequence(frontend_page, playback_probe, "0.5")
 
 
 @when(parsers.parse('the host clicks the actual "{label}" button'))
 def click_actual(frontend_page, label):
-    frontend_page.get_by_role("button", name=label, exact=True).click(timeout=5000)
+    click(frontend_page, label, timeout=5000)
 
 
 @when(parsers.parse("the host starts an observed {seconds:g} second intro"))
-def start_intro(frontend_page, socket_client, playback_probe, seconds):
+def start_intro(frontend_page, playback_probe, seconds):
     _set_seconds(frontend_page, seconds)
     mark = frontend_page.evaluate("() => window.__introProbe.mark()")
     media_duration = frontend_page.evaluate("MusicKit.getInstance().currentPlaybackDuration")
     limit = min(seconds, media_duration) if media_duration and media_duration > 0 else seconds
     playback_probe["active"] = {"mark": mark, "seconds": limit, "requested_seconds": seconds}
     click_actual(frontend_page, "再生")
-    _wait_state(socket_client, phase="game", step="playing")
+    expect_stage(frontend_page, "再生中ステップ")
     frontend_page.wait_for_function(
         "({mark, id}) => window.__introProbe.samples.some(s => s.at >= mark && s.playing && s.id === id && s.volume > 0)",
         arg={"mark": mark, "id": playback_probe["round_id"]}, timeout=5000,
@@ -190,12 +254,12 @@ def start_intro(frontend_page, socket_client, playback_probe, seconds):
 
 
 @when(parsers.parse('the host replays the same track for "{sequence}" seconds'))
-def replay_sequence(frontend_page, socket_client, playback_probe, sequence):
+def replay_sequence(frontend_page, playback_probe, sequence):
     for seconds in map(float, sequence.split(",")):
-        start_intro(frontend_page, socket_client, playback_probe, seconds)
-        _wait_state(socket_client, phase="game", step="beforePlayback")
+        start_intro(frontend_page, playback_probe, seconds)
+        expect_stage(frontend_page, "ラウンド待機ステップ")
         _assert_stopped(frontend_page)
-        expect(frontend_page.get_by_role("button", name="再生", exact=True)).to_be_enabled(timeout=5000)
+        expect(play_button(frontend_page)).to_be_enabled(timeout=5000)
         active = playback_probe["active"]
         samples = frontend_page.evaluate("mark => window.__introProbe.samples.filter(s => s.at >= mark)", active["mark"])
         played = [s for s in samples if s["playing"] and s["volume"] > 0]
@@ -207,7 +271,7 @@ def replay_sequence(frontend_page, socket_client, playback_probe, sequence):
         limit = active['seconds']
         assert abs(duration - limit) <= min(TIMING_TOLERANCE_SECONDS, limit / 2), {"requested": seconds, "expected": limit, "observed": duration, "samples": samples}
         assert max(s["position"] for s in played) > min(seconds / 3, 0.1), played
-        assert socket_client.state["roundIndex"] == playback_probe["round_index"]
+        expect_same_round(frontend_page, playback_probe)
         playback_probe["completed"].append({"seconds": seconds, "observed": duration})
 
 
@@ -218,27 +282,27 @@ def all_intros_verified(frontend_page, playback_probe):
 
 
 @when(parsers.parse('participant "{actor}" buzzes during observed playback'))
-def buzz(frontend_page, socket_client, http, actor):
+def buzz(frontend_page, http, actor):
     assert frontend_page.evaluate("() => MusicKit.getInstance().isPlaying")
     response = http.post(f"/api/act/{actor}")
     assert response.status_code == 200, response.status_code
-    _wait_state(socket_client, step="answering", answererId=actor)
+    expect_stage(frontend_page, "解答ステップ")
 
 
 @then(parsers.parse('the media stops and participant "{actor}" keeps the answer rights'))
-def stopped_answering(frontend_page, socket_client, actor):
+def stopped_answering(frontend_page, actor):
     _assert_stopped(frontend_page)
-    assert socket_client.state["step"] == "answering"
-    assert socket_client.state["answererId"] == actor
+    expect_stage(frontend_page, "解答ステップ")
+    expect_answerer(board(frontend_page), actor)
 
 
 @then("the same round becomes playable without changing the score")
-def playable_again(frontend_page, socket_client, playback_probe):
-    state = _wait_state(socket_client, step="beforePlayback", answererId=None)
-    assert state["roundIndex"] == playback_probe["round_index"]
-    assert state["shuffledTrackIds"][state["roundIndex"]] == playback_probe["round_id"]
-    assert all(player["score"] == 0 for player in state["players"])
-    expect(frontend_page.get_by_role("button", name="再生", exact=True)).to_be_enabled(timeout=5000)
+def playable_again(frontend_page, playback_probe):
+    expect_stage(frontend_page, "ラウンド待機ステップ")
+    expect_no_answerer(board(frontend_page))
+    expect_same_round(frontend_page, playback_probe)
+    expect_scores(frontend_page, playback_probe, 0)
+    expect(play_button(frontend_page)).to_be_enabled(timeout=5000)
     _assert_stopped(frontend_page)
 
 
@@ -255,7 +319,7 @@ def release_play(frontend_page):
 
 
 @then("the intro stops by its media deadline before the held promise is released")
-def stopped_by_deadline(frontend_page, socket_client, playback_probe):
+def stopped_by_deadline(frontend_page, playback_probe):
     assert frontend_page.evaluate("() => window.__introProbe.playHeld")
     active = playback_probe["active"]
     frontend_page.wait_for_function(
@@ -264,38 +328,37 @@ def stopped_by_deadline(frontend_page, socket_client, playback_probe):
     )
     observed = frontend_page.evaluate("() => window.__introProbe.sample()")
     assert not observed["playing"], {"deadline": active, "observed": observed}
-    _wait_state(socket_client, step="beforePlayback")
+    expect_stage(frontend_page, "ラウンド待機ステップ")
 
 
 @then("the reset state is silent before the held promise is released")
 @then("the reset state remains silent after the old intro deadline")
-def reset_silent(frontend_page, socket_client, playback_probe):
+def reset_silent(frontend_page, playback_probe):
     _assert_stopped(frontend_page)
-    assert socket_client.state["phase"] in {"initialization", "ready"}
-    assert socket_client.state["tracks"] == []
-    assert socket_client.state["players"] == []
-    assert socket_client.state["answererId"] is None
+    expect_stage_in(frontend_page, ["初期化フェーズ", "準備フェーズ"])
+    expect_no_selection(frontend_page)
+    expect_no_participants(frontend_page)
     # Observe beyond the original duration after all old callbacks can run.
     frontend_page.wait_for_timeout((playback_probe["active"]["seconds"] + 0.3) * 1000)
     _assert_stopped(frontend_page)
-    assert socket_client.state["phase"] in {"initialization", "ready"}
+    expect_stage_in(frontend_page, ["初期化フェーズ", "準備フェーズ"])
 
 
 @then("the current track keeps playing in reveal after the old intro deadline")
-def reveal_survives(frontend_page, socket_client, playback_probe):
-    _wait_state(socket_client, step="reveal")
+def reveal_survives(frontend_page, playback_probe):
+    expect_stage(frontend_page, "正解発表ステップ")
     frontend_page.wait_for_function("() => MusicKit.getInstance().isPlaying", timeout=5000)
     frontend_page.wait_for_timeout(1700)
-    assert socket_client.state["step"] == "reveal"
+    expect_stage(frontend_page, "正解発表ステップ", timeout=1000)
     assert frontend_page.evaluate("() => MusicKit.getInstance().nowPlayingItem.id") == playback_probe["round_id"]
     assert frontend_page.evaluate("() => MusicKit.getInstance().isPlaying")
 
 
 @then(parsers.parse('results are silent and participant "{actor}" has 1 point'))
-def silent_results(frontend_page, socket_client, actor):
-    state = _wait_state(socket_client, step="results")
+def silent_results(frontend_page, actor):
+    expect_stage(frontend_page, "結果発表ステップ")
     _assert_stopped(frontend_page)
-    assert next(p for p in state["players"] if p["id"] == actor)["score"] == 1
+    expect_results_score(board(frontend_page), actor, 1)
 
 
 @when("the host opens and closes track information during playback")
@@ -305,9 +368,9 @@ def info_during_playback(frontend_page):
 
 
 @then("the active intro stops at its original deadline")
-def active_deadline(frontend_page, socket_client, playback_probe):
+def active_deadline(frontend_page, playback_probe):
     active = playback_probe["active"]
-    _wait_state(socket_client, step="beforePlayback")
+    expect_stage(frontend_page, "ラウンド待機ステップ")
     _assert_stopped(frontend_page)
     samples = frontend_page.evaluate("mark => window.__introProbe.samples.filter(s => s.at >= mark)", active["mark"])
     played = [s for s in samples if s["playing"] and s["volume"] > 0]
@@ -315,7 +378,7 @@ def active_deadline(frontend_page, socket_client, playback_probe):
     stopped = next(s for s in samples if s["at"] > played[-1]["at"] and not s["playing"])
     assert abs((stopped["at"] - played[0]["at"]) / 1000 - active["seconds"]) <= TIMING_TOLERANCE_SECONDS
     assert {s["id"] for s in played} == {playback_probe["round_id"]}
-    expect(frontend_page.get_by_role("button", name="再生", exact=True)).to_be_enabled(timeout=5000)
+    expect(play_button(frontend_page)).to_be_enabled(timeout=5000)
 
 
 @when("the host briefly loses and restores the socket connection")
@@ -327,12 +390,12 @@ def offline_during_playback(frontend_page):
 
 @when("a gameboard is opened closed and reopened during playback")
 def reopen_board(frontend_page):
-    board = frontend_page.context.new_page()
+    page = frontend_page.context.new_page()
     try:
-        board.goto("/gameboard")
-        board.reload()
+        page.goto("/gameboard")
+        page.reload()
     finally:
-        board.close()
+        page.close()
 
 
 @when(parsers.parse('the host sends the answer input action "{action}"'))
@@ -361,11 +424,11 @@ def answer_input(frontend_page, action):
 
 
 @then("the input action does not judge or clear the answer rights")
-def input_no_judgment(frontend_page, socket_client):
+def input_no_judgment(frontend_page, playback_probe):
     frontend_page.wait_for_timeout(100)
-    state = socket_client.state
-    assert state["step"] == "answering" and state["answererId"] == "player-1"
-    assert all(p["score"] == 0 for p in state["players"])
+    expect_stage(frontend_page, "解答ステップ", timeout=1000)
+    expect_answerer(board(frontend_page), "player-1")
+    expect_scores(frontend_page, playback_probe, 0)
 
 
 @when("the host enters an answer without selecting a candidate")
@@ -375,10 +438,10 @@ def unfinished_answer(frontend_page):
 
 
 @then("the next answer opportunity has no previous answer text")
-def empty_next_answer(frontend_page, socket_client, http):
-    _wait_state(socket_client, step="beforePlayback")
+def empty_next_answer(frontend_page, http):
+    expect_stage(frontend_page, "ラウンド待機ステップ")
     assert http.post("/api/act/player-1").status_code == 200
-    _wait_state(socket_client, step="answering")
+    expect_stage(frontend_page, "解答ステップ")
     expect(frontend_page.get_by_role("combobox", name="回答", exact=True)).to_have_value("")
     expect(frontend_page.get_by_role("option")).to_have_count(0)
 
@@ -392,25 +455,33 @@ def rapid_click(frontend_page, label, count):
 
 
 @then("one correct judgment and one result sound are produced")
-def one_correct(frontend_page, socket_client):
-    _wait_state(socket_client, step="reveal")
-    assert next(p for p in socket_client.state["players"] if p["id"] == "player-1")["score"] == 1
+def one_correct(frontend_page):
+    expect_stage(frontend_page, "正解発表ステップ")
     # The correct sound contains two notes; observe one audio context, not just score.
     assert frontend_page.evaluate("() => window.__introBuzzAudioEvents.filter(e => e.type === 'context').length") == 1
+    # The gameboard shows scores on the results view, not during the reveal.
+    click_actual(frontend_page, "結果発表へ")
+    expect_results_score(board(frontend_page), "player-1", 1)
 
 
 @then("only the immediately next round is prepared silently")
-def only_next(frontend_page, socket_client, playback_probe):
-    state = _wait_state(socket_client, step="beforePlayback")
-    assert state["roundIndex"] == playback_probe["round_index"] + 1
-    expect(frontend_page.get_by_role("button", name="再生", exact=True)).to_be_enabled(timeout=5000)
+def only_next(frontend_page, playback_probe):
+    expect_stage(frontend_page, "ラウンド待機ステップ")
+    previous_title = playback_probe["round_title"]
+    set_round(frontend_page, playback_probe)
+    assert playback_probe["round_title"] != previous_title
+    expect(play_button(frontend_page)).to_be_enabled(timeout=5000)
     _assert_stopped(frontend_page)
-    assert frontend_page.evaluate("() => MusicKit.getInstance().nowPlayingItem.id") == state["shuffledTrackIds"][state["roundIndex"]]
+    assert frontend_page.evaluate("() => MusicKit.getInstance().nowPlayingItem.id") == playback_probe["round_id"]
+    # With three tracks, exactly one advance leaves a further round after this one.
+    click_actual(frontend_page, "ギブアップ")
+    expect_stage(frontend_page, "正解発表ステップ")
+    expect(frontend_page.get_by_role("button", name="次のラウンドへ", exact=True)).to_be_enabled(timeout=5000)
 
 
 @then("the current track is being revealed")
-def now_revealed(frontend_page, socket_client, playback_probe):
-    _wait_state(socket_client, step="reveal")
+def now_revealed(frontend_page, playback_probe):
+    expect_stage(frontend_page, "正解発表ステップ")
     frontend_page.wait_for_function("id => MusicKit.getInstance().isPlaying && MusicKit.getInstance().nowPlayingItem?.id === id", arg=playback_probe["round_id"], timeout=5000)
 
 
@@ -433,48 +504,49 @@ def slider_change(frontend_page, change):
 
 
 @then("slider input does not start audio or advance the round")
-def slider_no_play(frontend_page, socket_client, playback_probe):
+def slider_no_play(frontend_page, playback_probe):
     _assert_stopped(frontend_page)
-    assert socket_client.state["step"] == "beforePlayback"
-    assert socket_client.state["roundIndex"] == playback_probe["round_index"]
+    expect_stage(frontend_page, "ラウンド待機ステップ", timeout=1000)
+    expect_same_round(frontend_page, playback_probe)
 
 
 @given(parsers.parse('an observed console with {count:d} selected tracks'))
-def selected_track_count(frontend_page, socket_client, playback_probe, count):
+def selected_track_count(frontend_page, playback_probe, count):
     set_musickit_library_data(frontend_page, {"playlist-a": [f"track-{i+1}" for i in range(count)]})
     frontend_page.goto("/console")
     click_actual(frontend_page, "ログイン")
     click_actual(frontend_page, "Spec Playlist A")
-    expect(frontend_page.get_by_text(f"1件のプレイリスト、{count}曲を選択中", exact=True)).to_be_visible(timeout=5000)
+    expect_selection(frontend_page, 1, count, timeout=5000)
     frontend_page.evaluate(Path(__file__).with_name("playback_observer.js").read_text())
 
 
 @when(parsers.parse('the observed console starts "{mode}" mode'))
-def start_mode(frontend_page, socket_client, playback_probe, mode):
+def start_mode(frontend_page, playback_probe, mode):
     click_actual(frontend_page, "イントロで開始" if mode == "intro" else "ジャケットで開始")
-    state = _wait_state(socket_client, step="beforePlayback", quizMode=mode)
+    expect_stage(frontend_page, "ラウンド待機ステップ")
     if mode == "intro":
-        expect(frontend_page.get_by_role("button", name="再生", exact=True)).to_be_enabled(timeout=5000)
-        playback_probe["round_id"] = state["shuffledTrackIds"][state["roundIndex"]]
-        playback_probe["round_index"] = state["roundIndex"]
+        expect(play_button(frontend_page)).to_be_enabled(timeout=5000)
+        set_round(frontend_page, playback_probe)
     else:
         expect(frontend_page.get_by_role("slider", name="ヒントレベル")).to_be_visible()
-        expect(frontend_page.get_by_role("button", name="再生", exact=True)).to_have_count(0)
-        _assert_album_prepared(frontend_page, state)
+        expect(play_button(frontend_page)).to_have_count(0)
+        _assert_album_prepared(frontend_page)
     _assert_stopped(frontend_page)
 
 
-def _revealed_ids(frontend_page, state):
-    if state["quizMode"] == "intro":
-        return [state["shuffledTrackIds"][state["roundIndex"]]]
-    album = next(a for a in state["albums"] if a["id"] == state["shuffledAlbumIds"][state["roundAlbumIndex"]])
-    track = album["trackIds"][0]
+def _revealed_ids(frontend_page, probe=None):
+    """The media the reveal must play, from the host's round information and the test data."""
+    if is_intro(frontend_page):
+        if probe and probe.get("round_id") and probe.get("round_title") == round_info_title(frontend_page):
+            return [probe["round_id"]]
+        return [round_track_id(frontend_page)]
+    track = album_first_track_id(round_info_title(frontend_page))
     mock = getattr(frontend_page, "music_kit_api_mock")
     return list(mock.data.albums["album-" + track].track_ids)
 
 
-def _assert_album_prepared(page, state):
-    expected = _revealed_ids(page, state)
+def _assert_album_prepared(page):
+    expected = _revealed_ids(page)
     page.wait_for_function("() => !MusicKit.getInstance().isPlaying || MusicKit.getInstance().volume===0", timeout=STOP_DEADLINE_MS)
     mark = page.evaluate("window.__introProbe.mark()")
     # Warm-up is allowed only at zero volume. Wait for the current album's
@@ -492,112 +564,119 @@ def _assert_album_prepared(page, state):
 
 
 @then("the reveal plays the expected full track or album queue")
-def expected_reveal(frontend_page, socket_client):
-    state = _wait_state(socket_client, step="reveal")
-    expected = _revealed_ids(frontend_page, state)
+def expected_reveal(frontend_page, playback_probe):
+    expect_stage(frontend_page, "正解発表ステップ")
+    intro = is_intro(frontend_page)
+    expected = _revealed_ids(frontend_page, playback_probe)
     frontend_page.wait_for_function("id => MusicKit.getInstance().isPlaying && MusicKit.getInstance().nowPlayingItem?.id === id", arg=expected[0], timeout=5000)
     actual = frontend_page.evaluate("() => ({ids: MusicKit.getInstance().queue.items.map(i => i.id), repeat: MusicKit.getInstance().repeatMode, one: MusicKit.PlayerRepeatMode.one, all: MusicKit.PlayerRepeatMode.all})")
-    if state["quizMode"] == "jacket":
+    if intro:
+        assert actual["repeat"] == actual["one"]
+    else:
         assert actual["ids"] == expected
         assert actual["repeat"] == actual["all"]
-    else:
-        assert actual["repeat"] == actual["one"]
 
 
 @then("the jacket returns to its own first track after a full album cycle")
-def album_cycle(frontend_page, socket_client):
-    ids = _revealed_ids(frontend_page, socket_client.state)
+def album_cycle(frontend_page):
+    ids = _revealed_ids(frontend_page)
     assert len(ids) >= 2
     frontend_page.wait_for_function("id => MusicKit.getInstance().isPlaying && MusicKit.getInstance().nowPlayingItem?.id === id", arg=ids[-1], timeout=10000)
     frontend_page.wait_for_function("id => MusicKit.getInstance().isPlaying && MusicKit.getInstance().nowPlayingItem?.id === id", arg=ids[0], timeout=10000)
-    assert socket_client.state["step"] == "reveal"
+    expect_stage(frontend_page, "正解発表ステップ", timeout=1000)
 
 
 @then("the observed results contain no active media")
-def no_results_media(frontend_page, socket_client):
-    _wait_state(socket_client, step="results")
+def no_results_media(frontend_page):
+    expect_stage(frontend_page, "結果発表ステップ")
     _assert_stopped(frontend_page)
     frontend_page.wait_for_timeout(2300)
     _assert_stopped(frontend_page)
 
 
 @when(parsers.parse('the observed console finishes all rounds in "{mode}" mode'))
-def finish_rounds(frontend_page, socket_client, playback_probe, mode):
-    start_mode(frontend_page, socket_client, playback_probe, mode)
-    state = socket_client.state
-    ids_key = "shuffledTrackIds" if mode == "intro" else "shuffledAlbumIds"
-    index_key = "roundIndex" if mode == "intro" else "roundAlbumIndex"
-    order = list(state[ids_key])
-    for index in range(len(order)):
-        assert socket_client.state[index_key] == index
-        assert socket_client.state[ids_key] == order
+def finish_rounds(frontend_page, playback_probe, mode):
+    count = selected_track_total(frontend_page)
+    start_mode(frontend_page, playback_probe, mode)
+    seen_titles = []
+    for index in range(count):
+        seen_titles.append(round_info_title(frontend_page))
         if mode == "intro":
-            playback_probe["round_index"] = index
-            playback_probe["round_id"] = order[index]
-            replay_sequence(frontend_page, socket_client, playback_probe, "0.5")
+            set_round(frontend_page, playback_probe)
+            replay_sequence(frontend_page, playback_probe, "0.5")
         else:
-            _assert_album_prepared(frontend_page, socket_client.state)
+            _assert_album_prepared(frontend_page)
         click_actual(frontend_page, "ギブアップ")
-        expected_reveal(frontend_page, socket_client)
-        if index < len(order) - 1:
+        expected_reveal(frontend_page, playback_probe)
+        next_round = frontend_page.get_by_role("button", name="次のラウンドへ", exact=True)
+        if index < count - 1:
+            expect(next_round).to_be_enabled(timeout=5000)
             click_actual(frontend_page, "次のラウンドへ")
-            _wait_state(socket_client, step="beforePlayback")
+            expect_stage(frontend_page, "ラウンド待機ステップ")
             if mode == "intro":
-                expect(frontend_page.get_by_role("button", name="再生", exact=True)).to_be_enabled(timeout=5000)
+                expect(play_button(frontend_page)).to_be_enabled(timeout=5000)
         else:
-            expect(frontend_page.get_by_role("button", name="次のラウンドへ", exact=True)).to_be_disabled()
+            expect(next_round).to_be_disabled()
+    # Every selected track or album came up exactly once.
+    assert len(set(seen_titles)) == count, seen_titles
     click_actual(frontend_page, "結果発表へ")
-    no_results_media(frontend_page, socket_client)
+    no_results_media(frontend_page)
 
 
 @when(parsers.parse('the observed console begins a subsequent "{mode}" game'))
-def subsequent_game(frontend_page, socket_client, playback_probe, mode):
+def subsequent_game(frontend_page, playback_probe, mode):
     click_actual(frontend_page, "次のゲームへ")
-    _wait_state(socket_client, phase="ready")
-    assert socket_client.state["players"] == []
-    start_mode(frontend_page, socket_client, playback_probe, mode)
+    expect_stage(frontend_page, "準備フェーズ")
+    expect_no_participants(frontend_page)
+    start_mode(frontend_page, playback_probe, mode)
     if mode == "intro":
-        replay_sequence(frontend_page, socket_client, playback_probe, "0.5")
+        replay_sequence(frontend_page, playback_probe, "0.5")
     click_actual(frontend_page, "ギブアップ")
-    expected_reveal(frontend_page, socket_client)
+    expected_reveal(frontend_page, playback_probe)
+
+
+def _jacket_settings(frontend_page):
+    return {
+        "mode": frontend_page.get_by_role("combobox", name="隠し方").input_value(),
+        "grayscale": frontend_page.get_by_role("checkbox", name="白黒").is_checked(),
+        "hint": frontend_page.get_by_role("slider", name="ヒントレベル").get_attribute("aria-valuenow"),
+    }
 
 
 @when(parsers.parse('the jacket UI sets mode "{mode}" and grayscale "{gray}"'))
-def set_jacket_ui(frontend_page, socket_client, mode, gray):
-    frontend_page.get_by_role("combobox", name="隠し方").select_option(mode)
-    _wait_state(socket_client, jacketMode=mode)
+def set_jacket_ui(frontend_page, mode, gray):
+    select = frontend_page.get_by_role("combobox", name="隠し方")
+    select.select_option(mode)
+    expect(select).to_have_value(mode, timeout=5000)
     checkbox = frontend_page.get_by_role("checkbox", name="白黒")
     # This controlled input is updated after the socket round trip. set_checked
     # checks synchronously immediately after the click, before React can update.
     if checkbox.is_checked() != (gray == "true"):
         checkbox.click()
-    _wait_state(socket_client, jacketGrayscale=gray == "true")
-    expect(checkbox).to_be_checked(checked=gray == "true")
+    expect(checkbox).to_be_checked(checked=gray == "true", timeout=5000)
     slider = frontend_page.get_by_role("slider", name="ヒントレベル")
     for _ in range(46):
         slider.press("ArrowRight")
-    _wait_state(socket_client, jacketHintPercent=47)
-    expect(slider).to_have_attribute("aria-valuenow", "47")
+    expect(slider).to_have_attribute("aria-valuenow", "47", timeout=5000)
 
 
 @then("jacket judging preserves settings and the next round resets only its hint")
-def jacket_wrong_and_next(frontend_page, socket_client, http):
-    state = socket_client.state
-    settings = {key: state[key] for key in ("jacketMode", "jacketGrayscale", "jacketHintPercent")}
+def jacket_wrong_and_next(frontend_page, http, playback_probe):
+    settings = _jacket_settings(frontend_page)
     assert http.post("/api/act/player-1").status_code == 200
-    _wait_state(socket_client, step="answering")
+    expect_stage(frontend_page, "解答ステップ")
     click_actual(frontend_page, "不正解")
-    _wait_state(socket_client, step="beforePlayback")
-    assert all(socket_client.state[key] == value for key, value in settings.items())
+    expect_stage(frontend_page, "ラウンド待機ステップ")
+    assert _jacket_settings(frontend_page) == settings
     _assert_stopped(frontend_page)
     click_actual(frontend_page, "ギブアップ")
-    expected_reveal(frontend_page, socket_client)
+    expected_reveal(frontend_page, playback_probe)
     click_actual(frontend_page, "次のラウンドへ")
-    _wait_state(socket_client, step="beforePlayback", jacketHintPercent=1)
-    _assert_album_prepared(frontend_page, socket_client.state)
-    assert socket_client.state["jacketMode"] == settings["jacketMode"]
-    assert socket_client.state["jacketGrayscale"] == settings["jacketGrayscale"]
-    expect(frontend_page.get_by_role("slider", name="ヒントレベル")).to_have_attribute("aria-valuenow", "1")
+    expect_stage(frontend_page, "ラウンド待機ステップ")
+    slider = frontend_page.get_by_role("slider", name="ヒントレベル")
+    expect(slider).to_have_attribute("aria-valuenow", "1", timeout=5000)
+    _assert_album_prepared(frontend_page)
+    assert _jacket_settings(frontend_page) == {**settings, "hint": "1"}
 
 
 @given("library track responses are limited to fifty items per page")
@@ -611,18 +690,17 @@ def fifty_item_pages(frontend_page):
 
 
 @then(parsers.parse("the library selection contains exactly {count:d} distinct track IDs"))
-def exact_track_ids(frontend_page, socket_client, count):
+def exact_track_ids(frontend_page, count):
     expected = {f"track-{i+1}" for i in range(count)}
-    state = socket_client.state
-    assert {t["id"] for t in state["tracks"]} == expected
-    assert len(state["tracks"]) == count
     button = frontend_page.get_by_role("button", name="イントロで開始", exact=True)
+    expect_selection(frontend_page, 1, count)
     if count:
         expect(button).to_be_enabled()
         click_actual(frontend_page, "イントロで開始")
-        _wait_state(socket_client, step="beforePlayback")
-        expect(frontend_page.get_by_role("button", name="再生", exact=True)).to_be_enabled(timeout=5000)
+        expect_stage(frontend_page, "ラウンド待機ステップ")
+        expect(play_button(frontend_page)).to_be_enabled(timeout=5000)
         assert frontend_page.evaluate("() => MusicKit.getInstance().nowPlayingItem.id") in expected
+        assert round_track_id(frontend_page) in expected
     else:
         expect(button).to_be_disabled()
         expect(frontend_page.get_by_role("button", name="ジャケットで開始", exact=True)).to_be_disabled()
@@ -640,22 +718,25 @@ def overlapping_library(frontend_page, playback_probe):
 @when("the host selects both playlists and deselects the first")
 def deselect_overlap(frontend_page):
     click_actual(frontend_page, "Spec Playlist A")
-    expect(frontend_page.get_by_text("1件のプレイリスト、2曲を選択中", exact=True)).to_be_visible()
+    expect_selection(frontend_page, 1, 2)
     click_actual(frontend_page, "Spec Playlist B")
-    expect(frontend_page.get_by_text("2件のプレイリスト、3曲を選択中", exact=True)).to_be_visible()
+    expect_selection(frontend_page, 2, 3)
     click_actual(frontend_page, "Spec Playlist A")
 
 
 @then("the overlapping track remains selected exactly once")
-def overlap_retained(frontend_page, socket_client):
-    expect(frontend_page.get_by_text("1件のプレイリスト、2曲を選択中", exact=True)).to_be_visible()
-    state = socket_client.state
-    assert state["selectedPlaylistIds"] == ["playlist-b"]
-    assert sorted(t["id"] for t in state["tracks"]) == ["track-2", "track-3"]
+def overlap_retained(frontend_page):
+    expect_selection(frontend_page, 1, 2)
+    expect(frontend_page.get_by_role("button", name="Spec Playlist A", exact=True)).to_have_attribute("aria-pressed", "false")
+    expect(frontend_page.get_by_role("button", name="Spec Playlist B", exact=True)).to_have_attribute("aria-pressed", "true")
+    page = board(frontend_page)
+    expect(page.get_by_text("Track 2", exact=True).first).to_be_visible(timeout=5000)
+    expect(page.get_by_text("Track 3", exact=True).first).to_be_visible(timeout=5000)
+    expect(page.get_by_text("Track 1", exact=True)).to_have_count(0)
 
 
 @when("the first playlist track request is held while the host resets")
-def reset_playlist_request(frontend_page, socket_client):
+def reset_playlist_request(frontend_page):
     held = []
     def hold_track_response(route):
         if route.request.method == "GET" and not held:
@@ -667,44 +748,44 @@ def reset_playlist_request(frontend_page, socket_client):
     # satisfy this selection before the deliberately deferred HTTP response.
     frontend_page.reload()
     click_actual(frontend_page, "Spec Playlist A")
-    deadline = time.monotonic() + 5
-    while not held and time.monotonic() < deadline:
-        socket_client.sleep(0.02)
+    for _ in range(250):
+        if held:
+            break
+        frontend_page.wait_for_timeout(20)
     assert held, "playlist request never reached the HTTP delay gate"
     setattr(frontend_page, "held_playlist_routes", held)
     click_actual(frontend_page, "リセット")
 
 
 @when("the old playlist track request is released")
-def release_tracks(frontend_page, socket_client):
-    _wait_state(socket_client, phase="ready")
+def release_tracks(frontend_page):
+    expect_stage(frontend_page, "準備フェーズ")
     for route in getattr(frontend_page, "held_playlist_routes"):
         route.fallback()
 
 
 @then("the reset library selection stays empty")
-def reset_selection_empty(frontend_page, socket_client):
+def reset_selection_empty(frontend_page):
     frontend_page.wait_for_timeout(500)
-    assert socket_client.state["tracks"] == []
-    assert socket_client.state["selectedPlaylistIds"] == []
+    expect_no_selection(frontend_page, timeout=1000)
     expect(frontend_page.get_by_role("button", name="イントロで開始", exact=True)).to_be_disabled()
 
 
 @when(parsers.parse("the host repeats {count:d} intros lasting {seconds:g} seconds"))
-def repeat_many(frontend_page, socket_client, playback_probe, count, seconds):
-    replay_sequence(frontend_page, socket_client, playback_probe, ",".join([str(seconds)] * count))
+def repeat_many(frontend_page, playback_probe, count, seconds):
+    replay_sequence(frontend_page, playback_probe, ",".join([str(seconds)] * count))
     assert len(playback_probe["completed"]) == count
 
 
 @when(parsers.parse("the host repeats buzzing and wrong judgment {count:d} times"))
-def repeated_wrong_ui(frontend_page, socket_client, http, playback_probe, count):
+def repeated_wrong_ui(frontend_page, http, playback_probe, count):
     for _ in range(count):
-        start_intro(frontend_page, socket_client, playback_probe, 1.5)
-        buzz(frontend_page, socket_client, http, "player-1")
-        stopped_answering(frontend_page, socket_client, "player-1")
+        start_intro(frontend_page, playback_probe, 1.5)
+        buzz(frontend_page, http, "player-1")
+        stopped_answering(frontend_page, "player-1")
         click_actual(frontend_page, "不正解")
-        playable_again(frontend_page, socket_client, playback_probe)
-    replay_sequence(frontend_page, socket_client, playback_probe, "0.5")
+        playable_again(frontend_page, playback_probe)
+    replay_sequence(frontend_page, playback_probe, "0.5")
 
 
 @when("the host clicks play repeatedly in the same event turn")
@@ -716,9 +797,9 @@ def rapid_play(frontend_page, playback_probe):
 
 
 @then("the repeated play clicks produce one bounded playback interval")
-def one_interval(frontend_page, socket_client, playback_probe):
-    _wait_state(socket_client, step="playing")
-    active_deadline(frontend_page, socket_client, playback_probe)
+def one_interval(frontend_page, playback_probe):
+    expect_stage(frontend_page, "再生中ステップ")
+    active_deadline(frontend_page, playback_probe)
     samples = frontend_page.evaluate("mark => window.__introProbe.samples.filter(s => s.at >= mark)", playback_probe["active"]["mark"])
     starts = 0
     previous = False
@@ -736,47 +817,48 @@ def broken_effect_sound(frontend_page):
 
 
 @then("correct feedback still reaches reveal with one point")
-def feedback_survives(frontend_page, socket_client):
-    _wait_state(socket_client, step="reveal")
-    assert next(p for p in socket_client.state["players"] if p["id"] == "player-1")["score"] == 1
+def feedback_survives(frontend_page):
+    expect_stage(frontend_page, "正解発表ステップ")
     frontend_page.wait_for_function("() => MusicKit.getInstance().isPlaying", timeout=5000)
+    click_actual(frontend_page, "結果発表へ")
+    expect_results_score(board(frontend_page), "player-1", 1)
 
 
 @when(parsers.parse('the host reaches observed stage "{stage}"'))
-def reach_observed_stage(frontend_page, socket_client, http, playback_probe, stage):
+def reach_observed_stage(frontend_page, http, playback_probe, stage):
     if stage == "beforePlayback":
         return
     if stage == "played":
-        replay_sequence(frontend_page, socket_client, playback_probe, "0.5")
+        replay_sequence(frontend_page, playback_probe, "0.5")
         return
     if stage in {"playing", "answering", "wrong", "correct"}:
-        start_intro(frontend_page, socket_client, playback_probe, 1.5)
+        start_intro(frontend_page, playback_probe, 1.5)
         if stage == "playing":
             return
-        buzz(frontend_page, socket_client, http, "player-1")
-        stopped_answering(frontend_page, socket_client, "player-1")
+        buzz(frontend_page, http, "player-1")
+        stopped_answering(frontend_page, "player-1")
         if stage != "answering":
             click_actual(frontend_page, "不正解" if stage == "wrong" else "正解")
-            _wait_state(socket_client, step=stage)
+            expect_stage(frontend_page, "誤答ステップ" if stage == "wrong" else "正答ステップ")
     elif stage in {"reveal", "results"}:
         click_actual(frontend_page, "ギブアップ")
-        expected_reveal(frontend_page, socket_client)
+        expected_reveal(frontend_page, playback_probe)
         if stage == "results":
             click_actual(frontend_page, "結果発表へ")
-            _wait_state(socket_client, step="results")
+            expect_stage(frontend_page, "結果発表ステップ")
     else:
         raise AssertionError(stage)
 
 
 @then("reset stays silent after old feedback and playback timers expire")
-def reset_past_timers(frontend_page, socket_client):
-    _wait_state(socket_client, phase="ready")
+def reset_past_timers(frontend_page):
+    expect_stage(frontend_page, "準備フェーズ")
     _assert_stopped(frontend_page)
     frontend_page.wait_for_timeout(2100)
     _assert_stopped(frontend_page)
-    assert socket_client.state["phase"] == "ready"
-    assert socket_client.state["tracks"] == []
-    assert socket_client.state["players"] == []
+    expect_stage(frontend_page, "準備フェーズ", timeout=1000)
+    expect_no_selection(frontend_page)
+    expect_no_participants(frontend_page)
 
 
 @when("the host logs out during an observed intro")
@@ -811,7 +893,7 @@ def logout_late_silent(frontend_page):
 
 
 @then("a no-op play response is not presented as a successful intro")
-def noop_play_error(frontend_page, socket_client):
+def noop_play_error(frontend_page):
     sdk_attempted(frontend_page, "play")
     frontend_page.wait_for_timeout(1800)
     samples = frontend_page.evaluate("() => window.__introProbe.samples")
@@ -820,11 +902,11 @@ def noop_play_error(frontend_page, socket_client):
     # display would silently report an intro which never happened.
     expect(frontend_page.locator("p").filter(has_text="再生を開始できません")).to_be_visible(timeout=3000)
     expect(frontend_page.get_by_role("button", name="リセット", exact=True)).to_be_enabled()
-    _wait_state(socket_client, step='beforePlayback')
-    expect(frontend_page.get_by_role('button', name='再生', exact=True)).to_be_enabled()
+    expect_stage(frontend_page, "ラウンド待機ステップ")
+    expect(play_button(frontend_page)).to_be_enabled()
     click_actual(frontend_page, '再生')
     frontend_page.wait_for_function('MusicKit.getInstance().isPlaying', timeout=5000)
-    _wait_state(socket_client, step='beforePlayback')
+    expect_stage(frontend_page, "ラウンド待機ステップ")
     _assert_stopped(frontend_page)
 
 
@@ -842,7 +924,7 @@ def set_volume(frontend_page, volume):
 
 @then(parsers.parse("the prepared media volume remains {volume:g}"))
 def volume_restored(frontend_page, volume):
-    expect(frontend_page.get_by_role("button", name="再生", exact=True)).to_be_enabled(timeout=5000)
+    expect(play_button(frontend_page)).to_be_enabled(timeout=5000)
     assert frontend_page.evaluate("() => MusicKit.getInstance().volume") == pytest.approx(volume)
     _assert_stopped(frontend_page)
 
@@ -902,7 +984,7 @@ def restore_token(frontend_page):
 def restored_library(frontend_page):
     expect(frontend_page.get_by_role("button", name="Spec Playlist A", exact=True)).to_be_visible(timeout=5000)
     click_actual(frontend_page, "Spec Playlist A")
-    expect(frontend_page.get_by_text("1件のプレイリスト、3曲を選択中", exact=True)).to_be_visible(timeout=5000)
+    expect_selection(frontend_page, 1, 3, timeout=5000)
 
 
 @given(parsers.parse('library listing fails with HTTP {status:d} until restored'))

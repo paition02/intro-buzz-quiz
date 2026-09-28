@@ -16,28 +16,27 @@ Feature: Host console page
     Then the frontend shows "Track 1"
     When the frontend clicks "Spec Playlist A"
     Then the frontend shows "1件のプレイリスト、3曲を選択中"
-    And backend selected playlist ids are "playlist-a"
+    And the selected playlists are "Spec Playlist A"
 
   Scenario: Console can select multiple playlists
     Given the frontend console is logged into mocked MusicKit
     When the frontend clicks "Spec Playlist A"
     And the frontend clicks "Spec Playlist B"
     Then the frontend shows "2件のプレイリスト、5曲を選択中"
-    And backend selected playlist ids are "playlist-a,playlist-b"
+    And the selected playlists are "Spec Playlist A,Spec Playlist B"
 
-  Scenario: Console sends de-duplicated tracks for selected playlists
+  Scenario: Console counts a track shared by selected playlists once
     Given the frontend console is logged into mocked MusicKit with overlapping playlists
     When the frontend clicks "Spec Playlist A"
     And the frontend clicks "Spec Playlist B"
-    Then backend selected playlist ids are "playlist-a,playlist-b"
-    And backend track ids are unique
+    Then the frontend shows "2件のプレイリスト、4曲を選択中"
 
   Scenario: Console can start and play a selected game
     Given the frontend console selected playlist "Spec Playlist A"
     When the frontend clicks "イントロで開始"
-    Then backend phase is "game" and step is "beforePlayback"
+    Then the console shows the stage "ラウンド待機ステップ"
     When the frontend clicks "再生"
-    Then backend phase is "game" and step is "playing"
+    Then the console shows the stage "再生中ステップ"
 
   Scenario: Console playback seconds slider ignores presses inside the ring
     Given the frontend console selected playlist "Spec Playlist A"
@@ -87,8 +86,8 @@ Feature: Host console page
     And action button "player-1" is joined
     When the frontend clicks "イントロで開始"
     Then the console answer input is disabled
-    When the backend host plays the intro for 1 seconds
-    And backend actor "player-1" presses the action API
+    When the host plays a 1 second intro
+    And action button "player-1" is pressed
     Then the console answer input is enabled
 
   Scenario: Console answer card suggests tracks with artwork and artist
@@ -116,40 +115,45 @@ Feature: Host console page
 
   Scenario: Choosing the round track in the answer card judges correct
     Given the frontend console has actor "player-1" answering in an intro game
+    And the gameboard is open
     When the frontend chooses the round track in the answer card
-    Then backend phase is "game" and step is "correct"
-    And player "player-1" score is 1
+    Then the console shows the stage "正答ステップ"
+    And the gameboard shows player "player-1" with 1 point
     And the console answer input is empty
     And the console shows 0 answer suggestions
 
   Scenario: Choosing another track in the answer card judges wrong
     Given the frontend console has actor "player-1" answering in an intro game
+    And the gameboard is open
     When the frontend chooses a track other than the round track in the answer card
-    Then backend phase is "game" and step is "wrong"
-    And player "player-1" score is 0
+    Then the console shows the stage "誤答ステップ"
+    And the gameboard shows player "player-1" with 0 points
 
   Scenario: Console answer card suggests albums without artwork in jacket mode
     Given the frontend console has actor "player-1" answering in a jacket game
+    And the gameboard is open
     When the frontend types "Album" into the answer input
     Then the console answer suggestions are "Album 1,Album 2,Album 3"
-    And each console answer suggestion shows artist without artwork
+    And each console answer suggestion shows only the album name
     When the frontend chooses the round album in the answer card
-    Then backend phase is "game" and step is "correct"
-    And player "player-1" score is 1
+    Then the console shows the stage "正答ステップ"
+    And the gameboard shows player "player-1" with 1 point
 
   Scenario: Choosing another album in the answer card judges wrong
     Given the frontend console has actor "player-1" answering in a jacket game
+    And the gameboard is open
     When the frontend chooses an album other than the round album in the answer card
-    Then backend phase is "game" and step is "wrong"
-    And player "player-1" score is 0
+    Then the console shows the stage "誤答ステップ"
+    And the gameboard shows player "player-1" with 0 points
 
   Scenario: Console answer card answers the first suggestion with Enter
     Given the frontend console has actor "player-1" answering in an intro game
+    And the gameboard is open
     When the frontend types the round track title into the answer input
     Then the console highlights answer suggestion 1
     When the frontend presses "Enter" in the answer input
-    Then backend phase is "game" and step is "correct"
-    And player "player-1" score is 1
+    Then the console shows the stage "正答ステップ"
+    And the gameboard shows player "player-1" with 1 point
     And the console answer input is empty
 
   Scenario: Console answer card moves the highlight with arrow keys and wraps
@@ -162,7 +166,7 @@ Feature: Host console page
     When the frontend presses "ArrowUp" 1 times in the answer input
     Then the console highlights answer suggestion 3
     When the frontend answers with the highlighted suggestion by Enter
-    Then the backend judged the highlighted suggestion
+    Then the console shows the judgment of the highlighted suggestion
 
   Scenario: Console answer card resets the highlight when the input changes
     Given the frontend console has actor "player-1" answering in an intro game
@@ -182,5 +186,5 @@ Feature: Host console page
   Scenario: Console answer card ignores Enter without suggestions
     Given the frontend console has actor "player-1" answering in an intro game
     When the frontend presses "Enter" in the answer input
-    Then backend phase is "game" and step is "answering"
+    Then the console shows the stage "解答ステップ"
     And the console answer input is enabled
