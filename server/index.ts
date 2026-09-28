@@ -7,6 +7,7 @@ import consoleHtml from '../client/console.html'
 import gameboardHtml from '../client/gameboard.html'
 import actionHtml from '../client/action.html'
 import { serve } from './https'
+import { artworkHash } from './artwork'
 import type { Album, GameState, JacketMode, Player, QuizMode, Track } from '../type/game'
 
 // Bun が cwd の .env を読む。PORT は数値として渡す。
@@ -63,6 +64,7 @@ function lanOrigin() {
 const actionCooldownMs = 250
 let lastAcceptedActionAtByActorId: Record<string, number> = {}
 let roundIntroPlayed = false
+let albumsRequest = 0
 const invalidStateError = 'この操作は現在の状態では実行できません'
 type ConsoleActionResult = true | string
 const quizModes = ['intro', 'jacket'] as const satisfies readonly QuizMode[]
@@ -118,41 +120,64 @@ function uniqueTracksById(tracks: Track[]) {
   })
 }
 
-function normalizedAlbumText(value: string) {
-  return value.normalize('NFKC').trim().toLowerCase().replace(/\s+/g, ' ')
+// ジャケット画像・アルバム名・catalog album・library album のどれかが同じ曲を 1 つのアルバムにまとめる。
+// アルバム名は " - EP" / " - Single" と空白の違いを無視して比べる。
+function normalizedAlbumName(name: string) {
+  return name.normalize('NFKC').toLowerCase().replace(/\s+-\s+(ep|single)$/, '').replace(/\s+/g, '')
 }
 
-// Albums are identified the way people recognize them: title and album
-// artist. Library album IDs split the same album across releases and
-// artwork differs across remasters, so neither takes part in the key.
-function albumIdFromTrack(track: Track) {
-  return [
-    normalizedAlbumText(track.albumName),
-    normalizedAlbumText(track.albumArtist ?? track.artist),
-  ].join('\u001f')
+function isRepresentativeAlbumName(candidate: string, current: string) {
+  return candidate.length < current.length || (candidate.length === current.length && candidate.localeCompare(current) < 0)
 }
 
-function albumsFromTracks(tracks: Track[]) {
-  const albums = new Map<string, Album>()
-  for (const track of tracks) {
-    if (!track.albumName.trim()) continue
-    const id = albumIdFromTrack(track)
-    const album = albums.get(id)
-    if (album) {
-      album.trackIds.push(track.id)
-      continue
-    }
-    albums.set(id, {
-      id,
-      name: track.albumName,
-      artist: track.albumArtist ?? track.artist,
-      artworkChipUrl: track.artworkChipUrl,
-      artworkInfoUrl: track.artworkInfoUrl,
-      artworkRevealUrl: track.artworkRevealUrl,
-      trackIds: [track.id],
-    })
+function albumsFromTracks(tracks: Track[], artworkHashes: ReadonlyMap<string, string>) {
+  const parents = new Map<string, string>()
+  const root = (key: string): string => {
+    const parent = parents.get(key) ?? key
+    if (parent === key) return key
+    const top = root(parent)
+    parents.set(key, top)
+    return top
   }
-  return [...albums.values()]
+  const union = (left: string, right: string) => {
+    const leftRoot = root(left)
+    const rightRoot = root(right)
+    if (leftRoot !== rightRoot) parents.set(leftRoot, rightRoot)
+  }
+  const nameKey = (track: Track) => `name:${normalizedAlbumName(track.albumName)}`
+
+  const jacketTracks = tracks.filter((track) => track.albumName.trim() && track.artworkInfoUrl)
+  for (const track of jacketTracks) {
+    if (track.catalogAlbumId) union(nameKey(track), `catalog:${track.catalogAlbumId}`)
+    if (track.libraryAlbumId) union(nameKey(track), `library:${track.libraryAlbumId}`)
+    const artworkHash = artworkHashes.get(track.id)
+    if (artworkHash) union(nameKey(track), `artwork:${artworkHash}`)
+  }
+
+  const groups = new Map<string, Track[]>()
+  for (const track of jacketTracks) {
+    const key = root(nameKey(track))
+    groups.set(key, [...(groups.get(key) ?? []), track])
+  }
+  return [...groups.values()].map((group): Album => {
+    const representative = group.reduce((current, track) => isRepresentativeAlbumName(track.albumName, current.albumName) ? track : current)
+    return {
+      id: representative.id,
+      name: representative.albumName,
+      artworkChipUrl: representative.artworkChipUrl,
+      artworkInfoUrl: representative.artworkInfoUrl,
+      artworkRevealUrl: representative.artworkRevealUrl,
+      trackIds: group.map((track) => track.id),
+    }
+  })
+}
+
+async function artworkHashesByTrackId(tracks: Track[]) {
+  const entries = await Promise.all(tracks.map(async (track) => {
+    const hash = track.artworkInfoUrl ? await artworkHash(track.artworkInfoUrl) : null
+    return [track.id, hash] as const
+  }))
+  return new Map(entries.filter((entry): entry is readonly [string, string] => entry[1] !== null))
 }
 
 function shuffledValues<T>(values: T[]) {
@@ -182,7 +207,7 @@ function resetShuffledTrackIds() {
 }
 
 function resetShuffledAlbumIds() {
-  state.shuffledAlbumIds = shuffledValues(state.albums.map((album) => album.id))
+  state.shuffledAlbumIds = shuffledValues((state.albums ?? []).map((album) => album.id))
   state.roundAlbumIndex = -1
 }
 
@@ -201,7 +226,7 @@ function loadCurrentTrack() {
 }
 
 function loadCurrentAlbum() {
-  if (state.albums.length === 0) {
+  if (!state.albums?.length) {
     state.step = 'idle'
     state.roundAlbumIndex = -1
     return
@@ -275,20 +300,21 @@ function consoleSelectPlaylists(payload: ConsoleSelectPlaylistsPayload = {}): Co
       title: String(track.title ?? ''),
       artist: String(track.artist ?? ''),
       albumName: String(track.albumName ?? ''),
-      albumArtist: typeof track.albumArtist === 'string' && track.albumArtist ? track.albumArtist : undefined,
+      catalogAlbumId: typeof track.catalogAlbumId === 'string' && track.catalogAlbumId ? track.catalogAlbumId : undefined,
+      libraryAlbumId: typeof track.libraryAlbumId === 'string' && track.libraryAlbumId ? track.libraryAlbumId : undefined,
       artworkChipUrl: typeof track.artworkChipUrl === 'string' ? track.artworkChipUrl : undefined,
       artworkInfoUrl: typeof track.artworkInfoUrl === 'string' ? track.artworkInfoUrl : undefined,
       artworkRevealUrl: typeof track.artworkRevealUrl === 'string' ? track.artworkRevealUrl : undefined,
     })).filter((track: Track) => track.id && track.title)
     : []
   const uniqueTracks = uniqueTracksById(tracks)
-  const uniqueAlbums = albumsFromTracks(uniqueTracks)
+  const request = ++albumsRequest
   update(() => {
     state.selectedPlaylistIds = selectedPlaylistIds
     state.tracks = uniqueTracks.length > 0
       ? uniqueTracks
       : []
-    state.albums = uniqueAlbums
+    state.albums = null
     state.shuffledTrackIds = []
     state.shuffledAlbumIds = []
     state.roundIndex = -1
@@ -296,7 +322,16 @@ function consoleSelectPlaylists(payload: ConsoleSelectPlaylistsPayload = {}): Co
     state.quizMode = null
     roundIntroPlayed = false
   })
+  void resolveAlbums(request, uniqueTracks)
   return true
+}
+
+async function resolveAlbums(request: number, tracks: Track[]) {
+  const artworkHashes = await artworkHashesByTrackId(tracks)
+  if (request !== albumsRequest) return
+  update(() => {
+    state.albums = albumsFromTracks(state.tracks, artworkHashes)
+  })
 }
 
 function consoleStart(payload: ConsoleStartPayload | null = {}): ConsoleActionResult {
@@ -304,7 +339,8 @@ function consoleStart(payload: ConsoleStartPayload | null = {}): ConsoleActionRe
   const quizMode = payload?.quizMode
   if (!isQuizMode(quizMode)) return '開始するゲームモードを選択してください'
   if (state.tracks.length === 0) return '曲を選択してから開始してください'
-  if (quizMode === 'jacket' && state.albums.length === 0) return 'アルバム名のある曲を選択してから開始してください'
+  if (quizMode === 'jacket' && state.albums === null) return 'ジャケットを解析中です'
+  if (quizMode === 'jacket' && state.albums?.length === 0) return 'アルバム名とジャケットのある曲を選択してから開始してください'
 
   update(() => {
     state.phase = 'game'
@@ -351,9 +387,12 @@ function consoleExcludeTrack(payload: unknown): ConsoleActionResult {
   const currentAlbum = state.shuffledAlbumIds[state.roundAlbumIndex]
   update(() => {
     state.tracks = state.tracks.filter(track => track.id !== trackId)
-    state.albums = albumsFromTracks(state.tracks)
+    const albums = state.albums
+      ?.map((album) => ({ ...album, trackIds: album.trackIds.filter((id) => id !== trackId) }))
+      .filter((album) => album.trackIds.length > 0) ?? null
+    state.albums = albums
     state.shuffledTrackIds = state.shuffledTrackIds.filter(id => id !== trackId)
-    state.shuffledAlbumIds = state.shuffledAlbumIds.filter(id => state.albums.some(album => album.id === id))
+    state.shuffledAlbumIds = state.shuffledAlbumIds.filter(id => albums?.some(album => album.id === id))
     if (state.quizMode === 'intro') {
       if (currentTrack !== trackId) state.roundIndex = state.shuffledTrackIds.indexOf(currentTrack!)
       else {
@@ -521,6 +560,7 @@ function consoleNextGame(): ConsoleActionResult {
 }
 
 function consoleReset(): ConsoleActionResult {
+  albumsRequest += 1
   update(() => {
     lastAcceptedActionAtByActorId = {}
     state = {

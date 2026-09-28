@@ -39,7 +39,10 @@ class SocketClient:
         assert isinstance(response.get("ok"), bool), response
         self.last_ack = response
         if response["ok"]:
-            return self.wait_for_next_state(event_count)
+            state = self.wait_for_next_state(event_count)
+            if event == "console:select-playlists":
+                state = self.wait_for_albums()
+            return state
         return self.state
 
     def send(self, event: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -66,6 +69,15 @@ class SocketClient:
                     return state
             self.sleep(0.02)
         raise AssertionError(f"state with {expected} not observed; latest={self.events[-1] if self.events else None}")
+
+    def wait_for_albums(self) -> dict[str, Any]:
+        """選曲後のジャケット解析 (albums が null の間) の完了を待つ。"""
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            if self.events and self.events[-1]["albums"] is not None:
+                return self.events[-1]
+            self.sleep(0.02)
+        raise AssertionError(f"albums not resolved; latest={self.events[-1] if self.events else None}")
 
     @property
     def state(self) -> dict[str, Any]:

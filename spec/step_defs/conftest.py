@@ -11,6 +11,7 @@ import httpx
 import pytest
 from dotenv import load_dotenv
 
+from artwork_server import ArtworkServer
 from quiz_transport import SocketClient
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -24,6 +25,13 @@ def server_url() -> Iterator[str]:
         pytest.exit("TEST_BACKEND_URL is required. Set it in the environment or in .env.", returncode=2)
 
     yield configured
+
+@pytest.fixture(scope="session")
+def artwork_server() -> Iterator[ArtworkServer]:
+    server = ArtworkServer()
+    yield server
+    server.close()
+
 
 @pytest.fixture
 def http(server_url: str):

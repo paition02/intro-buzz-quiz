@@ -197,7 +197,7 @@ export function ConsolePage() {
   const roundInfo = isJacket ? roundAlbum : roundTrack
   const roundAnswerId = isJacket ? roundAlbum?.id ?? null : roundTrackId
   const answerCandidates = useMemo<AnswerCandidate[]>(() => isJacket
-    ? state.albums.map((album) => ({ id: album.id, title: album.name, artist: album.artist }))
+    ? (state.albums ?? []).map((album) => ({ id: album.id, title: album.name }))
     : state.tracks.map((track) => ({ id: track.id, title: track.title, artist: track.artist, artworkUrl: track.artworkChipUrl })), [isJacket, state.albums, state.tracks])
   const roundPreparationKey = roundPreparationKeyFromState(state)
   const [playbackSecondsRoundKey, setPlaybackSecondsRoundKey] = useState(roundPreparationKey)
@@ -586,7 +586,7 @@ export function ConsolePage() {
           )}
           <div className="flex flex-wrap gap-2.5 mt-3.5 max-md:[&>button]:flex-1">
             <Button disabled={busy || state.phase !== 'ready' || selectedPlaylistIds.length === 0 || state.tracks.length === 0} onClick={() => handleStart('intro')}>イントロで開始</Button>
-            <Button disabled={busy || state.phase !== 'ready' || selectedPlaylistIds.length === 0 || state.tracks.length === 0} onClick={() => handleStart('jacket')}>ジャケットで開始</Button>
+            <Button disabled={busy || state.phase !== 'ready' || selectedPlaylistIds.length === 0 || state.tracks.length === 0 || state.albums === null} onClick={() => handleStart('jacket')}>ジャケットで開始</Button>
           </div>
           <div className="flex items-center gap-2 flex-wrap mt-3">
             <span className="text-muted">参加中:</span>

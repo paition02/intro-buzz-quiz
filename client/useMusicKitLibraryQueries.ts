@@ -47,6 +47,7 @@ type MusicApiAttributes = {
   albumName?: string
   artwork?: MusicApiArtwork
   playParams?: { id?: string } | null
+  url?: string
 }
 
 type MusicApiParentRelationship = {
@@ -76,7 +77,7 @@ type MusicApiTrack = {
       data?: MusicApiTrack[]
     }
     albums?: {
-      data?: Array<{ id: string; attributes?: Pick<MusicApiAttributes, 'artistName'> }>
+      data?: Array<{ id: string; attributes?: Pick<MusicApiAttributes, 'artwork'> }>
     }
   }
 }
@@ -86,6 +87,12 @@ type MusicApiParams = Record<string, string | number | string[]>
 const ARTWORK_CHIP_SIZE = '48x48'
 const ARTWORK_INFO_SIZE = '256x256'
 const ARTWORK_REVEAL_SIZE = '1024x1024'
+
+// catalog 曲の url は https://music.apple.com/{storefront}/album/{name}/{albumId}?i={songId}。
+function catalogAlbumIdFromUrl(url: string | undefined) {
+  if (!url) return undefined
+  return new URL(url).pathname.split('/').at(-1) || undefined
+}
 
 function artworkUrlForSize(template: string | undefined, size: string) {
   if (!template) return undefined
@@ -193,13 +200,15 @@ async function fetchPlaylistTracks(mk: MusicKit.MusicKitInstance, playlistId: st
   })
   const tracks = availableTracks.map((track): Track => {
     const catalog = track.relationships?.catalog?.data?.[0]
-    const artworkTemplate = catalog?.attributes?.artwork?.url ?? track.attributes?.artwork?.url
+    const libraryAlbum = track.relationships?.albums?.data?.[0]
+    const artworkTemplate = catalog?.attributes?.artwork?.url ?? track.attributes?.artwork?.url ?? libraryAlbum?.attributes?.artwork?.url
     return {
       id: catalog?.id ?? track.id,
       title: track.attributes?.name ?? catalog?.attributes?.name ?? '',
       artist: track.attributes?.artistName ?? catalog?.attributes?.artistName ?? '',
       albumName: catalog?.attributes?.albumName ?? track.attributes?.albumName ?? '',
-      albumArtist: track.relationships?.albums?.data?.[0]?.attributes?.artistName,
+      catalogAlbumId: catalogAlbumIdFromUrl(catalog?.attributes?.url),
+      libraryAlbumId: libraryAlbum?.id,
       artworkChipUrl: artworkUrlForSize(artworkTemplate, ARTWORK_CHIP_SIZE),
       artworkInfoUrl: artworkUrlForSize(artworkTemplate, ARTWORK_INFO_SIZE),
       artworkRevealUrl: artworkUrlForSize(artworkTemplate, ARTWORK_REVEAL_SIZE),

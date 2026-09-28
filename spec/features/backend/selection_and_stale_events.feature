@@ -11,10 +11,10 @@ Feature: Track identity and obsolete game notifications
       | duplicate-id | 1 | 1 |
       | missing-id | 1 | 1 |
       | missing-title | 1 | 1 |
-      | missing-artwork | 2 | 2 |
+      | missing-artwork | 2 | 0 |
       | missing-album | 2 | 0 |
       | same-album | 2 | 1 |
-      | same-name-different-album-artist | 2 | 2 |
+      | same-name-different-artist | 2 | 1 |
 
   Scenario: Replacing a next-game selection discards the previous track IDs
     Given the contract state is "intro:results"

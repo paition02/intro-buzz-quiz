@@ -43,7 +43,7 @@ export function roundAlbumIdFromState(state: GameState) {
 export function roundAlbumFromState(state: GameState) {
   const albumId = roundAlbumIdFromState(state)
   if (albumId == null) return null
-  return state.albums.find((album) => album.id === albumId) ?? null
+  return state.albums?.find((album) => album.id === albumId) ?? null
 }
 
 export function roundPreparationKeyFromState(state: GameState) {
@@ -71,6 +71,7 @@ function gameStateChange(previous: GameState, next: GameState): Partial<GameStat
 export function consoleStatusMessage(state: GameState, playbackSeconds: number) {
   if (state.phase === 'initialization') return 'Apple Musicへログインしてください'
   if (state.phase === 'ready') {
+    if (state.tracks.length > 0 && state.albums === null) return `${state.selectedPlaylistIds.length}件のプレイリストから${state.tracks.length}曲を選択中。ジャケットを解析しています`
     if (state.tracks.length > 0) return `${state.selectedPlaylistIds.length}件のプレイリストから${state.tracks.length}曲を選択中。開始できます`
     return 'プレイリストを選んで、プレイヤーの参加を待っています'
   }

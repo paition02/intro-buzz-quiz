@@ -4,7 +4,7 @@ import Fuse from 'fuse.js'
 export type AnswerCandidate = {
   id: string
   title: string
-  artist: string
+  artist?: string
   artworkUrl?: string
 }
 
@@ -114,7 +114,7 @@ export function AnswerInput({
                 {candidate.artworkUrl && <img className="size-9 rounded-lg shrink-0" src={candidate.artworkUrl} alt="" />}
                 <span className="min-w-0 grid">
                   <span className="overflow-hidden text-ellipsis whitespace-nowrap font-bold">{candidate.title}</span>
-                  <span className="overflow-hidden text-ellipsis whitespace-nowrap text-muted text-sm">{candidate.artist}</span>
+                  {candidate.artist && <span className="overflow-hidden text-ellipsis whitespace-nowrap text-muted text-sm">{candidate.artist}</span>}
                 </span>
               </li>
             )
