@@ -30,7 +30,7 @@ export function AnswerInput({
   const listboxId = useId()
 
   const fuse = useMemo(
-    () => new Fuse(candidates, { keys: ['title', 'artist'], threshold: 0.4 }),
+    () => new Fuse(candidates, { keys: ['title', 'artist'], threshold: 0.4, distance: 300 }),
     [candidates],
   )
   const suggestions = useMemo(
