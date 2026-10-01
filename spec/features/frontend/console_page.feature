@@ -101,6 +101,11 @@ Feature: Host console page
     When the frontend types "Trak 2" into the answer input
     Then the first console answer suggestion is "Track 2"
 
+  Scenario: Console answer card suggests a track by a word far into its long title
+    Given the frontend console has actor "player-1" answering in an intro game where "Track 2" is titled with "Moonlight" at character 100
+    When the frontend types "Moonlight" into the answer input
+    Then the console answer suggestions are the title with "Moonlight" at character 100
+
   Scenario: Console answer card shows at most 5 suggestions
     Given the frontend console has actor "player-1" answering in an intro game with 8 tracks
     When the frontend types "Track" into the answer input
