@@ -1368,6 +1368,22 @@ def frontend_console_actor_answering_intro_with_tracks(frontend_page: Page, http
     _console_actor_answering(frontend_page, http, actor, "intro")
 
 
+def _long_title(word: str, position: int) -> str:
+    return ("Prelude " + "-" * position)[:position] + word
+
+
+@given(parsers.parse('the frontend console has actor "{actor}" answering in an intro game where "{track}" is titled with "{word}" at character {position:d}'))
+def frontend_console_actor_answering_intro_with_long_title(frontend_page: Page, http, actor: str, track: str, word: str, position: int):
+    track_id = "track-" + track.removeprefix("Track ")
+    set_musickit_library_data(
+        frontend_page,
+        {"playlist-a": ["track-1", "track-2", "track-3"], "playlist-b": ["track-4", "track-5"]},
+        song_titles={track_id: _long_title(word, position)},
+    )
+    frontend_console_selected_playlist(frontend_page, "Spec Playlist A")
+    _console_actor_answering(frontend_page, http, actor, "intro")
+
+
 @given(parsers.parse('the frontend console has actor "{actor}" answering in a jacket game'))
 def frontend_console_actor_answering_jacket(frontend_page: Page, http, actor: str):
     frontend_console_selected_playlist(frontend_page, "Spec Playlist A")
@@ -1406,6 +1422,13 @@ def console_answer_suggestions_are(frontend_page: Page, titles: str):
     expect(suggestions).to_have_count(len(expected), timeout=STAGE_TIMEOUT_MS)
     shown = sorted(_suggestion_title(suggestions.nth(index)) for index in range(len(expected)))
     assert shown == expected, shown
+
+
+@then(parsers.parse('the console answer suggestions are the title with "{word}" at character {position:d}'))
+def console_answer_suggestions_are_long_title(frontend_page: Page, word: str, position: int):
+    suggestions = _answer_suggestions(frontend_page)
+    expect(suggestions).to_have_count(1, timeout=STAGE_TIMEOUT_MS)
+    assert _suggestion_title(suggestions.first) == _long_title(word, position)
 
 
 @then(parsers.parse('the first console answer suggestion is "{title}"'))
