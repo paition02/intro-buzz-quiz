@@ -74,7 +74,7 @@ export function GameboardPage() {
   let cardClassName = CARD_GB
 
   if (state.gameboardQr) {
-    const actionUrl = state.lanOrigin === null ? null : `${state.lanOrigin}/action`
+    const actionUrl = state.lanOrigin === null ? null : `${state.lanOrigin}/`
     content = actionUrl === null ? (
       <h1 className={READY_TITLE}>LANのIPアドレスが見つかりません</h1>
     ) : (

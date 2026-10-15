@@ -352,7 +352,7 @@ def gameboard_is_open(frontend_page: Page):
 @given(parsers.parse('action button "{actor}" is open'))
 def action_button_is_open(frontend_page: Page, actor: str):
     page = _integration_page(frontend_page, f"action:{actor}")
-    page.goto("/action")
+    page.goto("/")
 
 
 # MusicKit library arrangements ----------------------------------------------

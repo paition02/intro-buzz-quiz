@@ -283,7 +283,7 @@ def test_late_artwork_cannot_paint_a_different_jacket(frontend_page,playback_pro
 @pytest.mark.parametrize('first',['phone','physical'])
 def test_phone_and_http_buzzer_share_the_same_acceptance_rule(frontend_page,http,playback_probe,first):
     p=frontend_page;r.selected_track_count(p,playback_probe,3)
-    phone=p.context.new_page();phone.add_init_script("sessionStorage.setItem('intro-buzz-action-actor-id','P')");phone.goto('/action')
+    phone=p.context.new_page();phone.add_init_script("sessionStorage.setItem('intro-buzz-action-actor-id','P')");phone.goto('/')
     phone.get_by_role('button',name='早押しボタン').click();expect_participant(p,'P');playback_probe['actors'].append('P')
     r.join(p,http,playback_probe,'Q')
     board=r.board(p)
@@ -421,10 +421,10 @@ def test_failed_jacket_artwork_is_explained_to_the_audience(frontend_page,playba
 
 @pytest.mark.parametrize('reload',['reload','reopen'])
 def test_phone_reconnection_preserves_answer_rights_without_another_press(intro,http,playback_probe,reload):
-    p=intro;phone=p.context.new_page();script="sessionStorage.setItem('intro-buzz-action-actor-id','player-1')";phone.add_init_script(script);phone.goto('/action')
+    p=intro;phone=p.context.new_page();script="sessionStorage.setItem('intro-buzz-action-actor-id','player-1')";phone.add_init_script(script);phone.goto('/')
     r.start_intro(p,playback_probe,1.5);r.buzz(p,http,'player-1');r.stopped_answering(p,'player-1')
     if reload=='reload':phone.reload()
-    else:phone.close();phone=p.context.new_page();phone.add_init_script(script);phone.goto('/action')
+    else:phone.close();phone=p.context.new_page();phone.add_init_script(script);phone.goto('/')
     phone.wait_for_timeout(300)
     expect_stage(p,'解答ステップ',timeout=1000);expect_answerer(r.board(p),'player-1');r.expect_scores(p,playback_probe,0);r._assert_stopped(p)
     r.click_actual(p,'正解');expect_stage(p,'正解発表ステップ');r.expected_reveal(p,playback_probe);phone.close()
@@ -464,7 +464,7 @@ def test_host_board_and_two_phone_buttons_follow_both_answerers(frontend_page,pl
     p=frontend_page;r.selected_track_count(p,playback_probe,3)
     phones=[]
     for actor in ['P','Q']:
-        phone=p.context.new_page();phone.add_init_script(f"sessionStorage.setItem('intro-buzz-action-actor-id','{actor}')");phone.goto('/action');phone.get_by_role('button',name='早押しボタン').click();phones.append(phone)
+        phone=p.context.new_page();phone.add_init_script(f"sessionStorage.setItem('intro-buzz-action-actor-id','{actor}')");phone.goto('/');phone.get_by_role('button',name='早押しボタン').click();phones.append(phone)
         expect_participant(p,actor)
     board=r.board(p);r.start_mode(p,playback_probe,'intro')
     scores={'P':0,'Q':0}

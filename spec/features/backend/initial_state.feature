@@ -44,7 +44,6 @@ Feature: Initial state and routes
       | /          |
       | /console   |
       | /gameboard |
-      | /action    |
 
   Scenario: Unknown routes return not found
     When the client requests route "/missing"

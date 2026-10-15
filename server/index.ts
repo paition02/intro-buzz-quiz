@@ -2,7 +2,6 @@ import { SignJWT, importPKCS8 } from 'jose'
 import { Server } from 'socket.io'
 import { Server as Engine } from '@socket.io/bun-engine'
 import { networkInterfaces } from 'node:os'
-import homeHtml from '../client/index.html'
 import consoleHtml from '../client/console.html'
 import gameboardHtml from '../client/gameboard.html'
 import actionHtml from '../client/action.html'
@@ -734,10 +733,9 @@ const port = readPort('PORT')
 
 const appRoutes = {
   // ルートごとに専用の HTML エントリポイントを持つ MPA 構成。
-  '/': homeHtml,
+  '/': actionHtml,
   '/console': consoleHtml,
   '/gameboard': gameboardHtml,
-  '/action': actionHtml,
   '/api/token': { GET: handleToken },
   '/api/act/:actorId': { POST: handleAct },
 }

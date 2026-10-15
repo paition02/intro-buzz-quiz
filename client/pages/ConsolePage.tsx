@@ -411,7 +411,7 @@ export function ConsolePage() {
     await consoleAction('console:reset')
   })
 
-  const actionUrl = state.lanOrigin === null ? null : `${state.lanOrigin}/action`
+  const actionUrl = state.lanOrigin === null ? null : `${state.lanOrigin}/`
   const gameboardUrl = state.lanOrigin === null ? null : `${state.lanOrigin}/gameboard`
 
   const handleCopyUrl = (url: string | null, label: string) => run(async () => {
