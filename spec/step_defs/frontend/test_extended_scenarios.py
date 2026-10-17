@@ -174,13 +174,13 @@ def test_jacket_reveal_retries_failed_preparation_after_network_recovers(fronten
 
 @pytest.mark.parametrize('case',['next','hint','image-failure','album-failure','prepared-album-reuse','single-album-track'])
 def test_jacket_progress_survives_display_and_album_boundaries(frontend_page,playback_probe,case):
+    lookups: list[str] = []
     p=frontend_page;r.selected_track_count(p,playback_probe,3)
     if case=='single-album-track':
         mock=getattr(p,'music_kit_api_mock')
         for album in mock.data.albums.values():album.track_ids[:]=album.track_ids[:1]
     if case=='image-failure':p.route('**/example.test/**',lambda route:route.abort())
     if case=='album-failure':
-        lookups=[]
         p.route('**/api.music.apple.com/v1/catalog/*/songs/*', album_lookup_failure(lookups))
         r.click_actual(p,'ジャケットで開始')
         expect_jacket_round_waiting(p)
@@ -193,7 +193,6 @@ def test_jacket_progress_survives_display_and_album_boundaries(frontend_page,pla
     if case=='hint':
         for target in [12,47,12]:hint_slider_to(p,target)
     if case=='prepared-album-reuse':
-        lookups=[]
         p.route('**/api.music.apple.com/v1/catalog/*/songs/*',album_lookup_failure(lookups))
     if case=='album-failure':
         before=len(lookups)
