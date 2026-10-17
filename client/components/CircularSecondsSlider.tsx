@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
+import { playbackSecondsScale } from '../lib/playbackSecondsScale'
 
 function CircularValueSlider({
   value,
@@ -10,7 +11,9 @@ function CircularValueSlider({
   formatValue,
   onChange,
   onCommit,
+  scale,
 }: {
+  scale?: ReturnType<typeof playbackSecondsScale>
   value: number
   min: number
   max: number
@@ -33,7 +36,7 @@ function CircularValueSlider({
   const activePointerIdRef = useRef<number | null>(null)
   const interactionRectRef = useRef<DOMRectReadOnly | null>(null)
   const latestValueRef = useRef(value)
-  const progress = (value - min) / (max - min)
+  const progress = scale ? scale.toProgress(value) : (value - min) / (max - min)
   const angle = gapDegrees + progress * sweepDegrees - 90
   const knobX = center + radius * Math.cos((angle * Math.PI) / 180)
   const knobY = center + radius * Math.sin((angle * Math.PI) / 180)
@@ -72,11 +75,13 @@ function CircularValueSlider({
     let degrees = (Math.atan2(y, x) * 180) / Math.PI + 90
     if (degrees < 0) degrees += 360
     const inGap = degrees < gapDegrees || degrees > 360 - gapDegrees
-    const nearerEnd = latestValueRef.current - min < max - latestValueRef.current ? min : max
-    const raw = inGap ? nearerEnd : min + ((degrees - gapDegrees) / sweepDegrees) * (max - min)
+    const currentProgress = scale ? scale.toProgress(latestValueRef.current) : (latestValueRef.current - min) / (max - min)
+    const nextProgress = inGap ? (currentProgress < 0.5 ? 0 : 1) : (degrees - gapDegrees) / sweepDegrees
+    // Absorb subpixel pointer rounding at the infinite-repeat endpoint.
+    const raw = scale ? scale.fromProgress(nextProgress >= 0.998 ? 1 : nextProgress) : min + nextProgress * (max - min)
     const stepped = Math.round(raw / step) * step
     const precision = step < 1 ? 1 : 0
-    const nextValue = Number(Math.min(max, Math.max(min, stepped)).toFixed(precision))
+    const nextValue = raw === Infinity ? Infinity : Number(Math.min(max, Math.max(min, stepped)).toFixed(precision))
     latestValueRef.current = nextValue
     onChange(nextValue)
     return nextValue
@@ -93,8 +98,9 @@ function CircularValueSlider({
           role="slider"
           aria-label={label}
           aria-valuemin={min}
-          aria-valuemax={max}
-          aria-valuenow={value}
+          aria-valuemax={scale ? max + step : max}
+          aria-valuenow={value === Infinity ? max + step : value}
+          aria-valuetext={`${formatValue(value)} ${unit}`}
           tabIndex={0}
           onPointerDown={(event) => {
             activePointerIdRef.current = event.pointerId
@@ -127,6 +133,12 @@ function CircularValueSlider({
             const currentValue = latestValueRef.current
             if (event.key === 'ArrowRight' || event.key === 'ArrowUp') nextValue = Number(Math.min(max, currentValue + step).toFixed(precision))
             if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') nextValue = Number(Math.max(min, currentValue - step).toFixed(precision))
+            if (scale) {
+              if ((event.key === 'ArrowLeft' || event.key === 'ArrowDown') && currentValue === Infinity) nextValue = max
+              if (event.key === 'Home') nextValue = min
+              if (event.key === 'End') nextValue = Infinity
+              if ((event.key === 'ArrowRight' || event.key === 'ArrowUp') && (currentValue === Infinity || currentValue >= max)) nextValue = Infinity
+            }
             if (nextValue == null) return
             event.preventDefault()
             latestValueRef.current = nextValue
@@ -153,22 +165,26 @@ function CircularValueSlider({
 
 export function CircularSecondsSlider({
   value,
+  duration,
   onChange,
   onCommit,
 }: {
   value: number
   onChange: (value: number) => void
   onCommit?: (value: number) => void
+  duration: number
 }) {
+  const scale = useMemo(() => playbackSecondsScale(duration), [duration])
   return (
     <CircularValueSlider
+      scale={scale}
       value={value}
       min={0.1}
-      max={30}
+      max={scale.maximum}
       step={0.1}
       label="再生秒数"
-      unit="秒"
-      formatValue={(nextValue) => nextValue.toFixed(1)}
+      unit={value === Infinity ? 'ループ' : '秒'}
+      formatValue={(nextValue) => nextValue === Infinity ? '∞' : nextValue.toFixed(1)}
       onChange={onChange}
       onCommit={onCommit}
     />

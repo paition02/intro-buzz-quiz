@@ -45,6 +45,7 @@ type MusicApiAttributes = {
   name?: string
   artistName?: string
   albumName?: string
+  durationInMillis?: number
   artwork?: MusicApiArtwork
   playParams?: { id?: string } | null
   url?: string
@@ -207,6 +208,7 @@ async function fetchPlaylistTracks(mk: MusicKit.MusicKitInstance, playlistId: st
       title: track.attributes?.name ?? catalog?.attributes?.name ?? '',
       artist: track.attributes?.artistName ?? catalog?.attributes?.artistName ?? '',
       albumName: catalog?.attributes?.albumName ?? track.attributes?.albumName ?? '',
+      durationInMillis: catalog?.attributes?.durationInMillis ?? track.attributes?.durationInMillis,
       catalogAlbumId: catalogAlbumIdFromUrl(catalog?.attributes?.url),
       libraryAlbumId: libraryAlbum?.id,
       artworkChipUrl: artworkUrlForSize(artworkTemplate, ARTWORK_CHIP_SIZE),

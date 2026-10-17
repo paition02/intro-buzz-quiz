@@ -38,6 +38,7 @@ from frontend.helpers import (
     library_album_id_for,
     play_button,
     play_intro,
+    set_playback_seconds,
     round_info_title,
     round_track_id,
 )
@@ -199,9 +200,8 @@ def _touch_swipe_up_on_playback_seconds_slider(frontend_page: Page, degrees: flo
 
 
 def _set_console_playback_seconds_on_ring(frontend_page: Page, seconds: int):
-    minimum = 0.1
-    maximum = 30
-    progress = (seconds - minimum) / (maximum - minimum)
+    assert seconds == 1, "This ring step selects the fixed 1-second anchor"
+    progress = 0.05
     slider = _press_playback_seconds_slider(frontend_page, 20 + progress * 320, 0.38)
     expect(slider).to_have_attribute("aria-valuenow", str(seconds), timeout=STAGE_TIMEOUT_MS)
 
@@ -779,7 +779,7 @@ def host_plays_seconds(frontend_page: Page, seconds: int):
 def host_plays_intro(frontend_page: Page):
     console = _console(frontend_page)
     setattr(frontend_page, "last_round_title", round_info_title(console))
-    play_intro(console, 10)
+    play_intro(console, 2)
 
 
 @when(parsers.parse('the host judges the answer as "{result}"'))
@@ -1642,3 +1642,14 @@ def musickit_no_manifest_since_advancing(frontend_page: Page):
     since = getattr(frontend_page, "advance_marked_at")
     fetched = [url for url in _manifest_urls_since(frontend_page, since) if f"/{round_id}/index.m3u8" in url]
     assert fetched == [], fetched
+
+
+@when(parsers.parse('the frontend selects playback setting "{setting}"'))
+def select_playback_setting(frontend_page, setting):
+    set_playback_seconds(frontend_page, float("inf") if setting == "∞" else float(setting))
+
+
+@then(parsers.parse('the playback setting remains "{setting}"'))
+def playback_setting_remains(frontend_page, setting):
+    slider = _playback_seconds_slider(frontend_page)
+    expect(slider).to_have_attribute("aria-valuetext", "∞ ループ" if setting == "∞" else f"{float(setting):.1f} 秒")

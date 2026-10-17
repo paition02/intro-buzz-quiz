@@ -32,6 +32,7 @@ export type Track = {
   title: string
   artist: string
   albumName: string
+  durationInMillis?: number
   catalogAlbumId?: string
   libraryAlbumId?: string
   artworkChipUrl?: string

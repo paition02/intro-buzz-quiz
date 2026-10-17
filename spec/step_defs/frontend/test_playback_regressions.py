@@ -35,6 +35,7 @@ from frontend.helpers import (
     round_track_id,
     selection_summary,
     track_id_for_title,
+    set_playback_seconds,
 )
 from frontend.musickit_mock import set_musickit_library_data
 
@@ -125,15 +126,7 @@ def is_intro(frontend_page: Page) -> bool:
 
 
 def _set_seconds(page: Page, seconds: float):
-    slider = page.get_by_role("slider", name="再生秒数", exact=True)
-    slider.focus()
-    # Keyboard input uses the same component callbacks as pointer input and can
-    # represent 0.1 exactly without clicking the coincident min/max ring position.
-    current = float(slider.get_attribute("aria-valuenow"))
-    difference = round((seconds - current) * 10)
-    for _ in range(abs(difference)):
-        slider.press("ArrowRight" if difference > 0 else "ArrowLeft")
-    expect(slider).to_have_attribute("aria-valuenow", f"{seconds:g}")
+    set_playback_seconds(page, seconds)
 
 
 def _assert_stopped(page: Page):
@@ -493,9 +486,13 @@ def slider_change(frontend_page, change):
         slider.press("ArrowLeft")
         expect(slider).to_have_attribute("aria-valuenow", "0.1")
     elif change == "maximum":
-        _set_seconds(frontend_page, 30)
+        slider.press("End")
+        expect(slider).to_have_attribute("aria-valuetext", "∞ ループ")
         slider.press("ArrowRight")
-        expect(slider).to_have_attribute("aria-valuenow", "30")
+        expect(slider).to_have_attribute("aria-valuetext", "∞ ループ")
+        slider.press("ArrowLeft")
+        duration = frontend_page.evaluate("MusicKit.getInstance().nowPlayingItem.attributes.durationInMillis / 1000")
+        assert float(slider.get_attribute("aria-valuenow")) == pytest.approx(duration, abs=0.05)
     elif change == "cancel":
         slider.dispatch_event("pointercancel", {"pointerId": 1})
         _set_seconds(frontend_page, 1)
@@ -827,6 +824,10 @@ def feedback_survives(frontend_page):
 @when(parsers.parse('the host reaches observed stage "{stage}"'))
 def reach_observed_stage(frontend_page, http, playback_probe, stage):
     if stage == "beforePlayback":
+        expect_stage(frontend_page, "ラウンド待機ステップ")
+        return
+    if stage == "looping":
+        start_looping_intro(frontend_page, playback_probe)
         return
     if stage == "played":
         replay_sequence(frontend_page, playback_probe, "0.5")
@@ -1016,3 +1017,109 @@ def library_recovers(frontend_page):
     reload.click()
     expect(frontend_page.get_by_role("button", name="Spec Playlist A", exact=True)).to_be_visible(timeout=5000)
     restored_library(frontend_page)
+
+
+@given(parsers.parse("a prepared intro whose selected tracks last {duration:g} seconds"))
+def prepared_intro_duration(frontend_page, http, playback_probe, duration):
+    set_musickit_library_data(frontend_page, {"playlist-a": ["track-1", "track-2", "track-3"]})
+    mock = frontend_page.music_kit_api_mock
+    for song in mock.data.songs.values():
+        song.duration_ms = round(duration * 1000)
+    for song in mock.data.library_songs.values():
+        song.duration_ms = round(duration * 1000)
+    prepared_intro(frontend_page, http, playback_probe, "player-1")
+
+
+@when(parsers.parse("the host selects position {position:g} percent on the playback seconds control"))
+def select_playback_position(frontend_page, position):
+    import math
+    slider = frontend_page.get_by_role("slider", name="再生秒数", exact=True)
+    slider.scroll_into_view_if_needed()
+    box = slider.bounding_box()
+    assert box
+    def point(percent):
+        angle = math.radians(20 + percent / 100 * 320 - 90)
+        radius = box["width"] / 2 * 78 / 93
+        return box["x"] + box["width"] / 2 + radius * math.cos(angle), box["y"] + box["height"] / 2 + radius * math.sin(angle)
+    if position == 100:
+        frontend_page.mouse.move(*point(90))
+        frontend_page.mouse.down()
+        frontend_page.mouse.move(*point(100), steps=10)
+        frontend_page.mouse.up()
+    else:
+        frontend_page.mouse.click(*point(position))
+
+
+@then(parsers.parse("the playback seconds control shows {seconds:g} seconds without starting playback"))
+def selected_seconds_without_play(frontend_page, playback_probe, seconds):
+    expect(frontend_page.get_by_role("slider", name="再生秒数", exact=True)).to_have_attribute("aria-valuenow", f"{seconds:g}")
+    slider_no_play(frontend_page, playback_probe)
+
+
+@then(parsers.parse('the playback control shows "{label}" without starting playback'))
+def selected_loop_without_play(frontend_page, playback_probe, label):
+    expect(frontend_page.get_by_role("slider", name="再生秒数", exact=True)).to_have_attribute("aria-valuetext", label)
+    slider_no_play(frontend_page, playback_probe)
+
+
+def start_looping_intro(frontend_page, playback_probe):
+    if frontend_page.get_by_role("slider", name="再生秒数", exact=True).get_attribute("aria-valuetext") != "∞ ループ":
+        select_playback_position(frontend_page, 100)
+    mark = frontend_page.evaluate("() => window.__introProbe.mark()")
+    playback_probe["active"] = {"mark": mark, "seconds": 2, "requested_seconds": "∞"}
+    click_actual(frontend_page, "再生")
+    expect_stage(frontend_page, "再生中ステップ")
+    frontend_page.wait_for_function("() => MusicKit.getInstance().isPlaying", timeout=5000)
+    expect(frontend_page.get_by_text("ループ再生中。早押し待ちです", exact=True)).to_be_visible()
+
+
+@when(parsers.parse('the host starts playback setting "{setting}"'))
+def start_playback_setting(frontend_page, playback_probe, setting):
+    if setting == "∞":
+        start_looping_intro(frontend_page, playback_probe)
+    else:
+        start_intro(frontend_page, playback_probe, float(setting))
+
+
+@when(parsers.parse('the host selects playback setting "{setting}" during playback'))
+def change_active_setting(frontend_page, setting):
+    expect_stage(frontend_page, "再生中ステップ")
+    _set_seconds(frontend_page, float("inf") if setting == "∞" else float(setting))
+
+
+@then("the same track repeats past its end while waiting for a buzz")
+def current_track_loops(frontend_page, playback_probe):
+    mark = playback_probe["active"]["mark"]
+    frontend_page.wait_for_function("""mark => {
+      const played = window.__introProbe.samples.filter(s => s.at >= mark && s.playing && s.volume > 0);
+      return played.some((s, i) => i > 0 && played[i - 1].position > 1.5 && s.position < 0.5)
+        && played.at(-1).at - played[0].at > 2500 && MusicKit.getInstance().isPlaying;
+    }""", arg=mark, timeout=12000)
+    played = frontend_page.evaluate("mark => window.__introProbe.samples.filter(s => s.at >= mark && s.playing && s.volume > 0)", mark)
+    assert {sample["id"] for sample in played} == {playback_probe["round_id"]}
+    expect_stage(frontend_page, "再生中ステップ")
+    expect_no_answerer(board(frontend_page))
+    expect_same_round(frontend_page, playback_probe)
+
+
+@when("the host starts the selected finite intro")
+def start_selected_finite(frontend_page, playback_probe):
+    slider = frontend_page.get_by_role("slider", name="再生秒数", exact=True)
+    expect(slider).to_have_attribute("aria-valuenow", "0.5")
+    mark = frontend_page.evaluate("() => window.__introProbe.mark()")
+    playback_probe["active"] = {"mark": mark, "seconds": 0.5, "requested_seconds": 0.5}
+    click_actual(frontend_page, "再生")
+    expect_stage(frontend_page, "再生中ステップ")
+
+
+@when("the host selects the full track length before the loop endpoint")
+def select_full_length(frontend_page):
+    slider = frontend_page.get_by_role("slider", name="再生秒数", exact=True)
+    slider.press("End")
+    expect(slider).to_have_attribute("aria-valuetext", "∞ ループ")
+    slider.press("ArrowLeft")
+
+
+@when("the host drags the playback seconds control to its endpoint")
+def drag_playback_endpoint(frontend_page):
+    select_playback_position(frontend_page, 100)

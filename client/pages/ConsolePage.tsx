@@ -325,7 +325,7 @@ export function ConsolePage() {
       if (version !== actionVersionRef.current) return
       setBusy(false)
       if (latestState.step !== 'playing' || roundPreparationKeyFromState(latestState) !== roundPreparationKey) return
-      const playing = introTarget(latestState, 'playing')
+      const playing = introTarget(latestState, seconds === Infinity ? 'looping' : 'playing')
       if (playing === null) return
       const operationId = latestState.operationId
       activeIntroRef.current = operationId
@@ -336,7 +336,7 @@ export function ConsolePage() {
         if (!isPlaybackSuperseded(error)) {
           clearPlayEndedTimeout()
           if (latestState.operationId === operationId && latestState.step === 'playing') {
-            if (isUnavailableTrack(error) && playing.kind === 'playing') await consoleAction('console:exclude-track', { operationId, trackId: playing.songId })
+            if (isUnavailableTrack(error) && (playing.kind === 'playing' || playing.kind === 'looping')) await consoleAction('console:exclude-track', { operationId, trackId: playing.songId })
             else await consoleAction('console:play-ended', { operationId })
           }
           throw error
@@ -346,6 +346,7 @@ export function ConsolePage() {
       clearPlayEndedTimeout()
       activeIntroRef.current = operationId
       if (!musicKitInstance || latestState.operationId !== operationId || latestState.step !== 'playing') return
+      if (seconds === Infinity) return
       stopIntroWatchRef.current = watchIntroDeadline(musicKitInstance, seconds, () => { void (async () => {
         try {
           if (latestState.operationId !== operationId || latestState.step !== 'playing') return
@@ -487,6 +488,7 @@ export function ConsolePage() {
       <span className="justify-self-start text-cream font-bold">再生秒数</span>
       <CircularSecondsSlider
         value={seconds}
+        duration={roundTrack?.durationInMillis ? roundTrack.durationInMillis / 1000 : roundPrepared && musicKitInstance && musicKitInstance.currentPlaybackDuration > 0 ? musicKitInstance.currentPlaybackDuration : 30}
         onChange={handlePlaybackSecondsChange}
         onCommit={handlePlaybackSecondsCommit}
       />

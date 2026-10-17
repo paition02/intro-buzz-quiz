@@ -80,7 +80,7 @@ export function consoleStatusMessage(state: GameState, playbackSeconds: number) 
     if (state.quizMode === 'jacket') return 'ジャケットのヒントを調整できます。早押し待ちです'
     return '再生秒数を指定して、再生ボタンを押してください'
   }
-  if (state.step === 'playing') return `${playbackSeconds}秒再生中。早押し待ちです`
+  if (state.step === 'playing') return playbackSeconds === Infinity ? 'ループ再生中。早押し待ちです' : `${playbackSeconds}秒再生中。早押し待ちです`
   if (state.step === 'answering') return '解答権が取られました'
   if (state.step === 'correct') return '正解！'
   if (state.step === 'wrong') return '残念、不正解'
