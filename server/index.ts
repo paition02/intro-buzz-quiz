@@ -299,6 +299,7 @@ function consoleSelectPlaylists(payload: ConsoleSelectPlaylistsPayload = {}): Co
       title: String(track.title ?? ''),
       artist: String(track.artist ?? ''),
       albumName: String(track.albumName ?? ''),
+      durationInMillis: typeof track.durationInMillis === 'number' && Number.isFinite(track.durationInMillis) && track.durationInMillis > 0 ? track.durationInMillis : undefined,
       catalogAlbumId: typeof track.catalogAlbumId === 'string' && track.catalogAlbumId ? track.catalogAlbumId : undefined,
       libraryAlbumId: typeof track.libraryAlbumId === 'string' && track.libraryAlbumId ? track.libraryAlbumId : undefined,
       artworkChipUrl: typeof track.artworkChipUrl === 'string' ? track.artworkChipUrl : undefined,

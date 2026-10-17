@@ -62,6 +62,12 @@ def playback_seconds_slider(console: Page):
 def set_playback_seconds(console: Page, seconds: float):
     slider = playback_seconds_slider(console)
     slider.focus()
+    if seconds == float("inf"):
+        slider.press("End")
+        expect(slider).to_have_attribute("aria-valuetext", "∞ ループ")
+        return
+    if slider.get_attribute("aria-valuetext") == "∞ ループ":
+        slider.press("Home")
     current = float(slider.get_attribute("aria-valuenow") or "0.5")
     difference = round((seconds - current) * 10)
     for _ in range(abs(difference)):

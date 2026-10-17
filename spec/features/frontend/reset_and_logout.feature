@@ -12,17 +12,23 @@ Feature: Reset and logout while the host progresses through a game
       | beforePlayback |
       | played |
       | playing |
+      | looping |
       | answering |
       | wrong |
       | correct |
       | reveal |
       | results |
 
-  Scenario: Logout while playing stops the media
+  Scenario Outline: Logout during <playback> playback stops the media
     Given a prepared intro with an observed MusicKit player and participant "player-1"
-    When the host starts an observed 1.5 second intro
+    When the host starts playback setting "<playback>"
     And the host logs out during an observed intro
     Then logout stops media and does not restart at the old deadline
+
+    Examples:
+      | playback |
+      | 1.5 |
+      | ∞ |
 
   Scenario: A deferred load released after logout cannot start audio
     Given a selected intro with an observed MusicKit player and participant "player-1"

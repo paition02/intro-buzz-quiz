@@ -49,7 +49,7 @@ def hint_slider_to(page, percent):
 def test_short_track_and_reveal_never_leak_the_next_answer(intro,playback_probe,operation):
     p=intro;current=playback_probe['round_id'];first_title=playback_probe['round_title']
     if operation=='short-track':
-        r.start_intro(p,playback_probe,5)
+        r.start_intro(p,playback_probe,2)
         mark=playback_probe['active']['mark'];p.wait_for_timeout(2500)
         r._assert_stopped(p)
         expect_stage(p,'ラウンド待機ステップ',timeout=1000)
@@ -83,7 +83,7 @@ def test_buzzing_and_wrong_recovery_follow_the_audio(intro,http,playback_probe,c
         playback_probe['actors']=[]
         r.join(p,http,playback_probe,'Q');r.join(p,http,playback_probe,'player-1')
         r.new_game_after_reset(p,playback_probe)
-    seconds=10 if case=='long-interrupt' else 1.5
+    seconds=2 if case=='long-interrupt' else 1.5
     r.start_intro(p,playback_probe,seconds)
     if case=='unjoined':
         assert http.post('/api/act/unknown').status_code==409
@@ -103,36 +103,36 @@ def test_buzzing_and_wrong_recovery_follow_the_audio(intro,http,playback_probe,c
 def test_slider_native_inputs_and_pointer_lifecycle(intro,playback_probe,input_kind):
     p=intro;slider=p.get_by_role('slider',name='再生秒数');slider.scroll_into_view_if_needed()
     box=slider.bounding_box();assert box
-    def point(value,identifier=1):
-        angle=math.radians(20+(value-.1)/29.9*320-90)
+    def point(progress,identifier=1):
+        angle=math.radians(20+progress*320-90)
         return {'x':box['x']+box['width']/2+box['width']/2*78/93*math.cos(angle),'y':box['y']+box['height']/2+box['height']/2*78/93*math.sin(angle),'id':identifier}
-    if input_kind=='keyboard':r._set_seconds(p,2.5)
+    if input_kind=='keyboard':r._set_seconds(p,1)
     elif input_kind=='mouse':
-        a,b=point(.5),point(2.5);p.mouse.move(a['x'],a['y']);p.mouse.down();p.mouse.move(b['x'],b['y'],steps=5);p.mouse.up()
+        a,b=point(.001),point(.05);p.mouse.move(a['x'],a['y']);p.mouse.down();p.mouse.move(b['x'],b['y'],steps=5);p.mouse.up()
     elif input_kind=='inside':
         before=slider.get_attribute('aria-valuenow');p.mouse.click(box['x']+box['width']/2,box['y']+box['height']/2)
         p.mouse.wheel(0,100);p.wait_for_timeout(100)
         assert slider.get_attribute('aria-valuenow')==before;r._assert_stopped(p);return
     else:
         cdp=p.context.new_cdp_session(p)
-        cdp.send('Input.dispatchTouchEvent',{'type':'touchStart','touchPoints':[point(.5)]})
+        cdp.send('Input.dispatchTouchEvent',{'type':'touchStart','touchPoints':[point(.001)]})
         if input_kind=='cancel':
             cdp.send('Input.dispatchTouchEvent',{'type':'touchCancel','touchPoints':[]})
-            cdp.send('Input.dispatchTouchEvent',{'type':'touchStart','touchPoints':[point(1,2)]})
-            cdp.send('Input.dispatchTouchEvent',{'type':'touchMove','touchPoints':[point(2.5,2)]})
+            cdp.send('Input.dispatchTouchEvent',{'type':'touchStart','touchPoints':[point(.001,2)]})
+            cdp.send('Input.dispatchTouchEvent',{'type':'touchMove','touchPoints':[point(.05,2)]})
             before=slider.get_attribute('aria-valuenow')
-            slider.dispatch_event('pointermove',{'pointerId':1,'pointerType':'touch','clientX':point(20)['x'],'clientY':point(20)['y']})
+            slider.dispatch_event('pointermove',{'pointerId':1,'pointerType':'touch','clientX':point(.9)['x'],'clientY':point(.9)['y']})
             assert slider.get_attribute('aria-valuenow')==before
         elif input_kind=='second-finger':
-            cdp.send('Input.dispatchTouchEvent',{'type':'touchStart','touchPoints':[point(.5),point(20,2)]})
-            cdp.send('Input.dispatchTouchEvent',{'type':'touchEnd','touchPoints':[point(.5)]})
-            cdp.send('Input.dispatchTouchEvent',{'type':'touchMove','touchPoints':[point(2.5)]})
-        else:cdp.send('Input.dispatchTouchEvent',{'type':'touchMove','touchPoints':[point(2.5)]})
+            cdp.send('Input.dispatchTouchEvent',{'type':'touchStart','touchPoints':[point(.001),point(.9,2)]})
+            cdp.send('Input.dispatchTouchEvent',{'type':'touchEnd','touchPoints':[point(.001)]})
+            cdp.send('Input.dispatchTouchEvent',{'type':'touchMove','touchPoints':[point(.05)]})
+        else:cdp.send('Input.dispatchTouchEvent',{'type':'touchMove','touchPoints':[point(.05)]})
         cdp.send('Input.dispatchTouchEvent',{'type':'touchEnd','touchPoints':[]});cdp.detach()
-    expect(slider).to_have_attribute('aria-valuenow','2.5')
+    expect(slider).to_have_attribute('aria-valuenow','1')
     # replay_sequence normally sets duration; here assert native input first so
     # the helper cannot silently repair a broken pointer interaction.
-    r.replay_sequence(p,playback_probe,'2.5')
+    r.replay_sequence(p,playback_probe,'1')
 
 
 def album_lookup_failure(lookups):
@@ -327,7 +327,7 @@ def test_complete_user_flow_through_results_and_a_new_game(frontend_page,http,pl
             r.click_actual(p,'ギブアップ')
         else:
             if flow!='minimum':
-                r.start_intro(p,playback_probe,3);r.buzz(p,http,'P');r.stopped_answering(p,'P')
+                r.start_intro(p,playback_probe,2);r.buzz(p,http,'P');r.stopped_answering(p,'P')
                 r.click_actual(p,'不正解');expect_stage(p,'ラウンド待機ステップ')
                 r.replay_sequence(p,playback_probe,'0.1' if flow=='recovered' else '0.5')
             assert http.post('/api/act/Q').status_code==200;expect_answerer(board,'Q');r._assert_stopped(p)
@@ -488,7 +488,7 @@ def test_host_board_and_two_phone_buttons_follow_both_answerers(frontend_page,pl
 def test_real_console_reload_restores_progress(intro,http,playback_probe,step):
     p=intro;board=r.board(p)
     if step in ['playing','answering','correct','wrong']:
-        r.start_intro(p,playback_probe,10)
+        r.start_intro(p,playback_probe,2)
     if step in ['answering','correct','wrong']:
         r.buzz(p,http,'player-1');r.stopped_answering(p,'player-1')
     if step in ['correct','wrong']:
@@ -521,7 +521,7 @@ def test_real_console_reload_restores_progress(intro,http,playback_probe,step):
 def test_late_preload_cannot_play_next_song_at_short_track_end(intro,playback_probe,late_ms):
     p=intro;current=playback_probe['round_id']
     next_id=sorted(SELECTED_TRACK_IDS-{current})[0]
-    r.start_intro(p,playback_probe,5)
+    r.start_intro(p,playback_probe,2)
     p.wait_for_timeout(late_ms)
     p.evaluate('id=>MusicKit.getInstance().playNext({song:id})',next_id)
     expect_stage(p,'ラウンド待機ステップ')
